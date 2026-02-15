@@ -137,8 +137,6 @@ ThemeModule.Themes = {
 		InputStroke = Color3.fromRGB(90, 65, 50),
 		PlaceholderColor = Color3.fromRGB(190, 150, 130)
 	},
-}
-
 	Light = {
 		TextColor = Color3.fromRGB(40, 40, 40),
 
@@ -406,6 +404,43 @@ function ThemeModule.init(ctx)
 	-- Current selected theme
 	self.SelectedTheme = ThemeModule.Themes.Default
 
+	-- Reactive Theme System
+	local ThemeValues = Instance.new("Folder")
+	ThemeValues.Name = "ThemeValues"
+	ThemeValues.Parent = self.Main
+
+	local themeConnections = {}
+	local values = {}
+
+	-- Initialize ValueObjects for all theme properties
+	for key, value in pairs(ThemeModule.Themes.Default) do
+		local colorValue = Instance.new("Color3Value")
+		colorValue.Name = key
+		colorValue.Value = value
+		colorValue.Parent = ThemeValues
+		values[key] = colorValue
+	end
+
+	-- Helper to bind an object's property to a theme color
+	function self.bindTheme(object, property, themeKey)
+		local valueObj = values[themeKey]
+		if not valueObj then
+			warn("Rayfield | Theme key not found: " .. tostring(themeKey))
+			return
+		end
+
+		-- Set initial value
+		object[property] = valueObj.Value
+
+		-- Listen for changes
+		local connection = valueObj.Changed:Connect(function(newColor)
+			object[property] = newColor
+		end)
+
+		table.insert(themeConnections, connection)
+		return connection
+	end
+
 	-- Get icon from Lucide icon library
 	function self.getIcon(name)
 		if not self.Icons then
@@ -437,49 +472,38 @@ function ThemeModule.init(ctx)
 			self.SelectedTheme = Theme
 		end
 
-		self.Rayfield.Main.BackgroundColor3 = self.SelectedTheme.Background
-		self.Rayfield.Main.Topbar.BackgroundColor3 = self.SelectedTheme.Topbar
-		self.Rayfield.Main.Topbar.CornerRepair.BackgroundColor3 = self.SelectedTheme.Topbar
-		self.Rayfield.Main.Shadow.Image.ImageColor3 = self.SelectedTheme.Shadow
+		if not self.SelectedTheme then return end
 
-		self.Rayfield.Main.Topbar.ChangeSize.ImageColor3 = self.SelectedTheme.TextColor
-		self.Rayfield.Main.Topbar.Hide.ImageColor3 = self.SelectedTheme.TextColor
-		self.Rayfield.Main.Topbar.Search.ImageColor3 = self.SelectedTheme.TextColor
-		if self.Topbar:FindFirstChild('Settings') then
-			self.Rayfield.Main.Topbar.Settings.ImageColor3 = self.SelectedTheme.TextColor
-			self.Rayfield.Main.Topbar.Divider.BackgroundColor3 = self.SelectedTheme.ElementStroke
+		-- Update all ValueObjects - this triggers listeners in all elements
+		for key, value in pairs(self.SelectedTheme) do
+			if values[key] then
+				values[key].Value = value
+			end
 		end
 
-		self.Main.Search.BackgroundColor3 = self.SelectedTheme.TextColor
-		self.Main.Search.Shadow.ImageColor3 = self.SelectedTheme.TextColor
-		self.Main.Search.Search.ImageColor3 = self.SelectedTheme.TextColor
-		self.Main.Search.Input.PlaceholderColor3 = self.SelectedTheme.TextColor
-		self.Main.Search.UIStroke.Color = self.SelectedTheme.SecondaryElementStroke
-
+		-- Special case for search which isn't fully reactive yet or has complex mapping
 		if self.Main:FindFirstChild('Notice') then
 			self.Main.Notice.BackgroundColor3 = self.SelectedTheme.Background
 		end
+	end
 
-		for _, text in ipairs(self.Rayfield:GetDescendants()) do
-			if text.Parent.Parent ~= self.Notifications then
-				if text:IsA('TextLabel') or text:IsA('TextBox') then
-					text.TextColor3 = self.SelectedTheme.TextColor
-				end
+	-- Cleanup function to prevent memory leaks on Rayfield:Destroy() + reload
+	function self.cleanup()
+		for _, connection in ipairs(themeConnections) do
+			if connection and typeof(connection) == "RBXScriptConnection" and connection.Connected then
+				connection:Disconnect()
 			end
 		end
+		table.clear(themeConnections)
 
-		for _, TabPage in ipairs(self.Elements:GetChildren()) do
-			for _, Element in ipairs(TabPage:GetChildren()) do
-				if Element.ClassName == "Frame" and Element.Name ~= "Placeholder" and Element.Name ~= "SectionSpacing" and Element.Name ~= "Divider" and Element.Name ~= "SectionTitle" and Element.Name ~= "SearchTitle-fsefsefesfsefesfesfThanks" then
-					Element.BackgroundColor3 = self.SelectedTheme.ElementBackground
-					Element.UIStroke.Color = self.SelectedTheme.ElementStroke
-				end
-			end
+		-- Destroy the ThemeValues folder
+		if ThemeValues and ThemeValues.Parent then
+			ThemeValues:Destroy()
 		end
+		table.clear(values)
 	end
 
 	return self
 end
 
 return ThemeModule
-

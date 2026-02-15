@@ -15,6 +15,110 @@ local passCount = 0
 local failCount = 0
 local BASE_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 
+-- Runtime compatibility helpers for different executors
+local function tryRequestApi(requestFn, url)
+	if type(requestFn) ~= "function" then
+		return nil
+	end
+
+	local ok, response = pcall(requestFn, {
+		Url = url,
+		Method = "GET"
+	})
+	if not ok then
+		return nil
+	end
+
+	if type(response) == "table" then
+		local status = response.StatusCode or response.Status
+		local body = response.Body or response.body
+		if (status == nil or status == 200) and type(body) == "string" and #body > 0 then
+			return body
+		end
+	elseif type(response) == "string" and #response > 0 then
+		return response
+	end
+
+	return nil
+end
+
+local function httpGet(url)
+	if game and game.HttpGet then
+		local ok, body = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if ok and type(body) == "string" and #body > 0 then
+			return body
+		end
+	end
+
+	local globalEnv = (getgenv and getgenv()) or _G
+	local directHttpGet = globalEnv and (globalEnv.httpget or globalEnv.HttpGet)
+	if type(directHttpGet) == "function" then
+		local ok1, body1 = pcall(directHttpGet, url)
+		if ok1 and type(body1) == "string" and #body1 > 0 then
+			return body1
+		end
+
+		local ok2, body2 = pcall(directHttpGet, game, url)
+		if ok2 and type(body2) == "string" and #body2 > 0 then
+			return body2
+		end
+	end
+
+	local requestCandidates = {}
+	local function addRequestCandidate(candidate)
+		if type(candidate) == "function" then
+			table.insert(requestCandidates, candidate)
+		end
+	end
+
+	addRequestCandidate(syn and syn.request)
+	addRequestCandidate(fluxus and fluxus.request)
+	addRequestCandidate(http and http.request)
+	addRequestCandidate(http_request)
+	addRequestCandidate(request)
+
+	for _, requestFn in ipairs(requestCandidates) do
+		local body = tryRequestApi(requestFn, url)
+		if body then
+			return body
+		end
+	end
+
+	error("No compatible HTTP function found (game:HttpGet / request / http_request).")
+end
+
+local function compileChunk(source)
+	if type(loadstring) == "function" then
+		local fn, err = loadstring(source)
+		if not fn then
+			error("loadstring failed: " .. tostring(err))
+		end
+		return fn
+	end
+
+	if type(load) == "function" then
+		local fn, err = load(source)
+		if not fn then
+			error("load failed: " .. tostring(err))
+		end
+		return fn
+	end
+
+	error("No Lua compiler function available (loadstring/load).")
+end
+
+local function loadRemoteChunk(url)
+	local source = httpGet(url)
+	if type(source) ~= "string" or #source == 0 then
+		error("Empty response while loading: " .. tostring(url))
+	end
+
+	local fn = compileChunk(source)
+	return fn()
+end
+
 -- Test helper functions
 local function test(name, fn)
 	testCount = testCount + 1
@@ -49,7 +153,7 @@ print("\n━━━━━━━━━━━━━━━━━━━━━━━�
 print("🧪 Rayfield Smoke Test Suite")
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
-local Rayfield = loadstring(game:HttpGet(BASE_URL .. "Main%20loader/rayfield-modified.lua"))()
+local Rayfield = loadRemoteChunk(BASE_URL .. "Main%20loader/rayfield-modified.lua")
 assertNotNil(Rayfield, "Failed to load Rayfield")
 
 -- Test 1: Window Creation
@@ -185,7 +289,7 @@ test("Tab Clear Functionality", function()
 	if tempTab.Clear then
 		tempTab:Clear()
 		-- Verify elements are cleared
-		local elements = tempTab:GetElements and tempTab:GetElements() or {}
+		local elements = tempTab.GetElements and tempTab:GetElements() or {}
 		assertEquals(#elements, 0, "Tab not properly cleared")
 	else
 		error("Tab:Clear() method not found")
@@ -208,7 +312,7 @@ test("Rayfield Destroy and Reload", function()
 		task.wait(0.5)
 
 		-- Reload Rayfield
-		Rayfield = loadstring(game:HttpGet(BASE_URL .. "Main%20loader/rayfield-modified.lua"))()
+		Rayfield = loadRemoteChunk(BASE_URL .. "Main%20loader/rayfield-modified.lua")
 		assertNotNil(Rayfield, "Failed to reload Rayfield after destroy")
 	else
 		error("Rayfield:Destroy() method not found")

@@ -27,12 +27,15 @@ end
 
 local function getService(name)
 	local service = game:GetService(name)
-	return if cloneref then cloneref(service) else service
+	if cloneref then
+		return cloneref(service)
+	end
+	return service
 end
 
 -- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
 -- Errors with the function are caught and logged to the output
-local function loadWithTimeout(url: string, timeout: number?): ...any
+local function loadWithTimeout(url, timeout)
 	assert(type(url) == "string", "Expected string, got " .. type(url))
 	timeout = timeout or 5
 	local requestCompleted = false
@@ -91,7 +94,10 @@ local function loadWithTimeout(url: string, timeout: number?): ...any
 	if not success then
 		warn("Failed to process " .. tostring(url) .. ": " .. tostring(result))
 	end
-	return if success then result else nil
+	if success then
+		return result
+	end
+	return nil
 end
 
 local requestsDisabled = true --getgenv and getgenv().DISABLE_RAYFIELD_REQUESTS
@@ -737,6 +743,57 @@ local ThemeSystem = ThemeModule.init({
 	Icons = Icons
 })
 
+local bindTheme = ThemeSystem.bindTheme
+
+-- Apply Reactive Theme to Main UI (with nil guards for UI structure resilience)
+bindTheme(Main, "BackgroundColor3", "Background")
+bindTheme(Topbar, "BackgroundColor3", "Topbar")
+
+local cornerRepair = Topbar:FindFirstChild("CornerRepair")
+if cornerRepair then
+	bindTheme(cornerRepair, "BackgroundColor3", "Topbar")
+end
+
+local shadow = Main:FindFirstChild("Shadow")
+if shadow and shadow:FindFirstChild("Image") then
+	bindTheme(shadow.Image, "ImageColor3", "Shadow")
+end
+
+if Topbar:FindFirstChild("ChangeSize") then
+	bindTheme(Topbar.ChangeSize, "ImageColor3", "TextColor")
+end
+if Topbar:FindFirstChild("Hide") then
+	bindTheme(Topbar.Hide, "ImageColor3", "TextColor")
+end
+if Topbar:FindFirstChild("Search") then
+	bindTheme(Topbar.Search, "ImageColor3", "TextColor")
+end
+
+if Topbar:FindFirstChild('Settings') then
+	bindTheme(Topbar.Settings, "ImageColor3", "TextColor")
+	if Topbar:FindFirstChild('Divider') then
+		bindTheme(Topbar.Divider, "BackgroundColor3", "ElementStroke")
+	end
+end
+
+-- Search UI Reactive (guarded)
+local searchFrame = Main:FindFirstChild("Search")
+if searchFrame then
+	bindTheme(searchFrame, "BackgroundColor3", "TextColor")
+	if searchFrame:FindFirstChild("Shadow") then
+		bindTheme(searchFrame.Shadow, "ImageColor3", "TextColor")
+	end
+	if searchFrame:FindFirstChild("Search") then
+		bindTheme(searchFrame.Search, "ImageColor3", "TextColor")
+	end
+	if searchFrame:FindFirstChild("Input") then
+		bindTheme(searchFrame.Input, "PlaceholderColor3", "TextColor")
+	end
+	if searchFrame:FindFirstChild("UIStroke") then
+		bindTheme(searchFrame.UIStroke, "Color", "SecondaryElementStroke")
+	end
+end
+
 -- Initialize Settings Module
 local SettingsSystem = SettingsModuleLib.init({
 	RayfieldFolder = RayfieldFolder,
@@ -901,7 +958,7 @@ local function Minimise()
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
-local function getAssetUri(id: any): string
+local function getAssetUri(id)
 	return UtilitiesSystem and UtilitiesSystem.getAssetUri(id, Icons) or ("rbxassetid://" .. (type(id) == "number" and id or 0))
 end
 
@@ -1390,6 +1447,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 		rayfieldDestroyed = function() return rayfieldDestroyed end,
 		getMinimised = function() return Minimised end,
 		getSetting = getSetting,
+		bindTheme = bindTheme,
 		SaveConfiguration = SaveConfiguration,
 		makeElementDetachable = makeElementDetachable,
 		keybindConnections = keybindConnections,
@@ -1462,6 +1520,8 @@ function RayfieldLibrary:CreateWindow(Settings)
 		TweenService:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
 	end
 
+	]]
+
 	function Window.ModifyTheme(NewTheme)
 		local success = pcall(ChangeTheme, NewTheme)
 		if not success then
@@ -1480,23 +1540,27 @@ function RayfieldLibrary:CreateWindow(Settings)
 	return Window
 end
 
-local function setVisibility(visibility: boolean, notify: boolean?)
+local function setVisibility(visibility, notify)
 	if UtilitiesSystem then
 		UtilitiesSystem.setVisibility(visibility, notify)
 		Hidden = not visibility
 	end
 end
 
-function RayfieldLibrary:SetVisibility(visibility: boolean)
+function RayfieldLibrary:SetVisibility(visibility)
 	setVisibility(visibility, false)
 end
 
-function RayfieldLibrary:IsVisible(): boolean
+function RayfieldLibrary:IsVisible()
 	return not Hidden
 end
 
 local hideHotkeyConnection -- Has to be initialized here since the connection is made later in the script
 function RayfieldLibrary:Destroy()
+	-- Cleanup theme connections to prevent memory leaks on reload
+	if ThemeSystem and ThemeSystem.cleanup then
+		ThemeSystem.cleanup()
+	end
 	if UtilitiesSystem then
 		UtilitiesSystem.destroy(hideHotkeyConnection)
 	end

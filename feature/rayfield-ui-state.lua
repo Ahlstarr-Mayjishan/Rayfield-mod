@@ -238,7 +238,7 @@ function UIStateModule.init(ctx)
 		self.Main.Search.Input.Interactable = false
 	end
 	
-	local function Hide(notify: boolean?)
+	local function Hide(notify)
 		if self.MPrompt then
 			self.MPrompt.Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 			self.MPrompt.Position = UDim2.new(0.5, 0, 0, -50)

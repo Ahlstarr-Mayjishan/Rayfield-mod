@@ -24,7 +24,7 @@ function UtilitiesModule.init(ctx)
 	self.keybindConnections = ctx.keybindConnections
 	
 	-- Utility: Get asset URI from ID or icon name
-	local function getAssetUri(id: any, Icons): string
+	local function getAssetUri(id, Icons)
 		local assetUri = "rbxassetid://0" -- Default to empty image
 		if type(id) == "number" then
 			assetUri = "rbxassetid://" .. id
@@ -158,7 +158,7 @@ function UtilitiesModule.init(ctx)
 	end
 	
 	-- Set visibility with optional notification
-	local function setVisibility(visibility: boolean, notify: boolean?)
+	local function setVisibility(visibility, notify)
 		if self.getDebounce() then return end
 		if visibility then
 			self.Unhide()
@@ -189,4 +189,3 @@ function UtilitiesModule.init(ctx)
 end
 
 return UtilitiesModule
-

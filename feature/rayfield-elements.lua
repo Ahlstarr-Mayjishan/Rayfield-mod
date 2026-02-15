@@ -24,6 +24,7 @@ function ElementsModule.init(ctx)
 	self.rayfieldDestroyed = ctx.rayfieldDestroyed
 	self.getMinimised = ctx.getMinimised or function() return false end
 	self.getSetting = ctx.getSetting
+	self.bindTheme = ctx.bindTheme
 	self.SaveConfiguration = ctx.SaveConfiguration
 	self.makeElementDetachable = ctx.makeElementDetachable
 	-- Improvement 4: Add safe fallbacks for critical dependencies
@@ -91,23 +92,45 @@ function ElementsModule.init(ctx)
 			end
 	
 			TabPage.Parent = self.Elements
+			
+			-- Reactive coloring for TabPage elements
+			TabPage.ChildAdded:Connect(function(Element)
+				if Element.ClassName == "Frame" and Element.Name ~= "Placeholder" and Element.Name ~= "SectionSpacing" and Element.Name ~= "Divider" and Element.Name ~= "SectionTitle" and Element.Name ~= "SearchTitle-fsefsefesfsefesfesfThanks" then
+					self.bindTheme(Element, "BackgroundColor3", "ElementBackground")
+					-- Guard: not all frames have a UIStroke child
+					if Element:FindFirstChildWhichIsA("UIStroke") then
+						self.bindTheme(Element.UIStroke, "Color", "ElementStroke")
+					end
+				end
+			end)
+			
 			if not FirstTab and not Ext then
 				self.Elements.UIPageLayout.Animated = false
 				self.Elements.UIPageLayout:JumpTo(TabPage)
 				self.Elements.UIPageLayout.Animated = true
 			end
 	
-			TabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
+			self.bindTheme(TabButton.UIStroke, "Color", "TabStroke")
 	
-			if self.Elements.UIPageLayout.CurrentPage == TabPage then
-				TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected
-				TabButton.Image.ImageColor3 = self.getSelectedTheme().SelectedTabTextColor
-				TabButton.Title.TextColor3 = self.getSelectedTheme().SelectedTabTextColor
-			else
-				TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackground
-				TabButton.Image.ImageColor3 = self.getSelectedTheme().TabTextColor
-				TabButton.Title.TextColor3 = self.getSelectedTheme().TabTextColor
+			local function UpdateTabColors()
+				if self.Elements.UIPageLayout.CurrentPage == TabPage then
+					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected
+					TabButton.Image.ImageColor3 = self.getSelectedTheme().SelectedTabTextColor
+					TabButton.Title.TextColor3 = self.getSelectedTheme().SelectedTabTextColor
+				else
+					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackground
+					TabButton.Image.ImageColor3 = self.getSelectedTheme().TabTextColor
+					TabButton.Title.TextColor3 = self.getSelectedTheme().TabTextColor
+				end
 			end
+
+			-- Listen for theme changes to update tab colors
+			local themeValueFolder = self.Main:FindFirstChild("ThemeValues")
+			if themeValueFolder then
+				themeValueFolder:FindFirstChild("Background").Changed:Connect(UpdateTabColors)
+			end
+			
+			self.Elements.UIPageLayout:GetPropertyChangedSignal("CurrentPage"):Connect(UpdateTabColors)
 	
 	
 			-- Animate
@@ -673,7 +696,7 @@ function ElementsModule.init(ctx)
 			end
 	
 			-- Label
-			function Tab:CreateLabel(LabelText : string, Icon: number, Color : Color3, IgnoreTheme : boolean)
+			function Tab:CreateLabel(LabelText, Icon, Color, IgnoreTheme)
 				local LabelValue = {}
 	
 				local Label = self.Elements.Template.Label:Clone()
@@ -831,8 +854,8 @@ function ElementsModule.init(ctx)
 	
 				Input.InputFrame.InputBox.Text = InputSettings.CurrentValue or ''
 	
-				Input.InputFrame.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				Input.InputFrame.UIStroke.Color = self.getSelectedTheme().InputStroke
+				self.bindTheme(Input.InputFrame, "BackgroundColor3", "InputBackground")
+				self.bindTheme(Input.InputFrame.UIStroke, "Color", "InputStroke")
 	
 				self.TweenService:Create(Input, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				self.TweenService:Create(Input.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
@@ -955,24 +978,19 @@ function ElementsModule.init(ctx)
 					Dropdown.Selected.Text = DropdownSettings.CurrentOption[1] or "None"
 				end
 	
-				Dropdown.Toggle.ImageColor3 = self.getSelectedTheme().TextColor
-				self.TweenService:Create(Dropdown, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-	
-				Dropdown.BackgroundTransparency = 1
-				Dropdown.UIStroke.Transparency = 1
-				Dropdown.Title.TextTransparency = 1
-	
-				Dropdown.Size = UDim2.new(1, -10, 0, 45)
-	
-				self.TweenService:Create(Dropdown, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-				self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-				self.TweenService:Create(Dropdown.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()	
-	
-				for _, ununusedoption in ipairs(Dropdown.List:GetChildren()) do
-					if ununusedoption.ClassName == "Frame" and ununusedoption.Name ~= "Placeholder" then
-						ununusedoption:Destroy()
+				self.bindTheme(Dropdown.Toggle, "ImageColor3", "TextColor")
+				
+				-- Reactive coloring for Dropdown options
+				Dropdown.List.ChildAdded:Connect(function(Option)
+					if Option.ClassName == "Frame" and Option.Name ~= "Placeholder" then
+						if table.find(DropdownSettings.CurrentOption, Option.Name) then
+							self.bindTheme(Option, "BackgroundColor3", "DropdownSelected")
+						else
+							self.bindTheme(Option, "BackgroundColor3", "DropdownUnselected")
+						end
+						self.bindTheme(Option.UIStroke, "Color", "ElementStroke")
 					end
-				end
+				end)
 	
 				Dropdown.Toggle.Rotation = 180
 	
@@ -1208,7 +1226,7 @@ function ElementsModule.init(ctx)
 					--self.SaveConfiguration()
 				end
 	
-				function DropdownSettings:Refresh(optionsTable: table) -- updates a dropdown with new options from optionsTable
+				function DropdownSettings:Refresh(optionsTable) -- updates a dropdown with new options from optionsTable
 					DropdownSettings.Options = optionsTable
 					for _, option in Dropdown.List:GetChildren() do
 						if option.ClassName == "Frame" and option.Name ~= "Placeholder" then
@@ -1402,7 +1420,7 @@ function ElementsModule.init(ctx)
 				Toggle.BackgroundTransparency = 1
 				Toggle.UIStroke.Transparency = 1
 				Toggle.Title.TextTransparency = 1
-				Toggle.Switch.BackgroundColor3 = self.getSelectedTheme().ToggleBackground
+				self.bindTheme(Toggle.Switch, "BackgroundColor3", "ToggleBackground")
 	
 				if self.getSelectedTheme() ~= self.RayfieldLibrary.Theme.Default then
 					Toggle.Switch.Shadow.Visible = false
@@ -1412,17 +1430,25 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 				self.TweenService:Create(Toggle.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()	
 	
-				if ToggleSettings.CurrentValue == true then
-					Toggle.Switch.Indicator.Position = UDim2.new(1, -20, 0.5, 0)
-					Toggle.Switch.Indicator.UIStroke.Color = self.getSelectedTheme().ToggleEnabledStroke
-					Toggle.Switch.Indicator.BackgroundColor3 = self.getSelectedTheme().ToggleEnabled
-					Toggle.Switch.UIStroke.Color = self.getSelectedTheme().ToggleEnabledOuterStroke
-				else
-					Toggle.Switch.Indicator.Position = UDim2.new(1, -40, 0.5, 0)
-					Toggle.Switch.Indicator.UIStroke.Color = self.getSelectedTheme().ToggleDisabledStroke
-					Toggle.Switch.Indicator.BackgroundColor3 = self.getSelectedTheme().ToggleDisabled
-					Toggle.Switch.UIStroke.Color = self.getSelectedTheme().ToggleDisabledOuterStroke
+				local function UpdateToggleColors()
+					if ToggleSettings.CurrentValue == true then
+						Toggle.Switch.Indicator.UIStroke.Color = self.getSelectedTheme().ToggleEnabledStroke
+						Toggle.Switch.Indicator.BackgroundColor3 = self.getSelectedTheme().ToggleEnabled
+						Toggle.Switch.UIStroke.Color = self.getSelectedTheme().ToggleEnabledOuterStroke
+					else
+						Toggle.Switch.Indicator.UIStroke.Color = self.getSelectedTheme().ToggleDisabledStroke
+						Toggle.Switch.Indicator.BackgroundColor3 = self.getSelectedTheme().ToggleDisabled
+						Toggle.Switch.UIStroke.Color = self.getSelectedTheme().ToggleDisabledOuterStroke
+					end
 				end
+
+				-- Reactive Toggle Colors
+				local themeValueFolder = self.Main:FindFirstChild("ThemeValues")
+				if themeValueFolder then
+					themeValueFolder:FindFirstChild("Background").Changed:Connect(UpdateToggleColors)
+				end
+				
+				UpdateToggleColors()
 	
 				Toggle.MouseEnter:Connect(function()
 					self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
@@ -1584,10 +1610,10 @@ function ElementsModule.init(ctx)
 					Slider.Main.Shadow.Visible = false
 				end
 	
-				Slider.Main.BackgroundColor3 = self.getSelectedTheme().SliderBackground
-				Slider.Main.UIStroke.Color = self.getSelectedTheme().SliderStroke
-				Slider.Main.Progress.UIStroke.Color = self.getSelectedTheme().SliderStroke
-				Slider.Main.Progress.BackgroundColor3 = self.getSelectedTheme().SliderProgress
+				self.bindTheme(Slider.Main, "BackgroundColor3", "SliderBackground")
+				self.bindTheme(Slider.Main.UIStroke, "Color", "SliderStroke")
+				self.bindTheme(Slider.Main.Progress.UIStroke, "Color", "SliderStroke")
+				self.bindTheme(Slider.Main.Progress, "BackgroundColor3", "SliderProgress")
 	
 				self.TweenService:Create(Slider, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				self.TweenService:Create(Slider.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
