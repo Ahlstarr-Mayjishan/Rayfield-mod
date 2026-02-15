@@ -1,9 +1,44 @@
 --[[
 	Rayfield Enhanced V2 - All-in-One Loader
-	
+
+	===========================================
+	DUAL-EXECUTION BEHAVIOR (Improvement 3)
+	===========================================
+
+	This loader has two different behaviors depending on how it's called:
+
+	1. FIRST EXECUTION (Auto-Execute Mode):
+	   - When loaded for the first time (_G.RayfieldAllInOneLoaded is nil/false)
+	   - Automatically loads Rayfield based on CONFIG.AUTO_MODE setting
+	   - Returns the loaded UI object (Rayfield library)
+	   - Sets _G.RayfieldAllInOneLoaded = true to track state
+	   - Exports to _G.Rayfield and _G.RayfieldUI for global access
+
+	   Example:
+	     local UI = loadstring(game:HttpGet('...'))()
+	     -- UI is now the Rayfield library, ready to use
+	     local Window = UI:CreateWindow({...})
+
+	2. SUBSEQUENT EXECUTIONS (Loader Table Mode):
+	   - When loaded again (_G.RayfieldAllInOneLoaded is true)
+	   - Returns the AllInOne loader table with all methods
+	   - Does NOT auto-execute to prevent duplicate loading
+	   - Allows manual control via loader.loadBase(), loader.loadEnhanced(), etc.
+
+	   Example:
+	     local loader = loadstring(game:HttpGet('...'))()
+	     -- loader is the AllInOne table with methods
+	     local UI = loader.loadEnhanced()
+
+	To control this behavior:
+	   - Set autoExecute = false in CONFIG to disable auto-execution
+	   - Reset _G.RayfieldAllInOneLoaded = nil to force auto-execution again
+
+	===========================================
+
 	Usage:
 		loadstring(game:HttpGet('https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/rayfield-all-in-one.lua'))()
-	
+
 	Hoặc nếu host trên Pastebin:
 		loadstring(game:HttpGet('https://pastebin.com/raw/YOUR_CODE'))()
 ]]
@@ -287,16 +322,18 @@ end
 -- AUTO EXECUTE
 -- ============================================
 
--- Nếu được gọi trực tiếp, auto load theo config
+-- Improvement 3: Dual-execution behavior with clear documentation
+-- First execution: Returns UI object (auto-loads Rayfield)
+-- Subsequent executions: Returns AllInOne loader table (manual control)
 if not _G.RayfieldAllInOneLoaded then
 	_G.RayfieldAllInOneLoaded = true
-	
+
 	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	print("🚀 Rayfield All-in-One Auto-Loading")
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	print("Mode:", CONFIG.AUTO_MODE)
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+
 	-- Auto load theo config
 	local UI = AllInOne.quickSetup({
 		mode = CONFIG.AUTO_MODE,
@@ -304,15 +341,17 @@ if not _G.RayfieldAllInOneLoaded then
 		rateLimit = CONFIG.DEFAULT_SETTINGS.rateLimit,
 		autoCleanup = CONFIG.DEFAULT_SETTINGS.autoCleanup
 	})
-	
+
 	-- Export to global
 	_G.Rayfield = UI.Rayfield
 	_G.RayfieldUI = UI
-	
+
 	print("✅ [Rayfield] Auto-loaded successfully!")
 	print("Access via: _G.Rayfield or _G.RayfieldUI\n")
-	
+
+	-- Return UI object on first execution
 	return UI
 end
 
+-- Return loader table on subsequent executions (allows manual control)
 return AllInOne

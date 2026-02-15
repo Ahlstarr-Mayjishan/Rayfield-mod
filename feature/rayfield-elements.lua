@@ -26,6 +26,10 @@ function ElementsModule.init(ctx)
 	self.getSetting = ctx.getSetting
 	self.SaveConfiguration = ctx.SaveConfiguration
 	self.makeElementDetachable = ctx.makeElementDetachable
+	-- Improvement 4: Add safe fallbacks for critical dependencies
+	self.keybindConnections = ctx.keybindConnections or {} -- Fallback to empty table
+	self.getDebounce = ctx.getDebounce or function() return false end
+	self.setDebounce = ctx.setDebounce or function(val) end
 
 	self.useMobileSizing = ctx.useMobileSizing
 
@@ -978,9 +982,9 @@ function ElementsModule.init(ctx)
 					task.wait(0.1)
 					self.TweenService:Create(Dropdown, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
 					self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-					if Debounce then return end
+					if self.getDebounce() then return end
 					if Dropdown.List.Visible then
-						Debounce = true
+						self.setDebounce(true)
 						self.TweenService:Create(Dropdown, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 45)}):Play()
 						for _, DropdownOpt in ipairs(Dropdown.List:GetChildren()) do
 							if DropdownOpt.ClassName == "Frame" and DropdownOpt.Name ~= "Placeholder" then
@@ -990,10 +994,10 @@ function ElementsModule.init(ctx)
 							end
 						end
 						self.TweenService:Create(Dropdown.List, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ScrollBarImageTransparency = 1}):Play()
-						self.TweenService:Create(Dropdown.Toggle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Rotation = 180}):Play()	
+						self.TweenService:Create(Dropdown.Toggle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Rotation = 180}):Play()
 						task.wait(0.35)
 						Dropdown.List.Visible = false
-						Debounce = false
+						self.setDebounce(false)
 					else
 						self.TweenService:Create(Dropdown, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 180)}):Play()
 						Dropdown.List.Visible = true
@@ -1082,14 +1086,14 @@ function ElementsModule.init(ctx)
 								end
 								self.TweenService:Create(DropdownOption.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 								self.TweenService:Create(DropdownOption, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().DropdownSelected}):Play()
-								Debounce = true
+								self.setDebounce(true)
 							end
-	
-	
+
+
 							local Success, Response = pcall(function()
 								DropdownSettings.Callback(DropdownSettings.CurrentOption)
 							end)
-	
+
 							if not Success then
 								self.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 								self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
@@ -1101,7 +1105,7 @@ function ElementsModule.init(ctx)
 								self.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
 								self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 							end
-	
+
 							for _, droption in ipairs(Dropdown.List:GetChildren()) do
 								if droption.ClassName == "Frame" and droption.Name ~= "Placeholder" and not table.find(DropdownSettings.CurrentOption, droption.Name) then
 									self.TweenService:Create(droption, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().DropdownUnselected}):Play()
@@ -1118,11 +1122,11 @@ function ElementsModule.init(ctx)
 									end
 								end
 								self.TweenService:Create(Dropdown.List, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ScrollBarImageTransparency = 1}):Play()
-								self.TweenService:Create(Dropdown.Toggle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Rotation = 180}):Play()	
+								self.TweenService:Create(Dropdown.Toggle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Rotation = 180}):Play()
 								task.wait(0.35)
 								Dropdown.List.Visible = false
 							end
-							Debounce = false
+							self.setDebounce(false)
 							if not DropdownSettings.Ext then
 								self.SaveConfiguration()
 							end
@@ -1345,8 +1349,8 @@ function ElementsModule.init(ctx)
 						end
 					end
 				end)
-				table.insert(keybindConnections, connection)
-	
+				table.insert(self.keybindConnections, connection)
+
 				Keybind.KeybindFrame.KeybindBox:GetPropertyChangedSignal("Text"):Connect(function()
 					self.TweenService:Create(Keybind.KeybindFrame, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, Keybind.KeybindFrame.KeybindBox.TextBounds.X + 24, 0, 30)}):Play()
 				end)

@@ -50,6 +50,20 @@ local function loadWithTimeout(url: string, timeout: number?): ...any
 			return
 		end
 		local content = fetchResult -- Fetched content
+
+		-- Improvement 2: Validate content before passing to loadstring
+		if type(content) ~= "string" then
+			success, result = false, "Invalid content type: expected string, got " .. type(content)
+			requestCompleted = true
+			return
+		end
+
+		if #content == 0 then
+			success, result = false, "Content is empty"
+			requestCompleted = true
+			return
+		end
+
 		local execSuccess, execResult = pcall(function()
 			return loadstring(content)()
 		end)
@@ -1037,6 +1051,12 @@ function RayfieldLibrary:CreateWindow(Settings)
 	Elements.Visible = false
 	LoadingFrame.Visible = true
 
+	-- Improvement 1: Disable notification loop by default to reduce resource usage
+	-- Users can explicitly set DisableRayfieldPrompts = false to enable notifications
+	if Settings.DisableRayfieldPrompts == nil then
+		Settings.DisableRayfieldPrompts = true -- Default to disabled
+	end
+
 	if not Settings.DisableRayfieldPrompts then
 		task.spawn(function()
 			while true do
@@ -1158,7 +1178,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 		if callSafely(isfile, RayfieldFolder.."/Key System".."/"..Settings.KeySettings.FileName..ConfigurationExtension) then
 			for _, MKey in ipairs(Settings.KeySettings.Key) do
 				local savedKeys = callSafely(readfile, RayfieldFolder.."/Key System".."/"..Settings.KeySettings.FileName..ConfigurationExtension)
-				if keyFileContents and string.find(savedKeys, MKey) then
+				if savedKeys and string.find(savedKeys, MKey) then
 					Passthrough = true
 				end
 			end
@@ -1372,6 +1392,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 		getSetting = getSetting,
 		SaveConfiguration = SaveConfiguration,
 		makeElementDetachable = makeElementDetachable,
+		keybindConnections = keybindConnections,
+		getDebounce = function() return Debounce end,
+		setDebounce = function(val) Debounce = val end,
 		useMobileSizing = useMobileSizing,
 		Settings = Settings
 	})
