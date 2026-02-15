@@ -31,7 +31,8 @@
 	     local UI = loader.loadEnhanced()
 
 	To control this behavior:
-	   - Set autoExecute = false in CONFIG to disable auto-execution
+	   - Set AUTO_EXECUTE = false in CONFIG (or configure({autoExecute = false}))
+	     to disable auto-execution
 	   - Reset _G.RayfieldAllInOneLoaded = nil to force auto-execution again
 
 	===========================================
@@ -66,6 +67,9 @@ local CONFIG = {
 	
 	-- Auto mode selection
 	AUTO_MODE = "enhanced", -- "base", "enhanced", "advanced"
+
+	-- Auto execute on first load (set false for loader-table only behavior)
+	AUTO_EXECUTE = true,
 	
 	-- Default settings
 	DEFAULT_SETTINGS = {
@@ -285,6 +289,10 @@ function AllInOne.configure(config)
 	if config.autoMode then
 		CONFIG.AUTO_MODE = config.autoMode
 	end
+
+	if config.autoExecute ~= nil then
+		CONFIG.AUTO_EXECUTE = config.autoExecute
+	end
 	
 	print("✅ [Rayfield] Configuration updated")
 end
@@ -305,6 +313,7 @@ function AllInOne.info()
 	print("Version: 2.0.0")
 	print("Cache Enabled:", CONFIG.CACHE_ENABLED)
 	print("Auto Mode:", CONFIG.AUTO_MODE)
+	print("Auto Execute:", CONFIG.AUTO_EXECUTE)
 	print("\nCached Modules:")
 	for name, _ in pairs(_G.RayfieldCache) do
 		print("  ✅", name)
@@ -325,7 +334,7 @@ end
 -- Improvement 3: Dual-execution behavior with clear documentation
 -- First execution: Returns UI object (auto-loads Rayfield)
 -- Subsequent executions: Returns AllInOne loader table (manual control)
-if not _G.RayfieldAllInOneLoaded then
+if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	_G.RayfieldAllInOneLoaded = true
 
 	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
