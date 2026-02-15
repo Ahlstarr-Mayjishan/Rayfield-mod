@@ -27,15 +27,12 @@ end
 
 local function getService(name)
 	local service = game:GetService(name)
-	if cloneref then
-		return cloneref(service)
-	end
-	return service
+	return if cloneref then cloneref(service) else service
 end
 
 -- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
 -- Errors with the function are caught and logged to the output
-local function loadWithTimeout(url, timeout)
+local function loadWithTimeout(url: string, timeout: number?): ...any
 	assert(type(url) == "string", "Expected string, got " .. type(url))
 	timeout = timeout or 5
 	local requestCompleted = false
@@ -94,10 +91,7 @@ local function loadWithTimeout(url, timeout)
 	if not success then
 		warn("Failed to process " .. tostring(url) .. ": " .. tostring(result))
 	end
-	if success then
-		return result
-	end
-	return nil
+	return if success then result else nil
 end
 
 local requestsDisabled = true --getgenv and getgenv().DISABLE_RAYFIELD_REQUESTS
@@ -614,16 +608,21 @@ local RayfieldLibrary = {
 	}
 }
 
+-- Compatibility wrapper for loadstring (some executors use different names)
+local compileString = loadstring or load
+if not compileString then
+	error("No Lua compiler function available (loadstring/load). Your executor may not support dynamic code loading.")
+end
 
 -- Load external modules
 local MODULE_BASE_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/"
-local ThemeModule = useStudio and require(script.Parent['rayfield-theme']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-theme.lua'))()
-local SettingsModuleLib = useStudio and require(script.Parent['rayfield-settings']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-settings.lua'))()
-local DragModuleLib = useStudio and require(script.Parent['rayfield-drag']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-drag.lua'))()
-local UIStateModuleLib = useStudio and require(script.Parent['rayfield-ui-state']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-ui-state.lua'))()
-local ElementsModuleLib = useStudio and require(script.Parent['rayfield-elements']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-elements.lua'))()
-local ConfigModuleLib = useStudio and require(script.Parent['rayfield-config']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-config.lua'))()
-local UtilitiesModuleLib = useStudio and require(script.Parent['rayfield-utilities']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-utilities.lua'))()
+local ThemeModule = useStudio and require(script.Parent['rayfield-theme']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-theme.lua'))()
+local SettingsModuleLib = useStudio and require(script.Parent['rayfield-settings']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-settings.lua'))()
+local DragModuleLib = useStudio and require(script.Parent['rayfield-drag']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-drag.lua'))()
+local UIStateModuleLib = useStudio and require(script.Parent['rayfield-ui-state']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-ui-state.lua'))()
+local ElementsModuleLib = useStudio and require(script.Parent['rayfield-elements']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-elements.lua'))()
+local ConfigModuleLib = useStudio and require(script.Parent['rayfield-config']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-config.lua'))()
+local UtilitiesModuleLib = useStudio and require(script.Parent['rayfield-utilities']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-utilities.lua'))()
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -633,7 +632,29 @@ local CoreGui = getService("CoreGui")
 
 -- Interface Management
 
-local Rayfield = useStudio and script.Parent:FindFirstChild('Rayfield') or game:GetObjects("rbxassetid://10804731440")[1]
+local Rayfield
+if useStudio then
+	Rayfield = script.Parent:FindFirstChild('Rayfield')
+else
+	-- Try to load GUI from Roblox asset
+	local success, result = pcall(function()
+		return game:GetObjects("rbxassetid://10804731440")[1]
+	end)
+
+	if success and result then
+		Rayfield = result
+	else
+		-- Fallback: Some executors don't support game:GetObjects()
+		warn("Rayfield | game:GetObjects() failed. Your executor may not support loading GUI assets.")
+		warn("Rayfield | Error: " .. tostring(result))
+		error("Unable to load Rayfield GUI. Your executor may not support game:GetObjects(). Try using a different executor or loading from a local file.")
+	end
+end
+
+if not Rayfield then
+	error("Rayfield GUI failed to load. Please check your executor compatibility.")
+end
+
 local buildAttempts = 0
 local correctBuild = false
 local warned
@@ -654,8 +675,24 @@ repeat
 		warned = true
 	end
 
-	toDestroy, Rayfield = Rayfield, useStudio and script.Parent:FindFirstChild('Rayfield') or game:GetObjects("rbxassetid://10804731440")[1]
-	if toDestroy and not useStudio then toDestroy:Destroy() end
+	local oldRayfield = Rayfield
+	if useStudio then
+		Rayfield = script.Parent:FindFirstChild('Rayfield')
+	else
+		local success, result = pcall(function()
+			return game:GetObjects("rbxassetid://10804731440")[1]
+		end)
+		if success and result then
+			Rayfield = result
+		else
+			warn("Rayfield | Failed to reload GUI on retry: " .. tostring(result))
+			break
+		end
+	end
+
+	if oldRayfield and not useStudio then
+		oldRayfield:Destroy()
+	end
 
 	buildAttempts = buildAttempts + 1
 until buildAttempts >= 2
@@ -705,11 +742,27 @@ end
 -- Object Variables
 
 local Main = Rayfield.Main
+if not Main then
+	error("Rayfield GUI structure error: Main container not found. The GUI asset may be corrupted or incompatible.")
+end
+
 local MPrompt = Rayfield:FindFirstChild('Prompt')
 local Topbar = Main.Topbar
 local Elements = Main.Elements
 local LoadingFrame = Main.LoadingFrame
 local TabList = Main.TabList
+
+-- Validate critical GUI components
+if not Elements then
+	error("Rayfield GUI structure error: Elements container not found. The GUI asset may be corrupted.")
+end
+if not Elements:FindFirstChild('Template') then
+	error("Rayfield GUI structure error: Elements.Template not found. The GUI asset may be corrupted.")
+end
+if not TabList then
+	error("Rayfield GUI structure error: TabList container not found. The GUI asset may be corrupted.")
+end
+
 local dragBar = Rayfield:FindFirstChild('Drag')
 local dragInteract = dragBar and dragBar.Interact or nil
 local dragBarCosmetic = dragBar and dragBar.Drag or nil
@@ -958,7 +1011,7 @@ local function Minimise()
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
-local function getAssetUri(id)
+local function getAssetUri(id: any): string
 	return UtilitiesSystem and UtilitiesSystem.getAssetUri(id, Icons) or ("rbxassetid://" .. (type(id) == "number" and id or 0))
 end
 
@@ -1520,8 +1573,6 @@ function RayfieldLibrary:CreateWindow(Settings)
 		TweenService:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
 	end
 
-	]]
-
 	function Window.ModifyTheme(NewTheme)
 		local success = pcall(ChangeTheme, NewTheme)
 		if not success then
@@ -1540,18 +1591,18 @@ function RayfieldLibrary:CreateWindow(Settings)
 	return Window
 end
 
-local function setVisibility(visibility, notify)
+local function setVisibility(visibility: boolean, notify: boolean?)
 	if UtilitiesSystem then
 		UtilitiesSystem.setVisibility(visibility, notify)
 		Hidden = not visibility
 	end
 end
 
-function RayfieldLibrary:SetVisibility(visibility)
+function RayfieldLibrary:SetVisibility(visibility: boolean)
 	setVisibility(visibility, false)
 end
 
-function RayfieldLibrary:IsVisible()
+function RayfieldLibrary:IsVisible(): boolean
 	return not Hidden
 end
 

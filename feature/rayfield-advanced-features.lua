@@ -199,8 +199,6 @@ end
 RayfieldAdvanced.AnimationAPI = AnimationAPI
 RayfieldAdvanced.StatePersistence = StatePersistence
 
-return RayfieldAdvanced
-
 
 
 
@@ -361,3 +359,5 @@ function DragDropManager:StartDragging(element, guiObject)
 	print("🎯 Drag mode! Kéo ra ngoài để tách cửa sổ")
 	self:TrackDragMovement(guiObject)
 end
+
+return RayfieldAdvanced
