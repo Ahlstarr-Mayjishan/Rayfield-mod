@@ -156,6 +156,7 @@ function SettingsModule.init(ctx)
 				self.settingsInitialized = true
 			end)
 		end)
+	end
 
 
 	-- Create settings UI tab
@@ -226,4 +227,3 @@ function SettingsModule.init(ctx)
 end
 
 return SettingsModule
-
