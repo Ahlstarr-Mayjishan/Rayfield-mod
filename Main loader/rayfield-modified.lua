@@ -596,13 +596,14 @@ local RayfieldLibrary = {
 
 
 -- Load external modules
-local ThemeModule = useStudio and require(script.Parent['rayfield-theme']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-theme.lua'))()
-local SettingsModuleLib = useStudio and require(script.Parent['rayfield-settings']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-settings.lua'))()
-local DragModuleLib = useStudio and require(script.Parent['rayfield-drag']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-drag.lua'))()
-local UIStateModuleLib = useStudio and require(script.Parent['rayfield-ui-state']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-ui-state.lua'))()
-local ElementsModuleLib = useStudio and require(script.Parent['rayfield-elements']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-elements.lua'))()
-local ConfigModuleLib = useStudio and require(script.Parent['rayfield-config']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-config.lua'))()
-local UtilitiesModuleLib = useStudio and require(script.Parent['rayfield-utilities']) or loadstring(game:HttpGet('https://raw.githubusercontent.com/YOUR_REPO/rayfield-utilities.lua'))()
+local MODULE_BASE_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/"
+local ThemeModule = useStudio and require(script.Parent['rayfield-theme']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-theme.lua'))()
+local SettingsModuleLib = useStudio and require(script.Parent['rayfield-settings']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-settings.lua'))()
+local DragModuleLib = useStudio and require(script.Parent['rayfield-drag']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-drag.lua'))()
+local UIStateModuleLib = useStudio and require(script.Parent['rayfield-ui-state']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-ui-state.lua'))()
+local ElementsModuleLib = useStudio and require(script.Parent['rayfield-elements']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-elements.lua'))()
+local ConfigModuleLib = useStudio and require(script.Parent['rayfield-config']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-config.lua'))()
+local UtilitiesModuleLib = useStudio and require(script.Parent['rayfield-utilities']) or loadstring(game:HttpGet(MODULE_BASE_URL .. 'rayfield-utilities.lua'))()
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -1367,10 +1368,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		getAssetUri = getAssetUri,
 		getSelectedTheme = function() return SelectedTheme end,
 		rayfieldDestroyed = function() return rayfieldDestroyed end,
+		getMinimised = function() return Minimised end,
 		getSetting = getSetting,
 		SaveConfiguration = SaveConfiguration,
 		makeElementDetachable = makeElementDetachable,
-		addExtendedAPI = addExtendedAPI,
 		useMobileSizing = useMobileSizing,
 		Settings = Settings
 	})

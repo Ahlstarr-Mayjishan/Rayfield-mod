@@ -2,7 +2,7 @@
 	Rayfield Enhanced V2 - All-in-One Loader
 	
 	Usage:
-		loadstring(game:HttpGet('https://raw.githubusercontent.com/your-repo/rayfield-all-in-one.lua'))()
+		loadstring(game:HttpGet('https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/rayfield-all-in-one.lua'))()
 	
 	Hoặc nếu host trên Pastebin:
 		loadstring(game:HttpGet('https://pastebin.com/raw/YOUR_CODE'))()
@@ -16,7 +16,7 @@ local AllInOne = {}
 
 local CONFIG = {
 	-- URLs của các modules (thay bằng URLs thật của bạn)
-	BASE_URL = "https://raw.githubusercontent.com/your-repo/Modified%20Ver/",
+	BASE_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/",
 	
 	-- Hoặc dùng Pastebin
 	USE_PASTEBIN = false,
@@ -100,9 +100,9 @@ local function getModuleUrl(moduleName)
 		return "https://pastebin.com/raw/" .. code
 	else
 		local fileNames = {
-			base = "rayfield-modified.lua",
-			enhanced = "rayfield-enhanced-v2.lua",
-			advanced = "rayfield-advanced-features.lua"
+			base = "Main%20loader/rayfield-modified.lua",
+			enhanced = "feature/rayfield-enhanced.lua",
+			advanced = "feature/rayfield-advanced-features.lua"
 		}
 		return CONFIG.BASE_URL .. fileNames[moduleName]
 	end

@@ -33,20 +33,37 @@ function MemoryLeakDetector.new()
 	-- Tracking
 	self.snapshots = {}
 	self.maxSnapshots = 10
-	self.checkInterval = 30 -- seconds
+	self.checkInterval = 120 -- seconds (increased from 30 for performance)
 	self.leakThreshold = 10 * 1024 * 1024 -- 10MB growth
 	self.suspectedLeaks = {}
+	self.enabled = true -- Toggle to disable in production
 	
 	-- Object tracking
 	self.objectCounts = {}
 	self.lastObjectCounts = {}
 	
+	-- Target containers for scanning (avoid full game:GetDescendants())
+	self.scanTargets = {"Workspace", "Players"}
+	
 	-- Callbacks
 	self.onLeakDetected = nil
+	self.running = false
+	self.monitorThread = nil
 	
 	self:startMonitoring()
 	
 	return self
+end
+
+function MemoryLeakDetector:getTargetedInstanceCount()
+	local count = 0
+	for _, targetName in ipairs(self.scanTargets) do
+		local target = game:FindFirstChild(targetName)
+		if target then
+			count = count + #target:GetDescendants()
+		end
+	end
+	return count
 end
 
 function MemoryLeakDetector:takeSnapshot()
@@ -54,14 +71,19 @@ function MemoryLeakDetector:takeSnapshot()
 	local snapshot = {
 		timestamp = tick(),
 		totalMemory = stats:GetTotalMemoryUsageMb(),
-		instanceCount = #game:GetDescendants(),
+		instanceCount = self:getTargetedInstanceCount(),
 		objectBreakdown = {}
 	}
 	
-	-- Count objects by type
-	for _, obj in ipairs(game:GetDescendants()) do
-		local className = obj.ClassName
-		snapshot.objectBreakdown[className] = (snapshot.objectBreakdown[className] or 0) + 1
+	-- Count objects by type (targeted scan only)
+	for _, targetName in ipairs(self.scanTargets) do
+		local target = game:FindFirstChild(targetName)
+		if target then
+			for _, obj in ipairs(target:GetDescendants()) do
+				local className = obj.ClassName
+				snapshot.objectBreakdown[className] = (snapshot.objectBreakdown[className] or 0) + 1
+				end
+		end
 	end
 	
 	table.insert(self.snapshots, snapshot)
@@ -126,10 +148,28 @@ function MemoryLeakDetector:detectLeaks()
 	return #leaks > 0 and leaks or nil
 end
 
+function MemoryLeakDetector:setEnabled(enabled)
+	self.enabled = enabled
+	if enabled then
+		print("[Memory Leak Detector] Enabled")
+	else
+		print("[Memory Leak Detector] Disabled")
+	end
+end
+
 function MemoryLeakDetector:startMonitoring()
-	task.spawn(function()
-		while true do
+	if self.monitorThread then
+		return
+	end
+	self.running = true
+	self.monitorThread = task.spawn(function()
+		while self.running do
 			task.wait(self.checkInterval)
+			if not self.running then
+				break
+			end
+			
+			if not self.enabled then continue end
 			
 			-- Take snapshot
 			self:takeSnapshot()
@@ -154,7 +194,22 @@ function MemoryLeakDetector:startMonitoring()
 				end
 			end
 		end
+		self.monitorThread = nil
 	end)
+end
+
+function MemoryLeakDetector:stopMonitoring()
+	self.running = false
+	if self.monitorThread then
+		pcall(task.cancel, self.monitorThread)
+		self.monitorThread = nil
+	end
+end
+
+function MemoryLeakDetector:destroy()
+	self:setEnabled(false)
+	self:stopMonitoring()
+	self.onLeakDetected = nil
 end
 
 function MemoryLeakDetector:getReport()
@@ -889,6 +944,7 @@ local function createEnhancedRayfield(originalRayfield)
 	
 	-- Shutdown callback
 	errorManager:onShutdown(function()
+		memoryLeakDetector:destroy()
 		garbageCollector:cleanupAll()
 	end)
 	
@@ -912,6 +968,16 @@ local function createEnhancedRayfield(originalRayfield)
 		end)
 		
 		return window
+	end
+
+	-- Ensure background workers are stopped on explicit destroy
+	local originalDestroy = originalRayfield.Destroy
+	if type(originalDestroy) == "function" then
+		originalRayfield.Destroy = function(self, ...)
+			memoryLeakDetector:destroy()
+			garbageCollector:cleanupAll()
+			return originalDestroy(self, ...)
+		end
 	end
 	
 	-- New APIs

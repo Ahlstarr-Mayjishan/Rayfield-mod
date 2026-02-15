@@ -21,6 +21,7 @@ function ElementsModule.init(ctx)
 	self.getAssetUri = ctx.getAssetUri
 	self.getSelectedTheme = ctx.getSelectedTheme
 	self.rayfieldDestroyed = ctx.rayfieldDestroyed
+	self.getMinimised = ctx.getMinimised or function() return false end
 	self.getSetting = ctx.getSetting
 	self.SaveConfiguration = ctx.SaveConfiguration
 	self.makeElementDetachable = ctx.makeElementDetachable
@@ -123,7 +124,7 @@ function ElementsModule.init(ctx)
 	
 	
 			TabButton.Interact.MouseButton1Click:Connect(function()
-				if Minimised then return end
+				if self.getMinimised() then return end
 				TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				TweenService:Create(TabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 				TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
@@ -157,7 +158,7 @@ function ElementsModule.init(ctx)
 	
 			-- Helper function to add extended API to all elements
 			local function addExtendedAPI(elementObject, elementName, elementType, guiObject)
-				local detachable = createElementDetacher(guiObject, elementName, elementType)
+				local detachable = self.makeElementDetachable and self.makeElementDetachable(guiObject, elementName, elementType) or nil
 	
 				-- Destroy with tracking removal
 				local originalDestroy = elementObject.Destroy
@@ -242,12 +243,21 @@ function ElementsModule.init(ctx)
 			end
 	
 			function Tab:Clear()
+				-- Snapshot elements and clear tracking first to avoid
+				-- concurrent modification (custom Destroy also removes from TabElements)
+				local snapshot = {}
+				for i, element in ipairs(TabElements) do
+					snapshot[i] = element
+				end
+				-- Clear tracking table before destroying to prevent index corruption
 				for i = #TabElements, 1, -1 do
-					local element = TabElements[i]
+					TabElements[i] = nil
+				end
+				-- Now safely destroy each element
+				for _, element in ipairs(snapshot) do
 					if element.Object and element.Object.Destroy then
 						element.Object:Destroy()
 					end
-					table.remove(TabElements, i)
 				end
 			end
 	
