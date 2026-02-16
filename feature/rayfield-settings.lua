@@ -117,7 +117,7 @@ function SettingsModule.init(ctx)
 
 				if file then
 					local success, decodedFile = pcall(function() return self.HttpService:JSONDecode(file) end)
-					if success then
+					if success and type(decodedFile) == "table" then
 						file = decodedFile
 					else
 						file = {}
@@ -131,7 +131,7 @@ function SettingsModule.init(ctx)
 					return
 				end
 
-				if #file > 0 then
+				if type(file) == "table" and next(file) ~= nil then
 					for categoryName, settingCategory in pairs(self.settingsTable) do
 						if file[categoryName] then
 							for settingName, setting in pairs(settingCategory) do

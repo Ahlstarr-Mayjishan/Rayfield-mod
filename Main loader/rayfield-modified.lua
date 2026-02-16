@@ -40,12 +40,22 @@ local function loadWithTimeout(url: string, timeout: number?): ...any
 
 	local requestThread = task.spawn(function()
 		local fetchSuccess, fetchResult = pcall(game.HttpGet, game, url) -- game:HttpGet(url)
-		-- If the request fails the content can be empty, even if fetchSuccess is true
-		if not fetchSuccess or #fetchResult == 0 then
-			if #fetchResult == 0 then
-				fetchResult = "Empty response" -- Set the error message
-			end
-			success, result = false, fetchResult
+		-- Handle executor/network edge-cases where fetchResult can be nil/non-string.
+		if not fetchSuccess then
+			success, result = false, tostring(fetchResult or "HTTP request failed")
+			requestCompleted = true
+			return
+		end
+
+		if type(fetchResult) ~= "string" then
+			success, result = false, "Invalid HTTP response type: " .. type(fetchResult)
+			requestCompleted = true
+			return
+		end
+
+		-- If the request succeeds but content is empty, surface a readable error.
+		if #fetchResult == 0 then
+			success, result = false, "Empty response"
 			requestCompleted = true
 			return
 		end
@@ -199,9 +209,14 @@ if not requestsDisabled then
 			if debugX then warn('Finished Report') end
 		end
 	end
-	if cachedSettings and (#cachedSettings == 0 or (cachedSettings.System and cachedSettings.System.usageAnalytics and cachedSettings.System.usageAnalytics.Value)) then
-		sendReport("execution", "Rayfield")
-	elseif not cachedSettings then
+	local shouldReportExecution = false
+	if type(cachedSettings) == "table" then
+		shouldReportExecution = (next(cachedSettings) == nil) or (cachedSettings.System and cachedSettings.System.usageAnalytics and cachedSettings.System.usageAnalytics.Value)
+	elseif cachedSettings == nil then
+		shouldReportExecution = true
+	end
+
+	if shouldReportExecution then
 		sendReport("execution", "Rayfield")
 	end
 end
