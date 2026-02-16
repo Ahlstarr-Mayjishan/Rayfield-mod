@@ -843,6 +843,7 @@ function ElementsModule.init(ctx)
 	
 			-- Input
 			function Tab:CreateInput(InputSettings)
+				local ctx = self
 				local Input = self.Elements.Template.Input:Clone()
 				Input.Name = InputSettings.Name
 				Input.Title.Text = InputSettings.Name
@@ -913,7 +914,7 @@ function ElementsModule.init(ctx)
 					end)
 	
 					if not InputSettings.Ext then
-						self.SaveConfiguration()
+						ctx.SaveConfiguration()
 					end
 				end
 	
@@ -940,6 +941,7 @@ function ElementsModule.init(ctx)
 	
 			-- Dropdown
 			function Tab:CreateDropdown(DropdownSettings)
+				local ctx = self
 				local Dropdown = self.Elements.Template.Dropdown:Clone()
 				if string.find(DropdownSettings.Name,"closed") then
 					Dropdown.Name = "Dropdown"
@@ -1204,23 +1206,23 @@ function ElementsModule.init(ctx)
 						DropdownSettings.Callback(NewOption)
 					end)
 					if not Success then
-						self.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
-						self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						ctx.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
+						ctx.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 						Dropdown.Title.Text = "Callback Error"
 						print("Rayfield | "..DropdownSettings.Name.." Callback Error " ..tostring(Response))
 						warn('Check docs.sirius.menu for help with Rayfield specific development.')
 						task.wait(0.5)
 						Dropdown.Title.Text = DropdownSettings.Name
-						self.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+						ctx.TweenService:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
+						ctx.TweenService:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					end
 	
 					for _, droption in ipairs(Dropdown.List:GetChildren()) do
 						if droption.ClassName == "Frame" and droption.Name ~= "Placeholder" then
 							if not table.find(DropdownSettings.CurrentOption, droption.Name) then
-								droption.BackgroundColor3 = self.getSelectedTheme().DropdownUnselected
+								droption.BackgroundColor3 = ctx.getSelectedTheme().DropdownUnselected
 							else
-								droption.BackgroundColor3 = self.getSelectedTheme().DropdownSelected
+								droption.BackgroundColor3 = ctx.getSelectedTheme().DropdownSelected
 							end
 						end
 					end
@@ -1271,6 +1273,7 @@ function ElementsModule.init(ctx)
 	
 			-- Keybind
 			function Tab:CreateKeybind(KeybindSettings)
+				local ctx = self
 				local CheckingForKey = false
 				local Keybind = self.Elements.Template.Keybind:Clone()
 				Keybind.Name = KeybindSettings.Name
@@ -1379,7 +1382,7 @@ function ElementsModule.init(ctx)
 					KeybindSettings.CurrentKeybind = tostring(NewKeybind)
 					Keybind.KeybindFrame.KeybindBox:ReleaseFocus()
 					if not KeybindSettings.Ext then
-						self.SaveConfiguration()
+						ctx.SaveConfiguration()
 					end
 	
 					if KeybindSettings.CallOnChange then
@@ -1410,6 +1413,7 @@ function ElementsModule.init(ctx)
 	
 			-- Toggle
 			function Tab:CreateToggle(ToggleSettings)
+				local ctx = self
 				local ToggleValue = {}
 	
 				local Toggle = self.Elements.Template.Toggle:Clone()
@@ -1508,28 +1512,28 @@ function ElementsModule.init(ctx)
 				function ToggleSettings:Set(NewToggleValue)
 					if NewToggleValue == true then
 						ToggleSettings.CurrentValue = true
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -20, 0.5, 0)}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,12,0,12)}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = self.getSelectedTheme().ToggleEnabledStroke}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {BackgroundColor3 = self.getSelectedTheme().ToggleEnabled}):Play()
-						self.TweenService:Create(Toggle.Switch.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = self.getSelectedTheme().ToggleEnabledOuterStroke}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,17,0,17)}):Play()	
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()	
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackgroundHover}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -20, 0.5, 0)}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,12,0,12)}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = ctx.getSelectedTheme().ToggleEnabledStroke}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {BackgroundColor3 = ctx.getSelectedTheme().ToggleEnabled}):Play()
+						ctx.TweenService:Create(Toggle.Switch.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = ctx.getSelectedTheme().ToggleEnabledOuterStroke}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,17,0,17)}):Play()	
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()	
 					else
 						ToggleSettings.CurrentValue = false
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -40, 0.5, 0)}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,12,0,12)}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = self.getSelectedTheme().ToggleDisabledStroke}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {BackgroundColor3 = self.getSelectedTheme().ToggleDisabled}):Play()
-						self.TweenService:Create(Toggle.Switch.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = self.getSelectedTheme().ToggleDisabledOuterStroke}):Play()
-						self.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,17,0,17)}):Play()
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()	
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackgroundHover}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(1, -40, 0.5, 0)}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,12,0,12)}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = ctx.getSelectedTheme().ToggleDisabledStroke}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.8, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {BackgroundColor3 = ctx.getSelectedTheme().ToggleDisabled}):Play()
+						ctx.TweenService:Create(Toggle.Switch.UIStroke, TweenInfo.new(0.55, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Color = ctx.getSelectedTheme().ToggleDisabledOuterStroke}):Play()
+						ctx.TweenService:Create(Toggle.Switch.Indicator, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0,17,0,17)}):Play()
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()	
 					end
 	
 					local Success, Response = pcall(function()
@@ -1539,19 +1543,19 @@ function ElementsModule.init(ctx)
 					end)
 	
 					if not Success then
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 						Toggle.Title.Text = "Callback Error"
 						print("Rayfield | "..ToggleSettings.Name.." Callback Error " ..tostring(Response))
 						warn('Check docs.sirius.menu for help with Rayfield specific development.')
 						task.wait(0.5)
 						Toggle.Title.Text = ToggleSettings.Name
-						self.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+						ctx.TweenService:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
+						ctx.TweenService:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					end
 	
 					if not ToggleSettings.Ext then
-						self.SaveConfiguration()
+						ctx.SaveConfiguration()
 					end
 				end
 	
@@ -1596,6 +1600,7 @@ function ElementsModule.init(ctx)
 	
 			-- Slider
 			function Tab:CreateSlider(SliderSettings)
+				local ctx = self
 				local SLDragging = false
 				local Slider = self.Elements.Template.Slider:Clone()
 				Slider.Name = SliderSettings.Name
@@ -1727,7 +1732,7 @@ function ElementsModule.init(ctx)
 				function SliderSettings:Set(NewVal)
 					local NewVal = math.clamp(NewVal, SliderSettings.Range[1], SliderSettings.Range[2])
 	
-					self.TweenService:Create(Slider.Main.Progress, TweenInfo.new(0.45, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, Slider.Main.AbsoluteSize.X * ((NewVal + SliderSettings.Range[1]) / (SliderSettings.Range[2] - SliderSettings.Range[1])) > 5 and Slider.Main.AbsoluteSize.X * (NewVal / (SliderSettings.Range[2] - SliderSettings.Range[1])) or 5, 1, 0)}):Play()
+					ctx.TweenService:Create(Slider.Main.Progress, TweenInfo.new(0.45, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = UDim2.new(0, Slider.Main.AbsoluteSize.X * ((NewVal + SliderSettings.Range[1]) / (SliderSettings.Range[2] - SliderSettings.Range[1])) > 5 and Slider.Main.AbsoluteSize.X * (NewVal / (SliderSettings.Range[2] - SliderSettings.Range[1])) or 5, 1, 0)}):Play()
 					Slider.Main.Information.Text = tostring(NewVal) .. " " .. (SliderSettings.Suffix or "")
 	
 					local Success, Response = pcall(function()
@@ -1735,20 +1740,20 @@ function ElementsModule.init(ctx)
 					end)
 	
 					if not Success then
-						self.TweenService:Create(Slider, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
-						self.TweenService:Create(Slider.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						ctx.TweenService:Create(Slider, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
+						ctx.TweenService:Create(Slider.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 						Slider.Title.Text = "Callback Error"
 						print("Rayfield | "..SliderSettings.Name.." Callback Error " ..tostring(Response))
 						warn('Check docs.sirius.menu for help with Rayfield specific development.')
 						task.wait(0.5)
 						Slider.Title.Text = SliderSettings.Name
-						self.TweenService:Create(Slider, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.TweenService:Create(Slider.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+						ctx.TweenService:Create(Slider, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
+						ctx.TweenService:Create(Slider.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					end
 	
 					SliderSettings.CurrentValue = NewVal
 					if not SliderSettings.Ext then
-						self.SaveConfiguration()
+						ctx.SaveConfiguration()
 					end
 				end
 	

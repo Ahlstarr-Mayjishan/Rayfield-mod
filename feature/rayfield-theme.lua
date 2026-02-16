@@ -423,18 +423,34 @@ function ThemeModule.init(ctx)
 
 	-- Helper to bind an object's property to a theme color
 	function self.bindTheme(object, property, themeKey)
+		if not object then
+			return
+		end
+
 		local valueObj = values[themeKey]
 		if not valueObj then
+			-- During teardown/reload, values table can be cleared before late bind calls.
+			-- Skip noisy warnings when the key itself is valid in theme schema.
+			if ThemeModule.Themes.Default and ThemeModule.Themes.Default[themeKey] ~= nil then
+				return
+			end
 			warn("Rayfield | Theme key not found: " .. tostring(themeKey))
 			return
 		end
 
 		-- Set initial value
-		object[property] = valueObj.Value
+		local ok = pcall(function()
+			object[property] = valueObj.Value
+		end)
+		if not ok then
+			return
+		end
 
 		-- Listen for changes
 		local connection = valueObj.Changed:Connect(function(newColor)
-			object[property] = newColor
+			pcall(function()
+				object[property] = newColor
+			end)
 		end)
 
 		table.insert(themeConnections, connection)
