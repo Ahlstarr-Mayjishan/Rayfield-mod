@@ -52,6 +52,13 @@ function TabSplitModule.init(ctx)
 	local DRAG_THRESHOLD = 4
 	local PANEL_MARGIN = 8
 	local TAB_GHOST_FOLLOW_SPEED = 0.24
+	local TAB_CUE_HOVER_TRANSPARENCY = 0.34
+	local TAB_CUE_HOLD_TRANSPARENCY = 0.12
+	local TAB_CUE_READY_TRANSPARENCY = 0.02
+	local TAB_CUE_IDLE_THICKNESS = 1
+	local TAB_CUE_HOVER_THICKNESS = 1.8
+	local TAB_CUE_HOLD_THICKNESS = 2.8
+	local TAB_CUE_READY_THICKNESS = 3.2
 
 	local function isDestroyed()
 		return self.rayfieldDestroyed and self.rayfieldDestroyed()
@@ -333,47 +340,6 @@ function TabSplitModule.init(ctx)
 			ensureSplitRoot()
 			refreshRootVisibility()
 		end)
-	end
-
-	local function createHoldIndicator(parent)
-		if not (parent and parent.Parent) then
-			return nil, nil
-		end
-
-		local theme = self.getSelectedTheme and self.getSelectedTheme()
-		local indicator = Instance.new("Frame")
-		indicator.Name = "SplitHoldIndicator"
-		indicator.BackgroundColor3 = (theme and theme.SliderProgress) or Color3.fromRGB(100, 170, 255)
-		indicator.BackgroundTransparency = 0.1
-		indicator.BorderSizePixel = 0
-		indicator.Size = UDim2.new(0, 0, 0, 2)
-		indicator.Position = UDim2.new(0, 0, 1, -2)
-		indicator.ZIndex = parent.ZIndex + 10
-		indicator.Parent = parent
-
-		local tween = self.TweenService:Create(indicator, TweenInfo.new(holdDuration, Enum.EasingStyle.Linear), {
-			Size = UDim2.new(1, 0, 0, 2)
-		})
-		tween:Play()
-		return indicator, tween
-	end
-
-	local function clearHoldIndicator(indicator, tween)
-		if tween then
-			pcall(function()
-				tween:Cancel()
-			end)
-		end
-		if indicator and indicator.Parent then
-			self.TweenService:Create(indicator, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				BackgroundTransparency = 1
-			}):Play()
-			task.delay(0.09, function()
-				if indicator and indicator.Parent then
-					indicator:Destroy()
-				end
-			end)
-		end
 	end
 
 	local function createGhost(text, position)
@@ -801,30 +767,43 @@ function TabSplitModule.init(ctx)
 			InputId = self.HttpService:GenerateGUID(false),
 			ManualPosition = nil,
 			Dragging = false,
-			HoverRefs = 0,
+			HoverPanel = false,
+			HoverHeader = false,
+			HoverDock = false,
 			HoverActive = false,
 			LayerZ = 190
 		}
 
-		local function markHover(delta)
-			panelData.HoverRefs = math.max(0, panelData.HoverRefs + delta)
-			panelData.HoverActive = panelData.HoverRefs > 0
+		local function syncPanelHover()
+			panelData.HoverActive = panelData.HoverPanel or panelData.HoverHeader or panelData.HoverDock
 			if not panelData.Dragging then
 				setPanelHoverState(panelData, panelData.HoverActive, false)
 			end
 		end
 
 		table.insert(panelData.Cleanup, panel.MouseEnter:Connect(function()
-			markHover(1)
+			panelData.HoverPanel = true
+			syncPanelHover()
 		end))
 		table.insert(panelData.Cleanup, panel.MouseLeave:Connect(function()
-			markHover(-1)
+			panelData.HoverPanel = false
+			syncPanelHover()
 		end))
 		table.insert(panelData.Cleanup, header.MouseEnter:Connect(function()
-			markHover(1)
+			panelData.HoverHeader = true
+			syncPanelHover()
 		end))
 		table.insert(panelData.Cleanup, header.MouseLeave:Connect(function()
-			markHover(-1)
+			panelData.HoverHeader = false
+			syncPanelHover()
+		end))
+		table.insert(panelData.Cleanup, dockButton.MouseEnter:Connect(function()
+			panelData.HoverDock = true
+			syncPanelHover()
+		end))
+		table.insert(panelData.Cleanup, dockButton.MouseLeave:Connect(function()
+			panelData.HoverDock = false
+			syncPanelHover()
 		end))
 
 		table.insert(panelData.Cleanup, dockButton.MouseButton1Click:Connect(function()
@@ -1070,12 +1049,157 @@ function TabSplitModule.init(ctx)
 			pressInput = nil,
 			pointer = nil,
 			holdToken = 0,
-			indicator = nil,
-			indicatorTween = nil,
 			ghost = nil,
 			ghostTarget = nil,
-			ghostFollowConnection = nil
+			ghostFollowConnection = nil,
+			hoverCounter = 0,
+			hoverActive = false,
+			cueFrame = nil,
+			cueStroke = nil,
+			cueGlowStroke = nil,
+			cueThemeConnection = nil
 		}
+
+		local function getCueColor()
+			local theme = self.getSelectedTheme and self.getSelectedTheme()
+			return (theme and theme.SliderProgress) or Color3.fromRGB(112, 189, 255)
+		end
+
+		local function ensureCue()
+			if isDestroyed() or not (tabRecord.TabButton and tabRecord.TabButton.Parent) then
+				return false
+			end
+
+			if state.cueFrame and state.cueFrame.Parent and state.cueStroke and state.cueGlowStroke then
+				return true
+			end
+
+			if state.cueThemeConnection then
+				state.cueThemeConnection:Disconnect()
+				state.cueThemeConnection = nil
+			end
+
+			state.cueFrame = Instance.new("Frame")
+			state.cueFrame.Name = "TabSplitCue"
+			state.cueFrame.BackgroundTransparency = 1
+			state.cueFrame.BorderSizePixel = 0
+			state.cueFrame.Size = UDim2.fromScale(1, 1)
+			state.cueFrame.Position = UDim2.fromOffset(0, 0)
+			state.cueFrame.ZIndex = tabRecord.TabButton.ZIndex + 8
+			state.cueFrame.Active = false
+			state.cueFrame.Parent = tabRecord.TabButton
+
+			local sourceCorner = tabRecord.TabButton:FindFirstChildOfClass("UICorner")
+			if sourceCorner then
+				local cueCorner = Instance.new("UICorner")
+				cueCorner.CornerRadius = sourceCorner.CornerRadius
+				cueCorner.Parent = state.cueFrame
+			end
+
+			state.cueStroke = Instance.new("UIStroke")
+			state.cueStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			state.cueStroke.Color = getCueColor()
+			state.cueStroke.Thickness = TAB_CUE_IDLE_THICKNESS
+			state.cueStroke.Transparency = 1
+			state.cueStroke.Parent = state.cueFrame
+
+			state.cueGlowStroke = Instance.new("UIStroke")
+			state.cueGlowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			state.cueGlowStroke.Color = getCueColor()
+			state.cueGlowStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 2
+			state.cueGlowStroke.Transparency = 1
+			state.cueGlowStroke.Parent = state.cueFrame
+
+			state.cueThemeConnection = self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
+				local cueColor = getCueColor()
+				if state.cueStroke and state.cueStroke.Parent then
+					state.cueStroke.Color = cueColor
+				end
+				if state.cueGlowStroke and state.cueGlowStroke.Parent then
+					state.cueGlowStroke.Color = cueColor
+				end
+			end)
+
+			return true
+		end
+
+		local function setCue(transparency, thickness, duration)
+			if not ensureCue() or not (state.cueStroke and state.cueStroke.Parent) then
+				return
+			end
+
+			local glowTransparency = math.clamp((transparency * 0.65) + 0.12, 0.12, 1)
+			local glowThickness = thickness + 2.2
+
+			if not duration or duration <= 0 then
+				state.cueStroke.Transparency = transparency
+				state.cueStroke.Thickness = thickness
+				if state.cueGlowStroke and state.cueGlowStroke.Parent then
+					state.cueGlowStroke.Transparency = glowTransparency
+					state.cueGlowStroke.Thickness = glowThickness
+				end
+				return
+			end
+
+			self.TweenService:Create(state.cueStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = transparency,
+				Thickness = thickness
+			}):Play()
+
+			if state.cueGlowStroke and state.cueGlowStroke.Parent then
+				self.TweenService:Create(state.cueGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = glowTransparency,
+					Thickness = glowThickness
+				}):Play()
+			end
+		end
+
+		local function refreshCue()
+			if tabRecord.IsSplit then
+				setCue(1, TAB_CUE_IDLE_THICKNESS, 0.08)
+				return
+			end
+
+			if state.dragArmed then
+				setCue(TAB_CUE_READY_TRANSPARENCY, TAB_CUE_READY_THICKNESS, 0.08)
+				return
+			end
+
+			if state.pressing then
+				setCue(TAB_CUE_HOLD_TRANSPARENCY, TAB_CUE_HOLD_THICKNESS, 0.08)
+				return
+			end
+
+			if state.hoverActive then
+				setCue(TAB_CUE_HOVER_TRANSPARENCY, TAB_CUE_HOVER_THICKNESS, 0.12)
+			else
+				setCue(1, TAB_CUE_IDLE_THICKNESS, 0.12)
+			end
+		end
+
+		local function runCueProgress(token)
+			local started = os.clock()
+			while state.pressing and state.holdToken == token and not state.dragArmed and not tabRecord.IsSplit do
+				local progress = math.clamp((os.clock() - started) / holdDuration, 0, 1)
+				local transparency = TAB_CUE_HOVER_TRANSPARENCY + ((TAB_CUE_HOLD_TRANSPARENCY - TAB_CUE_HOVER_TRANSPARENCY) * progress)
+				local thickness = TAB_CUE_HOVER_THICKNESS + ((TAB_CUE_HOLD_THICKNESS - TAB_CUE_HOVER_THICKNESS) * progress)
+				setCue(transparency, thickness, 0)
+				task.wait()
+			end
+		end
+
+		local function cleanupCue()
+			if state.cueThemeConnection then
+				state.cueThemeConnection:Disconnect()
+				state.cueThemeConnection = nil
+			end
+			if state.cueFrame and state.cueFrame.Parent then
+				state.cueFrame:Destroy()
+			end
+			state.cueFrame = nil
+			state.cueStroke = nil
+			state.cueGlowStroke = nil
+		end
 
 		local function stopGhostFollow()
 			if state.ghostFollowConnection then
@@ -1104,12 +1228,10 @@ function TabSplitModule.init(ctx)
 
 		local function clearVisuals()
 			stopGhostFollow()
-			clearHoldIndicator(state.indicator, state.indicatorTween)
 			clearGhost(state.ghost)
-			state.indicator = nil
-			state.indicatorTween = nil
 			state.ghost = nil
 			state.ghostTarget = nil
+			cleanupCue()
 		end
 
 		local function beginPress(input)
@@ -1125,7 +1247,8 @@ function TabSplitModule.init(ctx)
 			state.holdToken += 1
 			local token = state.holdToken
 
-			state.indicator, state.indicatorTween = createHoldIndicator(tabRecord.TabButton)
+			refreshCue()
+			task.spawn(runCueProgress, token)
 
 			task.delay(holdDuration, function()
 				if token ~= state.holdToken or not state.pressing then
@@ -1142,14 +1265,13 @@ function TabSplitModule.init(ctx)
 						})
 					end
 					tabRecord.SuppressNextClick = true
-					clearHoldIndicator(state.indicator, state.indicatorTween)
-					state.indicator = nil
-					state.indicatorTween = nil
+					refreshCue()
 					return
 				end
 
 				state.dragArmed = true
 				tabRecord.SuppressNextClick = true
+				refreshCue()
 				state.ghost = createGhost("Split: " .. tostring(tabRecord.Name), state.pointer)
 				state.ghostTarget = state.pointer
 				startGhostFollow()
@@ -1171,10 +1293,6 @@ function TabSplitModule.init(ctx)
 			state.pressInput = nil
 			state.holdToken += 1
 
-			clearHoldIndicator(state.indicator, state.indicatorTween)
-			state.indicator = nil
-			state.indicatorTween = nil
-
 			if state.dragArmed then
 				state.dragArmed = false
 				stopGhostFollow()
@@ -1193,6 +1311,8 @@ function TabSplitModule.init(ctx)
 				state.ghost = nil
 				state.ghostTarget = nil
 			end
+
+			refreshCue()
 		end
 
 		table.insert(connections, interact.InputBegan:Connect(function(input)
@@ -1206,6 +1326,23 @@ function TabSplitModule.init(ctx)
 		table.insert(connections, tabRecord.TabButton.AncestryChanged:Connect(function()
 			if not tabRecord.TabButton:IsDescendantOf(game) then
 				unregisterTab(tabRecord)
+			end
+		end))
+
+		table.insert(connections, interact.MouseEnter:Connect(function()
+			if tabRecord.IsSplit then
+				return
+			end
+			state.hoverCounter += 1
+			state.hoverActive = state.hoverCounter > 0
+			refreshCue()
+		end))
+
+		table.insert(connections, interact.MouseLeave:Connect(function()
+			state.hoverCounter = math.max(0, state.hoverCounter - 1)
+			state.hoverActive = state.hoverCounter > 0
+			if not state.pressing and not state.dragArmed then
+				refreshCue()
 			end
 		end))
 
@@ -1227,6 +1364,8 @@ function TabSplitModule.init(ctx)
 			end
 		end, finishPress)
 
+		refreshCue()
+
 		tabGestureCleanup[tabRecord] = {
 			InputId = inputId,
 			Connections = connections,
@@ -1245,6 +1384,14 @@ function TabSplitModule.init(ctx)
 		for _, panelData in pairs(splitPanels) do
 			if panelData and panelData.Frame and panelData.Frame.Parent then
 				panelData.Frame.Visible = (not splitHidden) and (not splitMinimized)
+				if splitHidden or splitMinimized then
+					panelData.HoverPanel = false
+					panelData.HoverHeader = false
+					panelData.HoverDock = false
+					panelData.HoverActive = false
+					panelData.Dragging = false
+					setPanelHoverState(panelData, false, true)
+				end
 			end
 		end
 	end

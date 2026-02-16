@@ -28,6 +28,7 @@
 - Updated split-panel layout behavior to `Free drag + clamp` (manual panel position is preserved).
 - Updated first-use UX by prewarming split/detach layers to reduce first drag hitch.
 - Updated split-tab drag ghost movement to frame-synced follow for smoother first long-hold drag.
+- Updated tab split gesture visuals to use element-style hold/ready border cue on tab buttons.
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
@@ -41,6 +42,7 @@
 - Fixed split-panel hover feedback with explicit border glow state for hover and drag.
 - Fixed tab hover polish with consistent hover transitions on tab buttons.
 - Fixed element detach cue styling to use stronger glow/hold/ready feedback during hold-drag.
+- Fixed split-panel hover state sticking by switching to explicit hover booleans instead of counter-based accumulation.
 
 ## 2026-02-15
 

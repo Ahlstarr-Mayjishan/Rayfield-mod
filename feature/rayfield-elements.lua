@@ -238,12 +238,16 @@ function ElementsModule.init(ctx)
 			tabRecord.Activate = activateTab
 
 			TabButton.Interact.MouseEnter:Connect(function()
+				if self.Elements.UIPageLayout.CurrentPage == TabPage then
+					return
+				end
 				tabHover = true
 				applyTabHoverVisual(0.14)
 			end)
 
 			TabButton.Interact.MouseLeave:Connect(function()
 				tabHover = false
+				UpdateTabColors()
 				applyTabHoverVisual(0.14)
 			end)
 	
