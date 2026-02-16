@@ -43,6 +43,7 @@
 - Fixed tab hover polish with consistent hover transitions on tab buttons.
 - Fixed element detach cue styling to use stronger glow/hold/ready feedback during hold-drag.
 - Fixed split-panel hover state sticking by switching to explicit hover booleans instead of counter-based accumulation.
+- Fixed residual idle glow by forcing detach/split cue glow transparency to fully hide (`1`) when not hovered/holding.
 
 ## 2026-02-15
 

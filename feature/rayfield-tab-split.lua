@@ -1128,7 +1128,9 @@ function TabSplitModule.init(ctx)
 				return
 			end
 
-			local glowTransparency = math.clamp((transparency * 0.65) + 0.12, 0.12, 1)
+			local glowTransparency = (transparency >= 0.99)
+				and 1
+				or math.clamp(transparency + 0.18, 0.12, 0.95)
 			local glowThickness = thickness + 2.2
 
 			if not duration or duration <= 0 then
