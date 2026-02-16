@@ -16,6 +16,9 @@ function UIStateModule.init(ctx)
 	self.MPrompt = ctx.MPrompt
 	self.dragInteract = ctx.dragInteract
 	self.dragBarCosmetic = ctx.dragBarCosmetic
+	self.dragBar = ctx.dragBar
+	self.dragOffset = ctx.dragOffset
+	self.dragOffsetMobile = ctx.dragOffsetMobile
 	self.getIcon = ctx.getIcon
 	self.getAssetUri = ctx.getAssetUri
 	self.getSelectedTheme = ctx.getSelectedTheme
@@ -32,6 +35,12 @@ function UIStateModule.init(ctx)
 
 	-- Forward declare functions
 	local closeSearch
+
+	local function playTween(instance, tweenInfo, properties)
+		if instance then
+			self.TweenService:Create(instance, tweenInfo, properties):Play()
+		end
+	end
 
 	-- Extract code starts here
 
@@ -73,12 +82,15 @@ function UIStateModule.init(ctx)
 			newNotification.Description.Text = data.Content or "Unknown Content"
 	
 			if data.Image then
-				if typeof(data.Image) == 'string' and Icons then
-					local asset = self.getIcon(data.Image)
-	
-					newNotification.Icon.Image = 'rbxassetid://'..asset.id
-					newNotification.Icon.ImageRectOffset = asset.imageRectOffset
-					newNotification.Icon.ImageRectSize = asset.imageRectSize
+				if typeof(data.Image) == 'string' and self.getIcon then
+					local iconSuccess, asset = pcall(self.getIcon, data.Image)
+					if iconSuccess and asset then
+						newNotification.Icon.Image = 'rbxassetid://' .. tostring(asset.id or 0)
+						newNotification.Icon.ImageRectOffset = asset.imageRectOffset or Vector2.new(0, 0)
+						newNotification.Icon.ImageRectSize = asset.imageRectSize or Vector2.new(0, 0)
+					else
+						newNotification.Icon.Image = self.getAssetUri(data.Image)
+					end
 				else
 					newNotification.Icon.Image = self.getAssetUri(data.Image)
 				end
@@ -259,25 +271,27 @@ function UIStateModule.init(ctx)
 			end
 		end
 
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 470, 0, 0)}):Play()
-		self.TweenService:Create(self.Main.self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 470, 0, 45)}):Play()
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Main.self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.CornerRepair, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.Title, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		self.TweenService:Create(self.Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-		self.TweenService:Create(self.Topbar.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-		self.TweenService:Create(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 470, 0, 0)})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 470, 0, 45)})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Title"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1})
+		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("UIStroke"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1})
+		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 	
 		if self.useMobilePrompt and self.MPrompt then
 			self.TweenService:Create(self.MPrompt, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 120, 0, 30), Position = UDim2.new(0.5, 0, 0, 20), BackgroundTransparency = 0.3}):Play()
 			self.TweenService:Create(self.MPrompt.Title, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0.3}):Play()
 		end
 	
-		for _, TopbarButton in ipairs(self.Topbar:GetChildren()) do
-			if TopbarButton.ClassName == "ImageButton" then
-				self.TweenService:Create(TopbarButton, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
+		if self.Topbar then
+			for _, TopbarButton in ipairs(self.Topbar:GetChildren()) do
+				if TopbarButton.ClassName == "ImageButton" then
+					playTween(TopbarButton, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1})
+				end
 			end
 		end
 	
@@ -290,7 +304,9 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		self.dragInteract.Visible = false
+		if self.dragInteract then
+			self.dragInteract.Visible = false
+		end
 	
 		for _, tab in ipairs(self.Elements:GetChildren()) do
 			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
@@ -324,19 +340,25 @@ function UIStateModule.init(ctx)
 	
 	local function Maximise()
 		Debounce = true
-		self.Topbar.ChangeSize.Image = "rbxassetid://"..10137941941
+		if self.Topbar and self.Topbar:FindFirstChild("ChangeSize") then
+			self.Topbar.ChangeSize.Image = "rbxassetid://" .. 10137941941
+		end
 	
-		self.TweenService:Create(self.Topbar.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-		self.TweenService:Create(self.Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
-		self.TweenService:Create(self.Topbar.CornerRepair, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.Topbar.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.7}):Play()
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
-		self.TweenService:Create(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)}):Play()
-		self.TabList.Visible = true
+		playTween(self.Topbar and self.Topbar:FindFirstChild("UIStroke"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1})
+		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.7})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		if self.TabList then
+			self.TabList.Visible = true
+		end
 		task.wait(0.2)
 	
-		self.Elements.Visible = true
+		if self.Elements then
+			self.Elements.Visible = true
+		end
 	
 		for _, tab in ipairs(self.Elements:GetChildren()) do
 			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
@@ -391,14 +413,14 @@ function UIStateModule.init(ctx)
 		Debounce = true
 		self.Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 		self.Main.Visible = true
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
-		self.TweenService:Create(self.Main.self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)}):Play()
-		self.TweenService:Create(self.Main.Shadow.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.Main.self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.CornerRepair, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-		self.TweenService:Create(self.Main.self.Topbar.Title, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Title"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0})
 	
 		if self.MPrompt then
 			self.TweenService:Create(self.MPrompt, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 40, 0, 10), Position = UDim2.new(0.5, 0, 0, -50), BackgroundTransparency = 1}):Play()
@@ -414,18 +436,25 @@ function UIStateModule.init(ctx)
 			task.spawn(Maximise)
 		end
 	
-		dragBar.Position = self.useMobileSizing and UDim2.new(0.5, 0, 0.5, dragOffsetMobile) or UDim2.new(0.5, 0, 0.5, dragOffset)
+		if self.dragBar then
+			self.dragBar.Position = self.useMobileSizing
+				and UDim2.new(0.5, 0, 0.5, self.dragOffsetMobile)
+				or UDim2.new(0.5, 0, 0.5, self.dragOffset)
+		end
 	
-		self.dragInteract.Visible = true
+		if self.dragInteract then
+			self.dragInteract.Visible = true
+		end
 	
-		for _, TopbarButton in ipairs(self.Topbar:GetChildren()) do
-			if TopbarButton.ClassName == "ImageButton" then
-				if TopbarButton.Name == 'Icon' then
-					self.TweenService:Create(TopbarButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-				else
-					self.TweenService:Create(TopbarButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+		if self.Topbar then
+			for _, TopbarButton in ipairs(self.Topbar:GetChildren()) do
+				if TopbarButton.ClassName == "ImageButton" then
+					if TopbarButton.Name == 'Icon' then
+						playTween(TopbarButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0})
+					else
+						playTween(TopbarButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8})
+					end
 				end
-	
 			end
 		end
 	
@@ -470,7 +499,7 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		self.TweenService:Create(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.5}):Play()
+		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.5})
 	
 		task.wait(0.5)
 		Minimised = false
@@ -479,9 +508,13 @@ function UIStateModule.init(ctx)
 	
 	local function Minimise()
 		Debounce = true
-		self.Topbar.ChangeSize.Image = "rbxassetid://"..11036884234
+		if self.Topbar and self.Topbar:FindFirstChild("ChangeSize") then
+			self.Topbar.ChangeSize.Image = "rbxassetid://" .. 11036884234
+		end
 	
-		self.Topbar.UIStroke.Color = self.getSelectedTheme().ElementStroke
+		if self.Topbar and self.Topbar:FindFirstChild("UIStroke") then
+			self.Topbar.UIStroke.Color = self.getSelectedTheme().ElementStroke
+		end
 	
 		task.spawn(closeSearch)
 	
@@ -519,18 +552,22 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		self.TweenService:Create(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Topbar.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-		self.TweenService:Create(self.Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-		self.TweenService:Create(self.Topbar.CornerRepair, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Topbar.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-		self.TweenService:Create(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 495, 0, 45)}):Play()
-		self.TweenService:Create(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 495, 0, 45)}):Play()
+		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("UIStroke"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 0})
+		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 495, 0, 45)})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 495, 0, 45)})
 	
 		task.wait(0.3)
 	
-		self.Elements.Visible = false
-		self.TabList.Visible = false
+		if self.Elements then
+			self.Elements.Visible = false
+		end
+		if self.TabList then
+			self.TabList.Visible = false
+		end
 	
 		task.wait(0.2)
 		Debounce = false

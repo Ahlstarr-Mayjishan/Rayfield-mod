@@ -980,6 +980,9 @@ local UIStateSystem = UIStateModuleLib.init({
 	MPrompt = MPrompt,
 	dragInteract = dragInteract,
 	dragBarCosmetic = dragBarCosmetic,
+	dragBar = dragBar,
+	dragOffset = dragOffset,
+	dragOffsetMobile = dragOffsetMobile,
 	getIcon = getIcon,
 	getAssetUri = getAssetUri,
 	getSelectedTheme = function() return SelectedTheme end,
@@ -1173,6 +1176,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 	end
 
 	Topbar.Visible = false
+	TabList.Visible = false
 	Elements.Visible = false
 	LoadingFrame.Visible = true
 
@@ -1532,63 +1536,92 @@ function RayfieldLibrary:CreateWindow(Settings)
 		return tab
 	end
 
-	-- Note: All element factories (CreateButton, CreateToggle, etc.) moved to rayfield-elements.lua module
-	--[[
-	OLD CODE REMOVED - Now handled by ElementsSystem
+	local function playStartupAnimation()
+		Elements.Visible = true
 
-	-- Note: CreateTab and all element factories moved to rayfield-elements.lua module
+		task.wait(1.1)
+		TweenService:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
+		task.wait(0.3)
+		TweenService:Create(LoadingFrame.Title, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		TweenService:Create(LoadingFrame.Subtitle, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		TweenService:Create(LoadingFrame.Version, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		task.wait(0.1)
+		TweenService:Create(Main, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
+		TweenService:Create(Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
 
+		local topbarDivider = Topbar:FindFirstChild("Divider")
+		local topbarCornerRepair = Topbar:FindFirstChild("CornerRepair")
+		local topbarTitle = Topbar:FindFirstChild("Title")
+		local topbarSearch = Topbar:FindFirstChild("Search")
+		local topbarSettings = Topbar:FindFirstChild("Settings")
+		local topbarChangeSize = Topbar:FindFirstChild("ChangeSize")
+		local topbarHide = Topbar:FindFirstChild("Hide")
 
-	Elements.Visible = true
+		Topbar.BackgroundTransparency = 1
+		if topbarDivider then
+			topbarDivider.Size = UDim2.new(0, 0, 0, 1)
+			topbarDivider.BackgroundColor3 = SelectedTheme.ElementStroke
+		end
+		if topbarCornerRepair then
+			topbarCornerRepair.BackgroundTransparency = 1
+		end
+		if topbarTitle then
+			topbarTitle.TextTransparency = 1
+		end
+		if topbarSearch then
+			topbarSearch.ImageTransparency = 1
+		end
+		if topbarSettings then
+			topbarSettings.ImageTransparency = 1
+		end
+		if topbarChangeSize then
+			topbarChangeSize.ImageTransparency = 1
+		end
+		if topbarHide then
+			topbarHide.ImageTransparency = 1
+		end
 
-
-	task.wait(1.1)
-	TweenService:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
-	task.wait(0.3)
-	TweenService:Create(LoadingFrame.Title, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-	TweenService:Create(LoadingFrame.Subtitle, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-	TweenService:Create(LoadingFrame.Version, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-	task.wait(0.1)
-	TweenService:Create(Main, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
-	TweenService:Create(Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
-
-	Topbar.BackgroundTransparency = 1
-	Topbar.Divider.Size = UDim2.new(0, 0, 0, 1)
-	Topbar.Divider.BackgroundColor3 = SelectedTheme.ElementStroke
-	Topbar.CornerRepair.BackgroundTransparency = 1
-	Topbar.Title.TextTransparency = 1
-	Topbar.Search.ImageTransparency = 1
-	if Topbar:FindFirstChild('Settings') then
-		Topbar.Settings.ImageTransparency = 1
-	end
-	Topbar.ChangeSize.ImageTransparency = 1
-	Topbar.Hide.ImageTransparency = 1
-
-
-	task.wait(0.5)
-	Topbar.Visible = true
-	TweenService:Create(Topbar, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-	TweenService:Create(Topbar.CornerRepair, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-	task.wait(0.1)
-	TweenService:Create(Topbar.Divider, TweenInfo.new(1, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
-	TweenService:Create(Topbar.Title, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	task.wait(0.05)
-	TweenService:Create(Topbar.Search, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-	task.wait(0.05)
-	if Topbar:FindFirstChild('Settings') then
-		TweenService:Create(Topbar.Settings, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+		task.wait(0.5)
+		Topbar.Visible = true
+		TabList.Visible = true
+		TweenService:Create(Topbar, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+		if topbarCornerRepair then
+			TweenService:Create(topbarCornerRepair, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+		end
+		task.wait(0.1)
+		if topbarDivider then
+			TweenService:Create(topbarDivider, TweenInfo.new(1, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
+		end
+		if topbarTitle then
+			TweenService:Create(topbarTitle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+		end
 		task.wait(0.05)
-	end
-	TweenService:Create(Topbar.ChangeSize, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-	task.wait(0.05)
-	TweenService:Create(Topbar.Hide, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-	task.wait(0.3)
+		if topbarSearch then
+			TweenService:Create(topbarSearch, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+		end
+		task.wait(0.05)
+		if topbarSettings then
+			TweenService:Create(topbarSettings, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			task.wait(0.05)
+		end
+		if topbarChangeSize then
+			TweenService:Create(topbarChangeSize, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			task.wait(0.05)
+		end
+		if topbarHide then
+			TweenService:Create(topbarHide, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+		end
+		task.wait(0.3)
 
-	if dragBar then
-		TweenService:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-	end
+		if dragBar and dragBarCosmetic then
+			TweenService:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
+		end
 
-	]]
+		LoadingFrame.Visible = false
+		Topbar.Visible = true
+		TabList.Visible = true
+		Elements.Visible = true
+	end
 
 	function Window.ModifyTheme(NewTheme)
 		local success = pcall(ChangeTheme, NewTheme)
@@ -1604,6 +1637,17 @@ function RayfieldLibrary:CreateWindow(Settings)
 	end)
 
 	if not success then warn('Rayfield had an issue creating settings.') end
+
+	local startupSuccess, startupResult = pcall(function()
+		playStartupAnimation()
+	end)
+	if not startupSuccess then
+		warn("Rayfield had an issue during startup animation: " .. tostring(startupResult))
+		LoadingFrame.Visible = false
+		Topbar.Visible = true
+		TabList.Visible = true
+		Elements.Visible = true
+	end
 
 	return Window
 end

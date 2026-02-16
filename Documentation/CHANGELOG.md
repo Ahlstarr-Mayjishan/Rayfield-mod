@@ -21,6 +21,10 @@
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
 - Added deterministic animation cleanup on object removal/destruction (`AncestryChanged` + `Destroying` hooks).
 - Optimized `AnimationAPI:Pulse()` to use a single repeat/reverse tween cycle instead of chained bounce spawning.
+- Restored full startup animation pipeline in `CreateWindow` so loading intro transitions cleanly into the main UI.
+- Fixed loading overlay persistence by explicitly finalizing startup visibility state (`LoadingFrame` hidden, `Topbar`/`TabList`/`Elements` visible).
+- Fixed `UIState` topbar reference bug (`self.Main.self.Topbar` -> `self.Topbar`) in hide/unhide transitions.
+- Fixed `UIState` drag-bar dependency usage by injecting `dragBar`, `dragOffset`, and `dragOffsetMobile` via init context.
 
 ## 2026-02-15
 
