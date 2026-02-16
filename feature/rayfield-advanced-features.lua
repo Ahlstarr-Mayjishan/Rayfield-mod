@@ -17,7 +17,7 @@ local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
-local RayfieldAdvanced = {Version = "1.0.0"}
+local RayfieldAdvanced = {Version = "1.1.0"}
 
 -- ============================================
 -- 1. ANIMATION API
@@ -28,8 +28,189 @@ AnimationAPI.__index = AnimationAPI
 
 function AnimationAPI.new()
 	local self = setmetatable({}, AnimationAPI)
-	self.activeAnimations = {}
+	self.activeAnimations = setmetatable({}, {__mode = "k"})
+	self.cleanupConnections = setmetatable({}, {__mode = "k"})
 	return self
+end
+
+function AnimationAPI:_disconnectCleanup(guiObject)
+	local connections = self.cleanupConnections[guiObject]
+	if not connections then return end
+
+	for _, connection in ipairs(connections) do
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+
+	self.cleanupConnections[guiObject] = nil
+end
+
+function AnimationAPI:_cancelObjectAnimations(guiObject)
+	local objectAnimations = self.activeAnimations[guiObject]
+	if not objectAnimations then return end
+
+	for property, tween in pairs(objectAnimations) do
+		if tween then
+			pcall(function()
+				tween:Cancel()
+			end)
+		end
+		objectAnimations[property] = nil
+	end
+
+	self.activeAnimations[guiObject] = nil
+end
+
+function AnimationAPI:_releaseObject(guiObject)
+	self:_cancelObjectAnimations(guiObject)
+	self:_disconnectCleanup(guiObject)
+end
+
+function AnimationAPI:_ensureCleanupHooks(guiObject)
+	if self.cleanupConnections[guiObject] then return end
+
+	local connections = {}
+
+	local function onRemoved()
+		self:_releaseObject(guiObject)
+	end
+
+	local ancestryConnection = guiObject.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			onRemoved()
+		end
+	end)
+	table.insert(connections, ancestryConnection)
+
+	local okDestroying = pcall(function()
+		return guiObject.Destroying
+	end)
+	if okDestroying then
+		local destroyingConnection = guiObject.Destroying:Connect(onRemoved)
+		table.insert(connections, destroyingConnection)
+	end
+
+	self.cleanupConnections[guiObject] = connections
+end
+
+function AnimationAPI:_registerTween(guiObject, property, tween)
+	self:_ensureCleanupHooks(guiObject)
+
+	local objectAnimations = self.activeAnimations[guiObject]
+	if not objectAnimations then
+		objectAnimations = {}
+		self.activeAnimations[guiObject] = objectAnimations
+	end
+
+	local previousTween = objectAnimations[property]
+	if previousTween then
+		pcall(function()
+			previousTween:Cancel()
+		end)
+	end
+
+	objectAnimations[property] = tween
+
+	tween.Completed:Connect(function()
+		local animationsForObject = self.activeAnimations[guiObject]
+		if not animationsForObject then return end
+
+		if animationsForObject[property] == tween then
+			animationsForObject[property] = nil
+		end
+
+		if next(animationsForObject) == nil then
+			self.activeAnimations[guiObject] = nil
+			self:_disconnectCleanup(guiObject)
+		end
+	end)
+
+	tween:Play()
+	return tween
+end
+
+function AnimationAPI:GetActiveAnimationCount()
+	local count = 0
+	for _, objectAnimations in pairs(self.activeAnimations) do
+		for _ in pairs(objectAnimations) do
+			count = count + 1
+		end
+	end
+	return count
+end
+
+function AnimationAPI:Sequence(guiObject)
+	local api = self
+	local queue = {}
+	local running = false
+	local sequence = {}
+
+	local function runStep(stepFn)
+		local tween = stepFn()
+		if not tween or not tween.Completed then
+			local nextStep = table.remove(queue, 1)
+			if nextStep then
+				runStep(nextStep)
+			else
+				running = false
+			end
+			return
+		end
+
+		tween.Completed:Connect(function(playbackState)
+			if playbackState ~= Enum.PlaybackState.Completed then
+				running = false
+				while #queue > 0 do
+					table.remove(queue)
+				end
+				return
+			end
+
+			local nextStep = table.remove(queue, 1)
+			if nextStep then
+				runStep(nextStep)
+			else
+				running = false
+			end
+		end)
+	end
+
+	local function enqueue(stepFn)
+		if running then
+			table.insert(queue, stepFn)
+		else
+			running = true
+			runStep(stepFn)
+		end
+		return sequence
+	end
+
+	function sequence:SlideIn(direction, duration)
+		return enqueue(function()
+			return api:SlideIn(guiObject, direction, duration)
+		end)
+	end
+
+	function sequence:Bounce(duration)
+		return enqueue(function()
+			return api:Bounce(guiObject, duration)
+		end)
+	end
+
+	function sequence:Pulse(duration, pulseCount)
+		return enqueue(function()
+			return api:Pulse(guiObject, duration, pulseCount)
+		end)
+	end
+
+	function sequence:Custom(callback)
+		return enqueue(function()
+			return callback(api, guiObject)
+		end)
+	end
+
+	return sequence
 end
 
 -- Core animate function
@@ -40,19 +221,7 @@ function AnimationAPI:Animate(guiObject, property, targetValue, duration, easing
 
 	local tweenInfo = TweenInfo.new(duration, easingStyle, easingDirection)
 	local tween = TweenService:Create(guiObject, tweenInfo, {[property] = targetValue})
-
-	local animId = tostring(guiObject) .. "_" .. property
-	if self.activeAnimations[animId] then
-		self.activeAnimations[animId]:Cancel()
-	end
-	self.activeAnimations[animId] = tween
-
-	tween:Play()
-	tween.Completed:Connect(function()
-		self.activeAnimations[animId] = nil
-	end)
-
-	return tween
+	return self:_registerTween(guiObject, property, tween)
 end
 
 -- Preset animations
@@ -125,14 +294,29 @@ end
 function AnimationAPI:Pulse(guiObject, duration, pulseCount)
 	duration = duration or 1
 	pulseCount = pulseCount or 3
-	local pulseDuration = duration / pulseCount
+	if pulseCount < 1 then
+		pulseCount = 1
+	end
 
-	task.spawn(function()
-		for i = 1, pulseCount do
-			self:Bounce(guiObject, pulseDuration)
-			task.wait(pulseDuration)
-		end
-	end)
+	local originalSize = guiObject.Size
+	local pulseSize = UDim2.new(
+		originalSize.X.Scale * 1.06,
+		math.floor(originalSize.X.Offset * 1.06 + 0.5),
+		originalSize.Y.Scale * 1.06,
+		math.floor(originalSize.Y.Offset * 1.06 + 0.5)
+	)
+
+	local halfCycleDuration = duration / (pulseCount * 2)
+	local tweenInfo = TweenInfo.new(
+		halfCycleDuration,
+		Enum.EasingStyle.Quad,
+		Enum.EasingDirection.Out,
+		(pulseCount * 2) - 1,
+		true
+	)
+
+	local tween = TweenService:Create(guiObject, tweenInfo, {Size = pulseSize})
+	return self:_registerTween(guiObject, "Size", tween)
 end
 
 -- ============================================

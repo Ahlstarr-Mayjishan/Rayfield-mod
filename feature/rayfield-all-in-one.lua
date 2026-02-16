@@ -99,13 +99,19 @@ local function setCache(key, value)
 	end
 end
 
+local function getCacheKey(name, url)
+	return tostring(name) .. "|" .. tostring(url)
+end
+
 -- ============================================
 -- MODULE LOADER
 -- ============================================
 
 local function loadModule(name, url)
+	local cacheKey = getCacheKey(name, url)
+
 	-- Check cache
-	local cached = getCached(name)
+	local cached = getCached(cacheKey)
 	if cached then return cached end
 	
 	print("⬇️ [Rayfield] Loading:", name)
@@ -120,7 +126,7 @@ local function loadModule(name, url)
 	end
 	
 	-- Cache result
-	setCache(name, result)
+	setCache(cacheKey, result)
 	
 	print("✅ [Rayfield] Loaded:", name)
 	return result
