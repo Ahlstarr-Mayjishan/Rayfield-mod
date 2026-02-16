@@ -24,6 +24,8 @@
   - exported UI remains accessible via `_G.Rayfield` and `_G.RayfieldUI`
   - configurable via `autoExecuteReturn = "loader" | "ui" | "none"`.
 - Synced split panel visibility with main UI hide/minimize transitions.
+- Updated split-panel docking UX to support drop-to-dock by dragging panel header into main `TabList`.
+- Updated split-panel layout behavior to `Free drag + clamp` (manual panel position is preserved).
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
@@ -33,6 +35,8 @@
 - Fixed loading overlay persistence by explicitly finalizing startup visibility state (`LoadingFrame` hidden, `Topbar`/`TabList`/`Elements` visible).
 - Fixed `UIState` topbar reference bug (`self.Main.self.Topbar` -> `self.Topbar`) in hide/unhide transitions.
 - Fixed `UIState` drag-bar dependency usage by injecting `dragBar`, `dragOffset`, and `dragOffsetMobile` via init context.
+- Fixed split-tab content visibility/interaction by applying and restoring `ZIndex` for `TabPage` descendants during split/dock.
+- Fixed split-panel hover feedback with explicit border glow state for hover and drag.
 
 ## 2026-02-15
 

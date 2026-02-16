@@ -47,6 +47,10 @@ function TabSplitModule.init(ctx)
 	local sharedInputEnded = {}
 	local sharedInputConnections = nil
 	local rootConnections = {}
+	local tabZIndexState = setmetatable({}, { __mode = "k" })
+
+	local DRAG_THRESHOLD = 4
+	local PANEL_MARGIN = 8
 
 	local function isDestroyed()
 		return self.rayfieldDestroyed and self.rayfieldDestroyed()
@@ -147,6 +151,134 @@ function TabSplitModule.init(ctx)
 		return isPointInside(self.TabList, point, 10)
 	end
 
+	local function clampPositionToViewport(root, desiredPosition, panelSize)
+		local viewport = root.AbsoluteSize
+		local clampedX = math.clamp(
+			desiredPosition.X,
+			PANEL_MARGIN,
+			math.max(PANEL_MARGIN, viewport.X - panelSize.X - PANEL_MARGIN)
+		)
+		local clampedY = math.clamp(
+			desiredPosition.Y,
+			PANEL_MARGIN,
+			math.max(PANEL_MARGIN, viewport.Y - panelSize.Y - PANEL_MARGIN)
+		)
+		return Vector2.new(clampedX, clampedY)
+	end
+
+	local function hasZIndex(guiObject)
+		return pcall(function()
+			local _ = guiObject.ZIndex
+		end)
+	end
+
+	local function getOriginalZState(tabRecord)
+		local state = tabZIndexState[tabRecord]
+		if state then
+			return state
+		end
+
+		state = {
+			Original = setmetatable({}, { __mode = "k" }),
+			DescendantConn = nil,
+			LastBaseZ = 200
+		}
+		tabZIndexState[tabRecord] = state
+		return state
+	end
+
+	local function captureOriginalZIndex(tabRecord)
+		if not (tabRecord and tabRecord.TabPage) then
+			return
+		end
+
+		local state = getOriginalZState(tabRecord)
+		local objects = { tabRecord.TabPage }
+		for _, descendant in ipairs(tabRecord.TabPage:GetDescendants()) do
+			table.insert(objects, descendant)
+		end
+
+		for _, object in ipairs(objects) do
+			if hasZIndex(object) and state.Original[object] == nil then
+				state.Original[object] = object.ZIndex
+			end
+		end
+	end
+
+	local function applySplitZIndex(tabRecord, zBase)
+		if not (tabRecord and tabRecord.TabPage) then
+			return
+		end
+
+		local state = getOriginalZState(tabRecord)
+		state.LastBaseZ = zBase or state.LastBaseZ or 200
+
+		captureOriginalZIndex(tabRecord)
+
+		for object, original in pairs(state.Original) do
+			if object and object.Parent and hasZIndex(object) then
+				object.ZIndex = state.LastBaseZ + original
+			end
+		end
+
+		if not state.DescendantConn then
+			state.DescendantConn = tabRecord.TabPage.DescendantAdded:Connect(function(descendant)
+				if not tabRecord.IsSplit then
+					return
+				end
+				if not hasZIndex(descendant) then
+					return
+				end
+				if state.Original[descendant] == nil then
+					state.Original[descendant] = descendant.ZIndex
+				end
+				descendant.ZIndex = state.LastBaseZ + state.Original[descendant]
+			end)
+		end
+	end
+
+	local function restoreOriginalZIndex(tabRecord)
+		local state = tabZIndexState[tabRecord]
+		if not state then
+			return
+		end
+
+		if state.DescendantConn then
+			state.DescendantConn:Disconnect()
+			state.DescendantConn = nil
+		end
+
+		for object, original in pairs(state.Original) do
+			if object and object.Parent and hasZIndex(object) then
+				object.ZIndex = original
+			end
+		end
+
+		tabZIndexState[tabRecord] = nil
+	end
+
+	local function getPanelSize(root)
+		local viewport = root.AbsoluteSize
+		local mainSize = self.Main.AbsoluteSize
+
+		local panelWidth = math.clamp(math.floor(mainSize.X * 0.68), 250, 420)
+		local panelHeight = math.clamp(math.floor(mainSize.Y), 180, math.max(180, viewport.Y - 12))
+		return Vector2.new(panelWidth, panelHeight)
+	end
+
+	local function setPanelLayer(panelData, baseZ)
+		panelData.LayerZ = baseZ
+		panelData.Frame.ZIndex = baseZ
+		panelData.Header.ZIndex = baseZ + 1
+		panelData.Content.ZIndex = baseZ + 1
+		panelData.Title.ZIndex = baseZ + 2
+		panelData.DockButton.ZIndex = baseZ + 2
+		applySplitZIndex(panelData.TabRecord, baseZ + 2)
+	end
+
+	local setPanelHoverState
+	local applyPanelTheme
+
 	local function ensureSplitRoot()
 		if splitRoot and splitRoot.Parent then
 			return splitRoot
@@ -173,14 +305,7 @@ function TabSplitModule.init(ctx)
 		table.insert(rootConnections, self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 			for _, panelData in pairs(splitPanels) do
 				if panelData then
-					local theme = self.getSelectedTheme and self.getSelectedTheme()
-					if theme then
-						panelData.Frame.BackgroundColor3 = theme.SecondaryElementBackground or panelData.Frame.BackgroundColor3
-						panelData.Header.BackgroundColor3 = theme.Topbar or panelData.Header.BackgroundColor3
-						panelData.Title.TextColor3 = theme.TextColor or panelData.Title.TextColor3
-						panelData.DockButton.BackgroundColor3 = theme.ElementBackgroundHover or panelData.DockButton.BackgroundColor3
-						panelData.DockButton.TextColor3 = theme.TextColor or panelData.DockButton.TextColor3
-					end
+					applyPanelTheme(panelData)
 				end
 			end
 		end))
@@ -337,6 +462,220 @@ function TabSplitModule.init(ctx)
 		return nil
 	end
 
+	setPanelHoverState = function(panelData, active, instant)
+		if not (panelData and panelData.Frame and panelData.Frame.Parent) then
+			return
+		end
+
+		panelData.HoverActive = active and true or false
+
+		local theme = self.getSelectedTheme and self.getSelectedTheme()
+		local accent = (theme and theme.SliderProgress) or Color3.fromRGB(112, 189, 255)
+		local strokeColor = (theme and theme.ElementStroke) or Color3.fromRGB(85, 85, 85)
+
+		if panelData.GlowStroke then
+			panelData.GlowStroke.Color = accent
+		end
+		if panelData.Stroke then
+			panelData.Stroke.Color = active and accent:Lerp(strokeColor, 0.35) or strokeColor
+		end
+
+		local duration = instant and 0 or 0.12
+		if panelData.Stroke then
+			self.TweenService:Create(panelData.Stroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Thickness = active and 1.7 or 1.1,
+				Transparency = active and 0.05 or 0.25
+			}):Play()
+		end
+		if panelData.GlowStroke then
+			self.TweenService:Create(panelData.GlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Thickness = active and 4.6 or 1.2,
+				Transparency = active and 0.35 or 1
+			}):Play()
+		end
+	end
+
+	applyPanelTheme = function(panelData)
+		if not panelData then
+			return
+		end
+		local theme = self.getSelectedTheme and self.getSelectedTheme()
+		if not theme then
+			return
+		end
+
+		panelData.Frame.BackgroundColor3 = theme.SecondaryElementBackground or panelData.Frame.BackgroundColor3
+		panelData.Header.BackgroundColor3 = theme.Topbar or panelData.Header.BackgroundColor3
+		panelData.Title.TextColor3 = theme.TextColor or panelData.Title.TextColor3
+		panelData.DockButton.BackgroundColor3 = theme.ElementBackgroundHover or panelData.DockButton.BackgroundColor3
+		panelData.DockButton.TextColor3 = theme.TextColor or panelData.DockButton.TextColor3
+		setPanelHoverState(panelData, panelData.HoverActive or panelData.Dragging, true)
+	end
+
+	local function removePanelRecord(panelId)
+		for i = #panelOrder, 1, -1 do
+			if panelOrder[i] == panelId then
+				table.remove(panelOrder, i)
+				break
+			end
+		end
+		splitPanels[panelId] = nil
+	end
+
+	local function cleanupPanel(panelData)
+		if not panelData then
+			return
+		end
+
+		if panelData.InputId then
+			unregisterSharedInput(panelData.InputId)
+		end
+
+		if panelData.Cleanup then
+			for _, cleanupFn in ipairs(panelData.Cleanup) do
+				pcall(cleanupFn)
+			end
+			table.clear(panelData.Cleanup)
+		end
+
+		if panelData.Frame and panelData.Frame.Parent then
+			panelData.Frame:Destroy()
+		end
+	end
+
+	local function bringPanelToFront(panelData)
+		if not panelData then
+			return
+		end
+
+		for i = #panelOrder, 1, -1 do
+			if panelOrder[i] == panelData.Id then
+				table.remove(panelOrder, i)
+				break
+			end
+		end
+		table.insert(panelOrder, panelData.Id)
+		self.layoutPanels()
+	end
+
+	local function attachPanelDrag(panelData)
+		local state = {
+			pressing = false,
+			dragging = false,
+			pressInput = nil,
+			startPointer = nil,
+			startPosition = nil,
+			pointer = nil
+		}
+
+		local function resetState()
+			state.pressing = false
+			state.dragging = false
+			state.pressInput = nil
+			state.startPointer = nil
+			state.startPosition = nil
+			state.pointer = nil
+			panelData.Dragging = false
+			setPanelHoverState(panelData, panelData.HoverActive, false)
+		end
+
+		local function beginPress(input)
+			if isBlocked() or not (panelData.Frame and panelData.Frame.Parent) then
+				return
+			end
+
+			local pointer = getInputPosition(input)
+			if isPointInside(panelData.DockButton, pointer, 0) then
+				return
+			end
+
+			state.pressing = true
+			state.dragging = false
+			state.pressInput = input
+			state.startPointer = pointer
+			state.pointer = pointer
+			if panelData.ManualPosition then
+				state.startPosition = panelData.ManualPosition
+			else
+				state.startPosition = Vector2.new(panelData.Frame.AbsolutePosition.X, panelData.Frame.AbsolutePosition.Y)
+			end
+
+			bringPanelToFront(panelData)
+		end
+
+		local function finishPress(input)
+			if not state.pressInput then
+				return
+			end
+
+			local sameTouch = input == state.pressInput
+			local mouseEnded = state.pressInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1
+			if not sameTouch and not mouseEnded then
+				return
+			end
+
+			local wasDragging = state.dragging
+			local dropPoint = state.pointer or getInputPosition(input)
+			resetState()
+
+			if not wasDragging then
+				return
+			end
+
+			if isPointInsideTabList(dropPoint) then
+				self.dockTab(panelData.TabRecord)
+				return
+			end
+
+			local root = ensureSplitRoot()
+			local panelSize = getPanelSize(root)
+			local currentPosition = panelData.ManualPosition or Vector2.new(panelData.Frame.AbsolutePosition.X, panelData.Frame.AbsolutePosition.Y)
+			local clamped = clampPositionToViewport(root, currentPosition, panelSize)
+			panelData.ManualPosition = clamped
+			panelData.Frame.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+			self.layoutPanels()
+		end
+
+		table.insert(panelData.Cleanup, panelData.Header.InputBegan:Connect(function(input)
+			local inputType = input.UserInputType
+			if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			beginPress(input)
+		end))
+
+		registerSharedInput(panelData.InputId, function(input)
+			if not state.pressing or not state.pressInput then
+				return
+			end
+
+			local sameTouch = input == state.pressInput
+			local mouseMove = state.pressInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement
+			if not sameTouch and not mouseMove then
+				return
+			end
+
+			state.pointer = getInputPosition(input)
+			local delta = state.pointer - state.startPointer
+			if not state.dragging and delta.Magnitude >= DRAG_THRESHOLD then
+				state.dragging = true
+				panelData.Dragging = true
+				setPanelHoverState(panelData, true, false)
+			end
+
+			if state.dragging then
+				local root = ensureSplitRoot()
+				local panelSize = getPanelSize(root)
+				local desired = state.startPosition + delta
+				local clamped = clampPositionToViewport(root, desired, panelSize)
+				panelData.ManualPosition = clamped
+				panelData.Frame.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+			end
+		end, finishPress)
+
+		table.insert(panelData.Cleanup, resetState)
+	end
+
 	local function createPanelShell(tabRecord)
 		local root = ensureSplitRoot()
 		splitIndex += 1
@@ -356,9 +695,15 @@ function TabSplitModule.init(ctx)
 
 		local stroke = Instance.new("UIStroke")
 		stroke.Color = (theme and theme.ElementStroke) or Color3.fromRGB(80, 80, 80)
-		stroke.Thickness = 1.2
-		stroke.Transparency = 0.2
+		stroke.Thickness = 1.1
+		stroke.Transparency = 0.25
 		stroke.Parent = panel
+
+		local glowStroke = Instance.new("UIStroke")
+		glowStroke.Color = (theme and theme.SliderProgress) or Color3.fromRGB(112, 189, 255)
+		glowStroke.Thickness = 1.2
+		glowStroke.Transparency = 1
+		glowStroke.Parent = panel
 
 		local header = Instance.new("Frame")
 		header.Name = "Header"
@@ -410,6 +755,7 @@ function TabSplitModule.init(ctx)
 		content.Position = UDim2.fromOffset(0, 34)
 		content.Size = UDim2.new(1, 0, 1, -34)
 		content.ClipsDescendants = true
+		content.Active = true
 		content.ZIndex = panel.ZIndex + 1
 		content.Parent = panel
 
@@ -420,144 +766,46 @@ function TabSplitModule.init(ctx)
 			Title = title,
 			DockButton = dockButton,
 			Content = content,
+			Stroke = stroke,
+			GlowStroke = glowStroke,
 			TabRecord = tabRecord,
 			Cleanup = {},
-			InputId = self.HttpService:GenerateGUID(false)
+			InputId = self.HttpService:GenerateGUID(false),
+			ManualPosition = nil,
+			Dragging = false,
+			HoverRefs = 0,
+			HoverActive = false,
+			LayerZ = 190
 		}
 
-		return panelData
-	end
-
-	local function removePanelRecord(panelId)
-		for index, id in ipairs(panelOrder) do
-			if id == panelId then
-				table.remove(panelOrder, index)
-				break
-			end
-		end
-		splitPanels[panelId] = nil
-	end
-
-	local function cleanupPanel(panelData)
-		if not panelData then
-			return
-		end
-
-		if panelData.InputId then
-			unregisterSharedInput(panelData.InputId)
-		end
-
-		if panelData.Cleanup then
-			for _, cleanupFn in ipairs(panelData.Cleanup) do
-				pcall(cleanupFn)
-			end
-			table.clear(panelData.Cleanup)
-		end
-
-		if panelData.Frame and panelData.Frame.Parent then
-			panelData.Frame:Destroy()
-		end
-	end
-
-	local function attachDockGesture(panelData)
-		local state = {
-			pressing = false,
-			dragArmed = false,
-			pressInput = nil,
-			pointer = nil,
-			holdToken = 0,
-			indicator = nil,
-			indicatorTween = nil,
-			ghost = nil
-		}
-
-		local function beginPress(input)
-			if isBlocked() or not panelData.Frame.Parent then
-				return
-			end
-
-			state.pressing = true
-			state.dragArmed = false
-			state.pressInput = input
-			state.pointer = getInputPosition(input)
-			state.holdToken += 1
-			local token = state.holdToken
-
-			state.indicator, state.indicatorTween = createHoldIndicator(panelData.Header)
-
-			task.delay(holdDuration, function()
-				if token ~= state.holdToken or not state.pressing then
-					return
-				end
-				state.dragArmed = true
-				state.ghost = createGhost("Dock: " .. tostring(panelData.TabRecord.Name), state.pointer)
-			end)
-		end
-
-		local function finishPress(input)
-			if not state.pressInput then
-				return
-			end
-
-			local sameTouch = input == state.pressInput
-			local mouseEnded = state.pressInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1
-			if not sameTouch and not mouseEnded then
-				return
-			end
-
-			state.pressing = false
-			state.pressInput = nil
-			state.holdToken += 1
-
-			clearHoldIndicator(state.indicator, state.indicatorTween)
-			state.indicator = nil
-			state.indicatorTween = nil
-
-			if state.dragArmed then
-				state.dragArmed = false
-				local dropPoint = state.pointer or getInputPosition(input)
-				clearGhost(state.ghost)
-				state.ghost = nil
-				if isPointInsideTabList(dropPoint) then
-					self.dockTab(panelData.TabRecord)
-				else
-					self.layoutPanels()
-				end
-			else
-				clearGhost(state.ghost)
-				state.ghost = nil
+		local function markHover(delta)
+			panelData.HoverRefs = math.max(0, panelData.HoverRefs + delta)
+			panelData.HoverActive = panelData.HoverRefs > 0
+			if not panelData.Dragging then
+				setPanelHoverState(panelData, panelData.HoverActive, false)
 			end
 		end
 
-		table.insert(panelData.Cleanup, panelData.Header.InputBegan:Connect(function(input)
-			local inputType = input.UserInputType
-			if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
-				return
-			end
-			beginPress(input)
+		table.insert(panelData.Cleanup, panel.MouseEnter:Connect(function()
+			markHover(1)
+		end))
+		table.insert(panelData.Cleanup, panel.MouseLeave:Connect(function()
+			markHover(-1)
+		end))
+		table.insert(panelData.Cleanup, header.MouseEnter:Connect(function()
+			markHover(1)
+		end))
+		table.insert(panelData.Cleanup, header.MouseLeave:Connect(function()
+			markHover(-1)
 		end))
 
-		registerSharedInput(panelData.InputId, function(input)
-			if not state.pressing or not state.pressInput then
-				return
-			end
+		table.insert(panelData.Cleanup, dockButton.MouseButton1Click:Connect(function()
+			self.dockTab(tabRecord)
+		end))
 
-			local sameTouch = input == state.pressInput
-			local mouseMove = state.pressInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement
-			if not sameTouch and not mouseMove then
-				return
-			end
-
-			state.pointer = getInputPosition(input)
-			if state.dragArmed and state.ghost then
-				updateGhostPosition(state.ghost, state.pointer)
-			end
-		end, finishPress)
-
-		table.insert(panelData.Cleanup, function()
-			clearHoldIndicator(state.indicator, state.indicatorTween)
-			clearGhost(state.ghost)
-		end)
+		applyPanelTheme(panelData)
+		attachPanelDrag(panelData)
+		return panelData
 	end
 
 	function self.layoutPanels()
@@ -570,36 +818,42 @@ function TabSplitModule.init(ctx)
 			return
 		end
 
-		local panelCount = #panelOrder
-		if panelCount <= 0 then
+		if #panelOrder <= 0 then
 			return
 		end
 
-		local viewport = root.AbsoluteSize
+		local panelSize = getPanelSize(root)
 		local mainPos = self.Main.AbsolutePosition
 		local mainSize = self.Main.AbsoluteSize
 
-		local panelWidth = math.clamp(math.floor(mainSize.X * 0.68), 250, 420)
-		local panelHeight = math.clamp(math.floor(mainSize.Y), 180, math.max(180, viewport.Y - 12))
-
 		local rightX = mainPos.X + mainSize.X + 16
-		local leftX = mainPos.X - panelWidth - 16
+		local leftX = mainPos.X - panelSize.X - 16
 		local baseX = rightX
-		if baseX + panelWidth > viewport.X - 8 then
-			baseX = math.max(8, leftX)
+		if baseX + panelSize.X > root.AbsoluteSize.X - PANEL_MARGIN then
+			baseX = math.max(PANEL_MARGIN, leftX)
 		end
 
 		for index, panelId in ipairs(panelOrder) do
 			local panelData = splitPanels[panelId]
 			if panelData and panelData.Frame and panelData.Frame.Parent then
-				local step = index - 1
-				local targetX = math.clamp(baseX + ((step % 2) * 18), 8, math.max(8, viewport.X - panelWidth - 8))
-				local targetY = math.clamp(mainPos.Y + (step * 26), 8, math.max(8, viewport.Y - panelHeight - 8))
+				local baseZ = 190 + ((index - 1) * 8)
+				setPanelLayer(panelData, baseZ)
+				panelData.Frame.Size = UDim2.fromOffset(panelSize.X, panelSize.Y)
 
-				panelData.Frame.Size = UDim2.fromOffset(panelWidth, panelHeight)
-				self.TweenService:Create(panelData.Frame, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Position = UDim2.fromOffset(targetX, targetY)
-				}):Play()
+				if not panelData.Dragging then
+					if panelData.ManualPosition then
+						local clampedManual = clampPositionToViewport(root, panelData.ManualPosition, panelSize)
+						panelData.ManualPosition = clampedManual
+						panelData.Frame.Position = UDim2.fromOffset(clampedManual.X, clampedManual.Y)
+					else
+						local step = index - 1
+						local targetX = math.clamp(baseX + ((step % 2) * 18), PANEL_MARGIN, math.max(PANEL_MARGIN, root.AbsoluteSize.X - panelSize.X - PANEL_MARGIN))
+						local targetY = math.clamp(mainPos.Y + (step * 26), PANEL_MARGIN, math.max(PANEL_MARGIN, root.AbsoluteSize.Y - panelSize.Y - PANEL_MARGIN))
+						self.TweenService:Create(panelData.Frame, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+							Position = UDim2.fromOffset(targetX, targetY)
+						}):Play()
+					end
+				end
 			end
 		end
 	end
@@ -641,8 +895,9 @@ function TabSplitModule.init(ctx)
 		tabRecord.SplitPanelId = panelData.Id
 
 		tabRecord.TabButton.Visible = false
-		if tabRecord.TabButton:FindFirstChild("Interact") then
-			tabRecord.TabButton.Interact.Visible = false
+		local interact = tabRecord.TabButton:FindFirstChild("Interact")
+		if interact then
+			interact.Visible = false
 		end
 
 		tabRecord.TabPage.Parent = panelData.Content
@@ -650,12 +905,12 @@ function TabSplitModule.init(ctx)
 		tabRecord.TabPage.Position = UDim2.new(0, 0, 0, 0)
 		tabRecord.TabPage.Size = UDim2.new(1, 0, 1, 0)
 		tabRecord.TabPage.Visible = true
+		tabRecord.TabPage.Active = true
+		panelData.Content.Active = true
+		panelData.Content.ClipsDescendants = true
 
-		table.insert(panelData.Cleanup, panelData.DockButton.MouseButton1Click:Connect(function()
-			self.dockTab(tabRecord)
-		end))
-
-		attachDockGesture(panelData)
+		captureOriginalZIndex(tabRecord)
+		bringPanelToFront(panelData)
 		self.layoutPanels()
 		refreshRootVisibility()
 		self.syncMinimized(splitMinimized)
@@ -678,6 +933,7 @@ function TabSplitModule.init(ctx)
 			tabRecord.IsSplit = false
 			tabRecord.SplitPanelId = nil
 			tabToPanel[tabRecord] = nil
+			restoreOriginalZIndex(tabRecord)
 			return false
 		end
 
@@ -687,7 +943,10 @@ function TabSplitModule.init(ctx)
 			tabRecord.TabPage.Position = UDim2.new(0, 0, 0, 0)
 			tabRecord.TabPage.Size = UDim2.new(1, 0, 1, 0)
 			tabRecord.TabPage.Visible = true
+			tabRecord.TabPage.Active = true
 		end
+
+		restoreOriginalZIndex(tabRecord)
 
 		if tabRecord.TabButton then
 			local shouldBeVisible = tabRecord.DefaultVisible
@@ -915,6 +1174,12 @@ function TabSplitModule.init(ctx)
 	end
 
 	function self.destroy()
+		for tabRecord, panelId in pairs(tabToPanel) do
+			if panelId then
+				restoreOriginalZIndex(tabRecord)
+			end
+		end
+
 		for tabRecord, _ in pairs(tabGestureCleanup) do
 			unregisterTab(tabRecord)
 		end
@@ -927,6 +1192,14 @@ function TabSplitModule.init(ctx)
 		table.clear(tabToPanel)
 		table.clear(panelOrder)
 		table.clear(tabRecords)
+
+		local zRecords = {}
+		for tabRecord, _ in pairs(tabZIndexState) do
+			table.insert(zRecords, tabRecord)
+		end
+		for _, tabRecord in ipairs(zRecords) do
+			restoreOriginalZIndex(tabRecord)
+		end
 
 		for _, connection in ipairs(rootConnections) do
 			if connection then
