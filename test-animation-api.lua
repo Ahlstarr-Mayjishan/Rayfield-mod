@@ -20,7 +20,7 @@ local failCount = 0
 
 -- Source pinning to avoid stale/cached remote artifact issues
 local REPO = "Ahlstarr-Mayjishan/Rayfield-mod"
-local PINNED_COMMIT = "main"
+local PINNED_COMMIT = "8a0562338f28a66aee5775a87121d5ddc1f5bf26"
 local MODULE_PATH = "feature/rayfield-advanced-features.lua"
 local MODULE_URL = string.format("https://raw.githubusercontent.com/%s/%s/%s", REPO, PINNED_COMMIT, MODULE_PATH)
 
