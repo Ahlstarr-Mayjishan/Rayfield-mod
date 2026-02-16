@@ -181,7 +181,8 @@ function ElementsModule.init(ctx)
 				end
 			end)
 	
-			local Tab = {}
+			-- Preserve module context for Tab:Create* methods where `self` is Tab.
+			local Tab = setmetatable({}, { __index = self })
 	
 			-- Element tracking system for extended API
 			local TabElements = {} -- Stores all elements created in this tab
