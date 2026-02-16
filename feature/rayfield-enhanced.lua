@@ -958,8 +958,24 @@ local function createEnhancedRayfield(originalRayfield)
 	
 	-- Wrap CreateWindow
 	local originalCreateWindow = originalRayfield.CreateWindow
-	originalRayfield.CreateWindow = function(settings)
-		local window = originalCreateWindow(settings)
+	originalRayfield.CreateWindow = function(selfOrSettings, maybeSettings)
+		-- Support both call styles:
+		-- 1) Rayfield:CreateWindow(settings)  -> selfOrSettings = Rayfield, maybeSettings = settings
+		-- 2) Rayfield.CreateWindow(settings)  -> selfOrSettings = settings, maybeSettings = nil
+		local self = originalRayfield
+		local settings = maybeSettings
+
+		if selfOrSettings == originalRayfield then
+			self = selfOrSettings
+		elseif maybeSettings == nil then
+			settings = selfOrSettings
+		end
+
+		if type(settings) ~= "table" then
+			settings = {}
+		end
+
+		local window = originalCreateWindow(self, settings)
 		
 		garbageCollector:track(window, "MainWindow", function()
 			if window.Destroy then
