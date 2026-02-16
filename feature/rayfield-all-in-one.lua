@@ -10,14 +10,14 @@
 	1. FIRST EXECUTION (Auto-Execute Mode):
 	   - When loaded for the first time (_G.RayfieldAllInOneLoaded is nil/false)
 	   - Automatically loads Rayfield based on CONFIG.AUTO_MODE setting
-	   - Returns the loaded UI object (Rayfield library)
+	   - Exports loaded UI to _G.Rayfield and _G.RayfieldUI
+	   - Returns loader table by default (safer for executors that freeze on large return values)
 	   - Sets _G.RayfieldAllInOneLoaded = true to track state
-	   - Exports to _G.Rayfield and _G.RayfieldUI for global access
 
 	   Example:
-	     local UI = loadstring(game:HttpGet('...'))()
-	     -- UI is now the Rayfield library, ready to use
-	     local Window = UI:CreateWindow({...})
+	     local loader = loadstring(game:HttpGet('...'))()
+	     -- UI is exported globally:
+	     local Window = _G.Rayfield:CreateWindow({...})
 
 	2. SUBSEQUENT EXECUTIONS (Loader Table Mode):
 	   - When loaded again (_G.RayfieldAllInOneLoaded is true)
@@ -33,6 +33,8 @@
 	To control this behavior:
 	   - Set AUTO_EXECUTE = false in CONFIG (or configure({autoExecute = false}))
 	     to disable auto-execution
+	   - Set AUTO_EXECUTE_RETURN (or configure({autoExecuteReturn = "ui"/"loader"/"none"}))
+	     to control what first execution returns
 	   - Reset _G.RayfieldAllInOneLoaded = nil to force auto-execution again
 
 	===========================================
@@ -70,6 +72,12 @@ local CONFIG = {
 
 	-- Auto execute on first load (set false for loader-table only behavior)
 	AUTO_EXECUTE = true,
+
+	-- Return mode for first auto-execution:
+	-- "loader" = return AllInOne (recommended)
+	-- "ui" = return UI table from quickSetup (legacy behavior)
+	-- "none" = return nil
+	AUTO_EXECUTE_RETURN = "loader",
 	
 	-- Default settings
 	DEFAULT_SETTINGS = {
@@ -299,6 +307,15 @@ function AllInOne.configure(config)
 	if config.autoExecute ~= nil then
 		CONFIG.AUTO_EXECUTE = config.autoExecute
 	end
+
+	if config.autoExecuteReturn then
+		local mode = tostring(config.autoExecuteReturn):lower()
+		if mode == "loader" or mode == "ui" or mode == "none" then
+			CONFIG.AUTO_EXECUTE_RETURN = mode
+		else
+			warn("⚠️ [Rayfield] Invalid autoExecuteReturn: " .. tostring(config.autoExecuteReturn) .. " (use 'loader', 'ui', or 'none')")
+		end
+	end
 	
 	print("✅ [Rayfield] Configuration updated")
 end
@@ -320,6 +337,7 @@ function AllInOne.info()
 	print("Cache Enabled:", CONFIG.CACHE_ENABLED)
 	print("Auto Mode:", CONFIG.AUTO_MODE)
 	print("Auto Execute:", CONFIG.AUTO_EXECUTE)
+	print("Auto Execute Return:", CONFIG.AUTO_EXECUTE_RETURN)
 	print("\nCached Modules:")
 	for name, _ in pairs(_G.RayfieldCache) do
 		print("  ✅", name)
@@ -338,7 +356,7 @@ end
 -- ============================================
 
 -- Improvement 3: Dual-execution behavior with clear documentation
--- First execution: Returns UI object (auto-loads Rayfield)
+-- First execution: Auto-loads UI and returns per CONFIG.AUTO_EXECUTE_RETURN
 -- Subsequent executions: Returns AllInOne loader table (manual control)
 if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	_G.RayfieldAllInOneLoaded = true
@@ -360,12 +378,19 @@ if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	-- Export to global
 	_G.Rayfield = UI.Rayfield
 	_G.RayfieldUI = UI
+	AllInOne.currentUI = UI
 
 	print("✅ [Rayfield] Auto-loaded successfully!")
-	print("Access via: _G.Rayfield or _G.RayfieldUI\n")
+	print("Access via: _G.Rayfield or _G.RayfieldUI")
+	print("Return mode:", CONFIG.AUTO_EXECUTE_RETURN, "\n")
 
-	-- Return UI object on first execution
-	return UI
+	-- Return lightweight loader by default to avoid executor freeze on large return objects
+	if CONFIG.AUTO_EXECUTE_RETURN == "ui" then
+		return UI
+	elseif CONFIG.AUTO_EXECUTE_RETURN == "none" then
+		return nil
+	end
+	return AllInOne
 end
 
 -- Return loader table on subsequent executions (allows manual control)

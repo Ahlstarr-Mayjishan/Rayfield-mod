@@ -12,6 +12,10 @@
 - Added preflight checks in `test-animation-api.lua` to fail fast on stale/wrong artifacts.
 - Improved Test 1 timing checks with `waitUntil(...)` to reduce false negatives on slower executors.
 - Updated all-in-one cache keying from `name` to `name|url` to prevent stale module reuse across URL changes.
+- Updated all-in-one auto-exec return strategy:
+  - default first-run return is now lightweight loader table
+  - exported UI remains accessible via `_G.Rayfield` and `_G.RayfieldUI`
+  - configurable via `autoExecuteReturn = "loader" | "ui" | "none"`.
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
