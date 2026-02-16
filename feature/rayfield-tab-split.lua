@@ -52,13 +52,13 @@ function TabSplitModule.init(ctx)
 	local DRAG_THRESHOLD = 4
 	local PANEL_MARGIN = 8
 	local TAB_GHOST_FOLLOW_SPEED = 0.24
-	local TAB_CUE_HOVER_TRANSPARENCY = 0.34
-	local TAB_CUE_HOLD_TRANSPARENCY = 0.12
-	local TAB_CUE_READY_TRANSPARENCY = 0.02
+	local TAB_CUE_HOVER_TRANSPARENCY = 0.52
+	local TAB_CUE_HOLD_TRANSPARENCY = 0.34
+	local TAB_CUE_READY_TRANSPARENCY = 0.24
 	local TAB_CUE_IDLE_THICKNESS = 1
-	local TAB_CUE_HOVER_THICKNESS = 1.8
-	local TAB_CUE_HOLD_THICKNESS = 2.8
-	local TAB_CUE_READY_THICKNESS = 3.2
+	local TAB_CUE_HOVER_THICKNESS = 1.35
+	local TAB_CUE_HOLD_THICKNESS = 1.9
+	local TAB_CUE_READY_THICKNESS = 2.2
 
 	local function isDestroyed()
 		return self.rayfieldDestroyed and self.rayfieldDestroyed()
@@ -480,20 +480,20 @@ function TabSplitModule.init(ctx)
 		local duration = instant and 0 or 0.12
 		if panelData.Stroke then
 			self.TweenService:Create(panelData.Stroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Thickness = active and 1.7 or 1.1,
-				Transparency = active and 0.05 or 0.25
+				Thickness = active and 1.35 or 1,
+				Transparency = active and 0.22 or 0.35
 			}):Play()
 		end
 		if panelData.GlowStroke then
 			self.TweenService:Create(panelData.GlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Thickness = active and 4.6 or 1.2,
-				Transparency = active and 0.35 or 1
+				Thickness = active and 2.8 or 1.1,
+				Transparency = active and 0.62 or 1
 			}):Play()
 		end
 		if panelData.SoftGlowStroke then
 			self.TweenService:Create(panelData.SoftGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Thickness = active and 7.2 or 4.2,
-				Transparency = active and 0.68 or 1
+				Thickness = active and 4.6 or 2.8,
+				Transparency = active and 0.84 or 1
 			}):Play()
 		end
 	end
@@ -710,7 +710,7 @@ function TabSplitModule.init(ctx)
 
 		local softGlowStroke = Instance.new("UIStroke")
 		softGlowStroke.Color = (theme and theme.SliderProgress) or Color3.fromRGB(112, 189, 255)
-		softGlowStroke.Thickness = 4.2
+		softGlowStroke.Thickness = 2.8
 		softGlowStroke.Transparency = 1
 		softGlowStroke.Parent = panel
 
@@ -1123,14 +1123,14 @@ function TabSplitModule.init(ctx)
 			state.cueGlowStroke = Instance.new("UIStroke")
 			state.cueGlowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			state.cueGlowStroke.Color = getCueColor()
-			state.cueGlowStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 2
+			state.cueGlowStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 1.4
 			state.cueGlowStroke.Transparency = 1
 			state.cueGlowStroke.Parent = state.cueFrame
 
 			state.cueBlurStroke = Instance.new("UIStroke")
 			state.cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			state.cueBlurStroke.Color = getCueColor()
-			state.cueBlurStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 5
+			state.cueBlurStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 3.2
 			state.cueBlurStroke.Transparency = 1
 			state.cueBlurStroke.Parent = state.cueFrame
 
@@ -1157,12 +1157,12 @@ function TabSplitModule.init(ctx)
 
 			local glowTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.2, 0.2, 0.95)
-			local glowThickness = thickness + 2.2
+				or math.clamp(transparency + 0.34, 0.45, 0.98)
+			local glowThickness = thickness + 1.4
 			local blurTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.36, 0.45, 0.985)
-			local blurThickness = thickness + 5.4
+				or math.clamp(transparency + 0.52, 0.7, 0.995)
+			local blurThickness = thickness + 3.2
 
 			if not duration or duration <= 0 then
 				state.cueStroke.Transparency = transparency

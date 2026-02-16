@@ -32,13 +32,13 @@ function DragModule.init(ctx)
 	local DETACH_WINDOW_DRAG_FOLLOW_SPEED = 0.28
 	local DETACH_POP_IN_DURATION = 0.2
 	local DETACH_POP_OUT_DURATION = 0.14
-	local DETACH_CUE_HOVER_TRANSPARENCY = 0.34
-	local DETACH_CUE_HOLD_TRANSPARENCY = 0.12
-	local DETACH_CUE_READY_TRANSPARENCY = 0.02
+	local DETACH_CUE_HOVER_TRANSPARENCY = 0.52
+	local DETACH_CUE_HOLD_TRANSPARENCY = 0.34
+	local DETACH_CUE_READY_TRANSPARENCY = 0.24
 	local DETACH_CUE_IDLE_THICKNESS = 1
-	local DETACH_CUE_HOVER_THICKNESS = 1.8
-	local DETACH_CUE_HOLD_THICKNESS = 2.8
-	local DETACH_CUE_READY_THICKNESS = 3.2
+	local DETACH_CUE_HOVER_THICKNESS = 1.35
+	local DETACH_CUE_HOLD_THICKNESS = 1.9
+	local DETACH_CUE_READY_THICKNESS = 2.2
 	local DETACH_MERGE_DETECT_PADDING = 56
 	local MERGE_INDICATOR_HEIGHT = 3
 	local MERGE_INDICATOR_MARGIN = 8
@@ -450,14 +450,14 @@ function DragModule.init(ctx)
 			cueGlowStroke = Instance.new("UIStroke")
 			cueGlowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			cueGlowStroke.Color = getDetachCueColor()
-			cueGlowStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 2
+			cueGlowStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 1.4
 			cueGlowStroke.Transparency = 1
 			cueGlowStroke.Parent = cueFrame
 
 			cueBlurStroke = Instance.new("UIStroke")
 			cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			cueBlurStroke.Color = getDetachCueColor()
-			cueBlurStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 5
+			cueBlurStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 3.2
 			cueBlurStroke.Transparency = 1
 			cueBlurStroke.Parent = cueFrame
 	
@@ -482,12 +482,12 @@ function DragModule.init(ctx)
 			end
 			local glowTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.2, 0.2, 0.95)
-			local glowThickness = thickness + 2.2
+				or math.clamp(transparency + 0.34, 0.45, 0.98)
+			local glowThickness = thickness + 1.4
 			local blurTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.36, 0.45, 0.985)
-			local blurThickness = thickness + 5.4
+				or math.clamp(transparency + 0.52, 0.7, 0.995)
+			local blurThickness = thickness + 3.2
 	
 			if not duration or duration <= 0 then
 				cueStroke.Transparency = transparency

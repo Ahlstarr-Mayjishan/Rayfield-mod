@@ -79,7 +79,7 @@ function ElementsModule.init(ctx)
 			local TabHoverGlow = Instance.new("UIStroke")
 			TabHoverGlow.Name = "HoverGlow"
 			TabHoverGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-			TabHoverGlow.Thickness = 4.2
+			TabHoverGlow.Thickness = 2.8
 			TabHoverGlow.Transparency = 1
 			TabHoverGlow.Color = Color3.fromRGB(110, 175, 240)
 			TabHoverGlow.Parent = TabButton
@@ -164,12 +164,12 @@ function ElementsModule.init(ctx)
 
 				local tweenDuration = duration or 0.16
 				local theme = self.getSelectedTheme() or {}
-				local targetBackgroundTransparency = tabHover and 0.52 or 0.7
-				local targetStrokeTransparency = tabHover and 0.22 or 0.5
-				local targetStrokeThickness = tabHover and 1.35 or 1
+				local targetBackgroundTransparency = tabHover and 0.58 or 0.7
+				local targetStrokeTransparency = tabHover and 0.32 or 0.5
+				local targetStrokeThickness = tabHover and 1.2 or 1
 				local targetStrokeColor = tabHover and (theme.SliderProgress or theme.TabStroke) or theme.TabStroke
-				local targetGlowTransparency = tabHover and 0.7 or 1
-				local targetGlowThickness = tabHover and 4.9 or 4.2
+				local targetGlowTransparency = tabHover and 0.84 or 1
+				local targetGlowThickness = tabHover and 3.3 or 2.8
 				local targetGlowColor = theme.SliderProgress or theme.TabStroke
 				local targetTextTransparency = tabHover and 0.05 or 0.2
 				local targetImageTransparency = tabHover and 0.05 or 0.2
