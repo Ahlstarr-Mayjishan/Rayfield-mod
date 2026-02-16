@@ -2132,12 +2132,21 @@ function DragModule.init(ctx)
 			table.clear(eventConnections)
 		end
 	
+		local function connectIfAvailable(signalName, callback)
+			local ok, signal = pcall(function()
+				return guiObject[signalName]
+			end)
+			if ok and signal and signal.Connect then
+				table.insert(eventConnections, signal:Connect(callback))
+			end
+		end
+
 		-- Cleanup when guiObject is destroyed
-		table.insert(eventConnections, guiObject.Destroying:Connect(fullCleanup))
+		connectIfAvailable("Destroying", fullCleanup)
 	
 		-- Safety net: cleanup if element leaves the DataModel without being destroyed
 		-- (e.g. parent set to nil, or ancestor removed)
-		table.insert(eventConnections, guiObject.AncestorChanged:Connect(function()
+		connectIfAvailable("AncestryChanged", function()
 			if not guiObject:IsDescendantOf(game) then
 				task.defer(function()
 					-- Re-check after defer in case of rapid reparent
@@ -2146,7 +2155,7 @@ function DragModule.init(ctx)
 					end
 				end)
 			end
-		end))
+		end)
 	
 		return {
 			Detach = function(position)
