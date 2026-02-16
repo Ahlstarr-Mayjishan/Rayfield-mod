@@ -26,6 +26,8 @@
 - Synced split panel visibility with main UI hide/minimize transitions.
 - Updated split-panel docking UX to support drop-to-dock by dragging panel header into main `TabList`.
 - Updated split-panel layout behavior to `Free drag + clamp` (manual panel position is preserved).
+- Updated first-use UX by prewarming split/detach layers to reduce first drag hitch.
+- Updated split-tab drag ghost movement to frame-synced follow for smoother first long-hold drag.
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
@@ -37,6 +39,8 @@
 - Fixed `UIState` drag-bar dependency usage by injecting `dragBar`, `dragOffset`, and `dragOffsetMobile` via init context.
 - Fixed split-tab content visibility/interaction by applying and restoring `ZIndex` for `TabPage` descendants during split/dock.
 - Fixed split-panel hover feedback with explicit border glow state for hover and drag.
+- Fixed tab hover polish with consistent hover transitions on tab buttons.
+- Fixed element detach cue styling to use stronger glow/hold/ready feedback during hold-drag.
 
 ## 2026-02-15
 

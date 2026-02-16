@@ -104,6 +104,7 @@ function ElementsModule.init(ctx)
 				SuppressNextClick = false,
 				IsSettings = (Name == "Rayfield Settings" and Ext == true)
 			}
+			local tabHover = false
 			
 			-- Reactive coloring for TabPage elements
 			TabPage.ChildAdded:Connect(function(Element)
@@ -125,15 +126,48 @@ function ElementsModule.init(ctx)
 			self.bindTheme(TabButton.UIStroke, "Color", "TabStroke")
 	
 			local function UpdateTabColors()
+				TabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
 				if self.Elements.UIPageLayout.CurrentPage == TabPage then
+					tabHover = false
+					TabButton.UIStroke.Thickness = 1
 					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected
 					TabButton.Image.ImageColor3 = self.getSelectedTheme().SelectedTabTextColor
 					TabButton.Title.TextColor3 = self.getSelectedTheme().SelectedTabTextColor
 				else
+					if not tabHover then
+						TabButton.UIStroke.Thickness = 1
+					end
 					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackground
 					TabButton.Image.ImageColor3 = self.getSelectedTheme().TabTextColor
 					TabButton.Title.TextColor3 = self.getSelectedTheme().TabTextColor
 				end
+			end
+
+			local function applyTabHoverVisual(duration)
+				if tabRecord.IsSplit then
+					return
+				end
+				if self.Elements.UIPageLayout.CurrentPage == TabPage then
+					return
+				end
+
+				local tweenDuration = duration or 0.16
+				local theme = self.getSelectedTheme() or {}
+				local targetBackgroundTransparency = tabHover and 0.48 or 0.7
+				local targetStrokeTransparency = tabHover and 0.12 or 0.5
+				local targetStrokeThickness = tabHover and 1.6 or 1
+				local targetStrokeColor = tabHover and (theme.SliderProgress or theme.TabStroke) or theme.TabStroke
+				local targetTextTransparency = tabHover and 0.05 or 0.2
+				local targetImageTransparency = tabHover and 0.05 or 0.2
+
+				self.TweenService:Create(TabButton, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = targetBackgroundTransparency}):Play()
+				self.TweenService:Create(TabButton.UIStroke, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = targetStrokeTransparency,
+					Thickness = targetStrokeThickness,
+					Color = targetStrokeColor
+				}):Play()
+				self.TweenService:Create(TabButton.Title, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = targetTextTransparency}):Play()
+				self.TweenService:Create(TabButton.Image, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = targetImageTransparency}):Play()
 			end
 
 			-- Listen for theme changes to update tab colors
@@ -169,6 +203,7 @@ function ElementsModule.init(ctx)
 				if tabRecord.IsSplit then return false end
 				if not ignoreMinimisedCheck and self.getMinimised() then return false end
 
+				tabHover = false
 				self.TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				self.TweenService:Create(TabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
@@ -176,6 +211,8 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextColor3 = self.getSelectedTheme().SelectedTabTextColor}):Play()
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageColor3 = self.getSelectedTheme().SelectedTabTextColor}):Play()
+				TabButton.UIStroke.Thickness = 1
+				TabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
 
 				for _, OtherTabButton in ipairs(self.TabList:GetChildren()) do
 					if OtherTabButton.Name ~= "Template" and OtherTabButton.ClassName == "Frame" and OtherTabButton ~= TabButton and OtherTabButton.Name ~= "Placeholder" and OtherTabButton.Visible then
@@ -186,6 +223,8 @@ function ElementsModule.init(ctx)
 						self.TweenService:Create(OtherTabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
 						self.TweenService:Create(OtherTabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
 						self.TweenService:Create(OtherTabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
+						OtherTabButton.UIStroke.Thickness = 1
+						OtherTabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
 					end
 				end
 
@@ -197,6 +236,16 @@ function ElementsModule.init(ctx)
 			end
 
 			tabRecord.Activate = activateTab
+
+			TabButton.Interact.MouseEnter:Connect(function()
+				tabHover = true
+				applyTabHoverVisual(0.14)
+			end)
+
+			TabButton.Interact.MouseLeave:Connect(function()
+				tabHover = false
+				applyTabHoverVisual(0.14)
+			end)
 	
 			TabButton.Interact.MouseButton1Click:Connect(function()
 				if tabRecord.SuppressNextClick then

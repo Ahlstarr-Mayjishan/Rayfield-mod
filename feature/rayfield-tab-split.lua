@@ -51,6 +51,7 @@ function TabSplitModule.init(ctx)
 
 	local DRAG_THRESHOLD = 4
 	local PANEL_MARGIN = 8
+	local TAB_GHOST_FOLLOW_SPEED = 0.24
 
 	local function isDestroyed()
 		return self.rayfieldDestroyed and self.rayfieldDestroyed()
@@ -181,7 +182,8 @@ function TabSplitModule.init(ctx)
 		state = {
 			Original = setmetatable({}, { __mode = "k" }),
 			DescendantConn = nil,
-			LastBaseZ = 200
+			LastBaseZ = 200,
+			LastAppliedBase = nil
 		}
 		tabZIndexState[tabRecord] = state
 		return state
@@ -211,14 +213,18 @@ function TabSplitModule.init(ctx)
 		end
 
 		local state = getOriginalZState(tabRecord)
-		state.LastBaseZ = zBase or state.LastBaseZ or 200
+		local nextBase = zBase or state.LastBaseZ or 200
+		state.LastBaseZ = nextBase
 
 		captureOriginalZIndex(tabRecord)
 
-		for object, original in pairs(state.Original) do
-			if object and object.Parent and hasZIndex(object) then
-				object.ZIndex = state.LastBaseZ + original
+		if state.LastAppliedBase ~= nextBase then
+			for object, original in pairs(state.Original) do
+				if object and object.Parent and hasZIndex(object) then
+					object.ZIndex = nextBase + original
+				end
 			end
+			state.LastAppliedBase = nextBase
 		end
 
 		if not state.DescendantConn then
@@ -319,6 +325,16 @@ function TabSplitModule.init(ctx)
 		end
 	end
 
+	if enabled then
+		task.defer(function()
+			if isDestroyed() then
+				return
+			end
+			ensureSplitRoot()
+			refreshRootVisibility()
+		end)
+	end
+
 	local function createHoldIndicator(parent)
 		if not (parent and parent.Parent) then
 			return nil, nil
@@ -416,6 +432,18 @@ function TabSplitModule.init(ctx)
 				end
 			end)
 		end
+	end
+
+	if enabled then
+		task.defer(function()
+			if isDestroyed() then
+				return
+			end
+			local warmGhost = createGhost("", Vector2.new(-9999, -9999))
+			if warmGhost then
+				warmGhost:Destroy()
+			end
+		end)
 	end
 
 	local function getSplitPanelCount()
@@ -891,6 +919,16 @@ function TabSplitModule.init(ctx)
 		table.insert(panelOrder, panelData.Id)
 		tabToPanel[tabRecord] = panelData.Id
 
+		local root = ensureSplitRoot()
+		local panelSize = getPanelSize(root)
+		local splitDropPoint = dropPoint or getInputPosition()
+		local desiredStart = Vector2.new(
+			splitDropPoint.X - math.floor(panelSize.X * 0.5),
+			splitDropPoint.Y - 14
+		)
+		panelData.ManualPosition = clampPositionToViewport(root, desiredStart, panelSize)
+		panelData.Frame.Position = UDim2.fromOffset(panelData.ManualPosition.X, panelData.ManualPosition.Y)
+
 		tabRecord.IsSplit = true
 		tabRecord.SplitPanelId = panelData.Id
 
@@ -1017,6 +1055,7 @@ function TabSplitModule.init(ctx)
 		tabRecord.IsSplit = false
 		tabRecord.SplitPanelId = nil
 		tabRecord.SuppressNextClick = false
+		captureOriginalZIndex(tabRecord)
 
 		local interact = tabRecord.TabButton:FindFirstChild("Interact")
 		if not interact then
@@ -1033,15 +1072,44 @@ function TabSplitModule.init(ctx)
 			holdToken = 0,
 			indicator = nil,
 			indicatorTween = nil,
-			ghost = nil
+			ghost = nil,
+			ghostTarget = nil,
+			ghostFollowConnection = nil
 		}
 
+		local function stopGhostFollow()
+			if state.ghostFollowConnection then
+				state.ghostFollowConnection:Disconnect()
+				state.ghostFollowConnection = nil
+			end
+		end
+
+		local function startGhostFollow()
+			stopGhostFollow()
+			state.ghostFollowConnection = self.RunService.RenderStepped:Connect(function(deltaTime)
+				if not (state.ghost and state.ghost.Parent and state.ghostTarget) then
+					return
+				end
+
+				local halfWidth = math.floor(state.ghost.AbsoluteSize.X * 0.5)
+				local halfHeight = math.floor(state.ghost.AbsoluteSize.Y * 0.5)
+				local desired = Vector2.new(state.ghostTarget.X - halfWidth, state.ghostTarget.Y - halfHeight)
+				local current = Vector2.new(state.ghost.Position.X.Offset, state.ghost.Position.Y.Offset)
+				local alpha = math.clamp(deltaTime * (TAB_GHOST_FOLLOW_SPEED * 60), 0, 1)
+				local nextPosition = current:Lerp(desired, alpha)
+
+				state.ghost.Position = UDim2.fromOffset(math.floor(nextPosition.X + 0.5), math.floor(nextPosition.Y + 0.5))
+			end)
+		end
+
 		local function clearVisuals()
+			stopGhostFollow()
 			clearHoldIndicator(state.indicator, state.indicatorTween)
 			clearGhost(state.ghost)
 			state.indicator = nil
 			state.indicatorTween = nil
 			state.ghost = nil
+			state.ghostTarget = nil
 		end
 
 		local function beginPress(input)
@@ -1053,6 +1121,7 @@ function TabSplitModule.init(ctx)
 			state.dragArmed = false
 			state.pressInput = input
 			state.pointer = getInputPosition(input)
+			state.ghostTarget = state.pointer
 			state.holdToken += 1
 			local token = state.holdToken
 
@@ -1082,6 +1151,8 @@ function TabSplitModule.init(ctx)
 				state.dragArmed = true
 				tabRecord.SuppressNextClick = true
 				state.ghost = createGhost("Split: " .. tostring(tabRecord.Name), state.pointer)
+				state.ghostTarget = state.pointer
+				startGhostFollow()
 			end)
 		end
 
@@ -1106,17 +1177,21 @@ function TabSplitModule.init(ctx)
 
 			if state.dragArmed then
 				state.dragArmed = false
+				stopGhostFollow()
 				local dropPoint = state.pointer or getInputPosition(input)
 				clearGhost(state.ghost)
 				state.ghost = nil
+				state.ghostTarget = nil
 				tabRecord.SuppressNextClick = true
 
 				if not isPointInsideMain(dropPoint) then
 					self.splitTab(tabRecord, dropPoint)
 				end
 			else
+				stopGhostFollow()
 				clearGhost(state.ghost)
 				state.ghost = nil
+				state.ghostTarget = nil
 			end
 		end
 
@@ -1147,6 +1222,7 @@ function TabSplitModule.init(ctx)
 
 			state.pointer = getInputPosition(input)
 			if state.dragArmed and state.ghost then
+				state.ghostTarget = state.pointer
 				updateGhostPosition(state.ghost, state.pointer)
 			end
 		end, finishPress)

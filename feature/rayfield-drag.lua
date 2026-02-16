@@ -32,13 +32,13 @@ function DragModule.init(ctx)
 	local DETACH_WINDOW_DRAG_FOLLOW_SPEED = 0.28
 	local DETACH_POP_IN_DURATION = 0.2
 	local DETACH_POP_OUT_DURATION = 0.14
-	local DETACH_CUE_HOVER_TRANSPARENCY = 0.72
-	local DETACH_CUE_HOLD_TRANSPARENCY = 0.18
-	local DETACH_CUE_READY_TRANSPARENCY = 0.04
+	local DETACH_CUE_HOVER_TRANSPARENCY = 0.34
+	local DETACH_CUE_HOLD_TRANSPARENCY = 0.12
+	local DETACH_CUE_READY_TRANSPARENCY = 0.02
 	local DETACH_CUE_IDLE_THICKNESS = 1
-	local DETACH_CUE_HOVER_THICKNESS = 1.2
-	local DETACH_CUE_HOLD_THICKNESS = 2.2
-	local DETACH_CUE_READY_THICKNESS = 2.4
+	local DETACH_CUE_HOVER_THICKNESS = 1.8
+	local DETACH_CUE_HOLD_THICKNESS = 2.8
+	local DETACH_CUE_READY_THICKNESS = 3.2
 	local DETACH_MERGE_DETECT_PADDING = 56
 	local MERGE_INDICATOR_HEIGHT = 3
 	local MERGE_INDICATOR_MARGIN = 8
@@ -182,6 +182,14 @@ function DragModule.init(ctx)
 	
 		return detachedLayer
 	end
+
+	-- Prewarm detached layer to reduce first-detach hitch.
+	task.defer(function()
+		if self.rayfieldDestroyed and self.rayfieldDestroyed() then
+			return
+		end
+		pcall(ensureDetachedLayer)
+	end)
 	
 	local function getInputPosition(input)
 		if input and input.Position then
@@ -371,6 +379,7 @@ function DragModule.init(ctx)
 		local hoverActive = false
 		local cueFrame = nil
 		local cueStroke = nil
+		local cueGlowStroke = nil
 		local cueThemeConnection = nil
 		local mergePreviewRecord = nil
 		local clearMergePreview = nil
@@ -398,11 +407,12 @@ function DragModule.init(ctx)
 					cueFrame:Destroy()
 					cueFrame = nil
 					cueStroke = nil
+					cueGlowStroke = nil
 				end
 				return false
 			end
 	
-			if cueFrame and cueFrame.Parent and cueStroke and cueStroke.Parent then
+			if cueFrame and cueFrame.Parent and cueStroke and cueStroke.Parent and cueGlowStroke and cueGlowStroke.Parent then
 				return true
 			end
 	
@@ -434,10 +444,20 @@ function DragModule.init(ctx)
 			cueStroke.Thickness = DETACH_CUE_IDLE_THICKNESS
 			cueStroke.Transparency = 1
 			cueStroke.Parent = cueFrame
+
+			cueGlowStroke = Instance.new("UIStroke")
+			cueGlowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			cueGlowStroke.Color = getDetachCueColor()
+			cueGlowStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 2
+			cueGlowStroke.Transparency = 1
+			cueGlowStroke.Parent = cueFrame
 	
 			cueThemeConnection = self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 				if cueStroke and cueStroke.Parent then
 					cueStroke.Color = getDetachCueColor()
+				end
+				if cueGlowStroke and cueGlowStroke.Parent then
+					cueGlowStroke.Color = getDetachCueColor()
 				end
 			end)
 	
@@ -448,10 +468,16 @@ function DragModule.init(ctx)
 			if not cueStroke or not cueStroke.Parent then
 				return
 			end
+			local glowTransparency = math.clamp((transparency * 0.65) + 0.12, 0.12, 1)
+			local glowThickness = thickness + 2.2
 	
 			if not duration or duration <= 0 then
 				cueStroke.Transparency = transparency
 				cueStroke.Thickness = thickness
+				if cueGlowStroke and cueGlowStroke.Parent then
+					cueGlowStroke.Transparency = glowTransparency
+					cueGlowStroke.Thickness = glowThickness
+				end
 				return
 			end
 	
@@ -459,6 +485,12 @@ function DragModule.init(ctx)
 				Transparency = transparency,
 				Thickness = thickness
 			}):Play()
+			if cueGlowStroke and cueGlowStroke.Parent then
+				self.TweenService:Create(cueGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = glowTransparency,
+					Thickness = glowThickness
+				}):Play()
+			end
 		end
 	
 		local function refreshDetachCue()
@@ -507,6 +539,7 @@ function DragModule.init(ctx)
 				cueFrame:Destroy()
 				cueFrame = nil
 				cueStroke = nil
+				cueGlowStroke = nil
 			end
 		end
 	
