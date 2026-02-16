@@ -380,6 +380,7 @@ function DragModule.init(ctx)
 		local cueFrame = nil
 		local cueStroke = nil
 		local cueGlowStroke = nil
+		local cueBlurStroke = nil
 		local cueThemeConnection = nil
 		local mergePreviewRecord = nil
 		local clearMergePreview = nil
@@ -408,11 +409,12 @@ function DragModule.init(ctx)
 					cueFrame = nil
 					cueStroke = nil
 					cueGlowStroke = nil
+					cueBlurStroke = nil
 				end
 				return false
 			end
 	
-			if cueFrame and cueFrame.Parent and cueStroke and cueStroke.Parent and cueGlowStroke and cueGlowStroke.Parent then
+			if cueFrame and cueFrame.Parent and cueStroke and cueStroke.Parent and cueGlowStroke and cueGlowStroke.Parent and cueBlurStroke and cueBlurStroke.Parent then
 				return true
 			end
 	
@@ -451,6 +453,13 @@ function DragModule.init(ctx)
 			cueGlowStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 2
 			cueGlowStroke.Transparency = 1
 			cueGlowStroke.Parent = cueFrame
+
+			cueBlurStroke = Instance.new("UIStroke")
+			cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			cueBlurStroke.Color = getDetachCueColor()
+			cueBlurStroke.Thickness = DETACH_CUE_IDLE_THICKNESS + 5
+			cueBlurStroke.Transparency = 1
+			cueBlurStroke.Parent = cueFrame
 	
 			cueThemeConnection = self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 				if cueStroke and cueStroke.Parent then
@@ -458,6 +467,9 @@ function DragModule.init(ctx)
 				end
 				if cueGlowStroke and cueGlowStroke.Parent then
 					cueGlowStroke.Color = getDetachCueColor()
+				end
+				if cueBlurStroke and cueBlurStroke.Parent then
+					cueBlurStroke.Color = getDetachCueColor()
 				end
 			end)
 	
@@ -470,8 +482,12 @@ function DragModule.init(ctx)
 			end
 			local glowTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.18, 0.12, 0.95)
+				or math.clamp(transparency + 0.2, 0.2, 0.95)
 			local glowThickness = thickness + 2.2
+			local blurTransparency = (transparency >= 0.99)
+				and 1
+				or math.clamp(transparency + 0.36, 0.45, 0.985)
+			local blurThickness = thickness + 5.4
 	
 			if not duration or duration <= 0 then
 				cueStroke.Transparency = transparency
@@ -479,6 +495,10 @@ function DragModule.init(ctx)
 				if cueGlowStroke and cueGlowStroke.Parent then
 					cueGlowStroke.Transparency = glowTransparency
 					cueGlowStroke.Thickness = glowThickness
+				end
+				if cueBlurStroke and cueBlurStroke.Parent then
+					cueBlurStroke.Transparency = blurTransparency
+					cueBlurStroke.Thickness = blurThickness
 				end
 				return
 			end
@@ -491,6 +511,12 @@ function DragModule.init(ctx)
 				self.TweenService:Create(cueGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 					Transparency = glowTransparency,
 					Thickness = glowThickness
+				}):Play()
+			end
+			if cueBlurStroke and cueBlurStroke.Parent then
+				self.TweenService:Create(cueBlurStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = blurTransparency,
+					Thickness = blurThickness
 				}):Play()
 			end
 		end
@@ -542,6 +568,7 @@ function DragModule.init(ctx)
 				cueFrame = nil
 				cueStroke = nil
 				cueGlowStroke = nil
+				cueBlurStroke = nil
 			end
 		end
 	

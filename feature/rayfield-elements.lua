@@ -75,6 +75,14 @@ function ElementsModule.init(ctx)
 			TabButton.Title.TextTransparency = 1
 			TabButton.Image.ImageTransparency = 1
 			TabButton.UIStroke.Transparency = 1
+
+			local TabHoverGlow = Instance.new("UIStroke")
+			TabHoverGlow.Name = "HoverGlow"
+			TabHoverGlow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			TabHoverGlow.Thickness = 4.2
+			TabHoverGlow.Transparency = 1
+			TabHoverGlow.Color = Color3.fromRGB(110, 175, 240)
+			TabHoverGlow.Parent = TabButton
 	
 			TabButton.Visible = not Ext or false
 	
@@ -127,15 +135,18 @@ function ElementsModule.init(ctx)
 	
 			local function UpdateTabColors()
 				TabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
+				TabHoverGlow.Color = self.getSelectedTheme().SliderProgress or self.getSelectedTheme().TabStroke
 				if self.Elements.UIPageLayout.CurrentPage == TabPage then
 					tabHover = false
 					TabButton.UIStroke.Thickness = 1
+					TabHoverGlow.Transparency = 1
 					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected
 					TabButton.Image.ImageColor3 = self.getSelectedTheme().SelectedTabTextColor
 					TabButton.Title.TextColor3 = self.getSelectedTheme().SelectedTabTextColor
 				else
 					if not tabHover then
 						TabButton.UIStroke.Thickness = 1
+						TabHoverGlow.Transparency = 1
 					end
 					TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackground
 					TabButton.Image.ImageColor3 = self.getSelectedTheme().TabTextColor
@@ -153,10 +164,13 @@ function ElementsModule.init(ctx)
 
 				local tweenDuration = duration or 0.16
 				local theme = self.getSelectedTheme() or {}
-				local targetBackgroundTransparency = tabHover and 0.48 or 0.7
-				local targetStrokeTransparency = tabHover and 0.12 or 0.5
-				local targetStrokeThickness = tabHover and 1.6 or 1
+				local targetBackgroundTransparency = tabHover and 0.52 or 0.7
+				local targetStrokeTransparency = tabHover and 0.22 or 0.5
+				local targetStrokeThickness = tabHover and 1.35 or 1
 				local targetStrokeColor = tabHover and (theme.SliderProgress or theme.TabStroke) or theme.TabStroke
+				local targetGlowTransparency = tabHover and 0.7 or 1
+				local targetGlowThickness = tabHover and 4.9 or 4.2
+				local targetGlowColor = theme.SliderProgress or theme.TabStroke
 				local targetTextTransparency = tabHover and 0.05 or 0.2
 				local targetImageTransparency = tabHover and 0.05 or 0.2
 
@@ -165,6 +179,11 @@ function ElementsModule.init(ctx)
 					Transparency = targetStrokeTransparency,
 					Thickness = targetStrokeThickness,
 					Color = targetStrokeColor
+				}):Play()
+				self.TweenService:Create(TabHoverGlow, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = targetGlowTransparency,
+					Thickness = targetGlowThickness,
+					Color = targetGlowColor
 				}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextTransparency = targetTextTransparency}):Play()
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(tweenDuration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {ImageTransparency = targetImageTransparency}):Play()
@@ -189,6 +208,7 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
 				self.TweenService:Create(TabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
+				TabHoverGlow.Transparency = 1
 			elseif not Ext then
 				FirstTab = Name
 				TabButton.BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected
@@ -197,6 +217,7 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
 				self.TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+				TabHoverGlow.Transparency = 1
 			end
 	
 			local function activateTab(ignoreMinimisedCheck)
@@ -213,6 +234,7 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageColor3 = self.getSelectedTheme().SelectedTabTextColor}):Play()
 				TabButton.UIStroke.Thickness = 1
 				TabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
+				TabHoverGlow.Transparency = 1
 
 				for _, OtherTabButton in ipairs(self.TabList:GetChildren()) do
 					if OtherTabButton.Name ~= "Template" and OtherTabButton.ClassName == "Frame" and OtherTabButton ~= TabButton and OtherTabButton.Name ~= "Placeholder" and OtherTabButton.Visible then
@@ -225,6 +247,10 @@ function ElementsModule.init(ctx)
 						self.TweenService:Create(OtherTabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
 						OtherTabButton.UIStroke.Thickness = 1
 						OtherTabButton.UIStroke.Color = self.getSelectedTheme().TabStroke
+						local otherGlow = OtherTabButton:FindFirstChild("HoverGlow")
+						if otherGlow and otherGlow:IsA("UIStroke") then
+							otherGlow.Transparency = 1
+						end
 					end
 				end
 

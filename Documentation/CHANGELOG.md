@@ -29,6 +29,7 @@
 - Updated first-use UX by prewarming split/detach layers to reduce first drag hitch.
 - Updated split-tab drag ghost movement to frame-synced follow for smoother first long-hold drag.
 - Updated tab split gesture visuals to use element-style hold/ready border cue on tab buttons.
+- Updated hover/hold visual style to soft multi-layer glow (blur-like) to avoid harsh bright outlines.
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.

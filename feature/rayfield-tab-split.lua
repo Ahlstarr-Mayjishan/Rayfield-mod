@@ -470,6 +470,9 @@ function TabSplitModule.init(ctx)
 		if panelData.GlowStroke then
 			panelData.GlowStroke.Color = accent
 		end
+		if panelData.SoftGlowStroke then
+			panelData.SoftGlowStroke.Color = accent
+		end
 		if panelData.Stroke then
 			panelData.Stroke.Color = active and accent:Lerp(strokeColor, 0.35) or strokeColor
 		end
@@ -485,6 +488,12 @@ function TabSplitModule.init(ctx)
 			self.TweenService:Create(panelData.GlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 				Thickness = active and 4.6 or 1.2,
 				Transparency = active and 0.35 or 1
+			}):Play()
+		end
+		if panelData.SoftGlowStroke then
+			self.TweenService:Create(panelData.SoftGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Thickness = active and 7.2 or 4.2,
+				Transparency = active and 0.68 or 1
 			}):Play()
 		end
 	end
@@ -699,6 +708,12 @@ function TabSplitModule.init(ctx)
 		glowStroke.Transparency = 1
 		glowStroke.Parent = panel
 
+		local softGlowStroke = Instance.new("UIStroke")
+		softGlowStroke.Color = (theme and theme.SliderProgress) or Color3.fromRGB(112, 189, 255)
+		softGlowStroke.Thickness = 4.2
+		softGlowStroke.Transparency = 1
+		softGlowStroke.Parent = panel
+
 		local header = Instance.new("Frame")
 		header.Name = "Header"
 		header.BackgroundColor3 = (theme and theme.Topbar) or Color3.fromRGB(25, 25, 25)
@@ -762,6 +777,7 @@ function TabSplitModule.init(ctx)
 			Content = content,
 			Stroke = stroke,
 			GlowStroke = glowStroke,
+			SoftGlowStroke = softGlowStroke,
 			TabRecord = tabRecord,
 			Cleanup = {},
 			InputId = self.HttpService:GenerateGUID(false),
@@ -1057,6 +1073,7 @@ function TabSplitModule.init(ctx)
 			cueFrame = nil,
 			cueStroke = nil,
 			cueGlowStroke = nil,
+			cueBlurStroke = nil,
 			cueThemeConnection = nil
 		}
 
@@ -1070,7 +1087,7 @@ function TabSplitModule.init(ctx)
 				return false
 			end
 
-			if state.cueFrame and state.cueFrame.Parent and state.cueStroke and state.cueGlowStroke then
+			if state.cueFrame and state.cueFrame.Parent and state.cueStroke and state.cueGlowStroke and state.cueBlurStroke then
 				return true
 			end
 
@@ -1110,6 +1127,13 @@ function TabSplitModule.init(ctx)
 			state.cueGlowStroke.Transparency = 1
 			state.cueGlowStroke.Parent = state.cueFrame
 
+			state.cueBlurStroke = Instance.new("UIStroke")
+			state.cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			state.cueBlurStroke.Color = getCueColor()
+			state.cueBlurStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 5
+			state.cueBlurStroke.Transparency = 1
+			state.cueBlurStroke.Parent = state.cueFrame
+
 			state.cueThemeConnection = self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 				local cueColor = getCueColor()
 				if state.cueStroke and state.cueStroke.Parent then
@@ -1117,6 +1141,9 @@ function TabSplitModule.init(ctx)
 				end
 				if state.cueGlowStroke and state.cueGlowStroke.Parent then
 					state.cueGlowStroke.Color = cueColor
+				end
+				if state.cueBlurStroke and state.cueBlurStroke.Parent then
+					state.cueBlurStroke.Color = cueColor
 				end
 			end)
 
@@ -1130,8 +1157,12 @@ function TabSplitModule.init(ctx)
 
 			local glowTransparency = (transparency >= 0.99)
 				and 1
-				or math.clamp(transparency + 0.18, 0.12, 0.95)
+				or math.clamp(transparency + 0.2, 0.2, 0.95)
 			local glowThickness = thickness + 2.2
+			local blurTransparency = (transparency >= 0.99)
+				and 1
+				or math.clamp(transparency + 0.36, 0.45, 0.985)
+			local blurThickness = thickness + 5.4
 
 			if not duration or duration <= 0 then
 				state.cueStroke.Transparency = transparency
@@ -1139,6 +1170,10 @@ function TabSplitModule.init(ctx)
 				if state.cueGlowStroke and state.cueGlowStroke.Parent then
 					state.cueGlowStroke.Transparency = glowTransparency
 					state.cueGlowStroke.Thickness = glowThickness
+				end
+				if state.cueBlurStroke and state.cueBlurStroke.Parent then
+					state.cueBlurStroke.Transparency = blurTransparency
+					state.cueBlurStroke.Thickness = blurThickness
 				end
 				return
 			end
@@ -1152,6 +1187,12 @@ function TabSplitModule.init(ctx)
 				self.TweenService:Create(state.cueGlowStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 					Transparency = glowTransparency,
 					Thickness = glowThickness
+				}):Play()
+			end
+			if state.cueBlurStroke and state.cueBlurStroke.Parent then
+				self.TweenService:Create(state.cueBlurStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = blurTransparency,
+					Thickness = blurThickness
 				}):Play()
 			end
 		end
@@ -1201,6 +1242,7 @@ function TabSplitModule.init(ctx)
 			state.cueFrame = nil
 			state.cueStroke = nil
 			state.cueGlowStroke = nil
+			state.cueBlurStroke = nil
 		end
 
 		local function stopGhostFollow()
