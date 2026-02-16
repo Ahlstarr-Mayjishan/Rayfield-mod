@@ -5,6 +5,13 @@
 ### Added
 - Officialized `AnimationAPI:GetActiveAnimationCount()` for runtime visibility of live tweens.
 - Added `AnimationAPI:Sequence(guiObject)` for chaining animation steps.
+- Added tab split panel system (hold 3 seconds on a tab, then drag outside main UI to split).
+- Added multi split-panel support with dock-back flow by hold-dragging panel header into main `TabList`.
+- Added `CreateWindow` options for tab splitting:
+  - `EnableTabSplit`
+  - `TabSplitHoldDuration`
+  - `AllowSettingsTabSplit`
+  - `MaxSplitTabs`
 
 ### Changed
 - Bumped `RayfieldAdvanced.Version` from `1.0.0` to `1.1.0`.
@@ -16,6 +23,7 @@
   - default first-run return is now lightweight loader table
   - exported UI remains accessible via `_G.Rayfield` and `_G.RayfieldUI`
   - configurable via `autoExecuteReturn = "loader" | "ui" | "none"`.
+- Synced split panel visibility with main UI hide/minimize transitions.
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.

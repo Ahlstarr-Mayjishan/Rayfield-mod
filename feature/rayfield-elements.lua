@@ -90,8 +90,20 @@ function ElementsModule.init(ctx)
 					TemplateElement:Destroy()
 				end
 			end
-	
+
 			TabPage.Parent = self.Elements
+
+			local tabRecord = {
+				Name = Name,
+				Ext = Ext and true or false,
+				TabButton = TabButton,
+				TabPage = TabPage,
+				DefaultVisible = TabButton.Visible,
+				IsSplit = false,
+				SplitPanelId = nil,
+				SuppressNextClick = false,
+				IsSettings = (Name == "Rayfield Settings" and Ext == true)
+			}
 			
 			-- Reactive coloring for TabPage elements
 			TabPage.ChildAdded:Connect(function(Element)
@@ -153,9 +165,10 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
 			end
 	
-	
-			TabButton.Interact.MouseButton1Click:Connect(function()
-				if self.getMinimised() then return end
+			local function activateTab(ignoreMinimisedCheck)
+				if tabRecord.IsSplit then return false end
+				if not ignoreMinimisedCheck and self.getMinimised() then return false end
+
 				self.TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 				self.TweenService:Create(TabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
@@ -163,9 +176,9 @@ function ElementsModule.init(ctx)
 				self.TweenService:Create(TabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().TabBackgroundSelected}):Play()
 				self.TweenService:Create(TabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextColor3 = self.getSelectedTheme().SelectedTabTextColor}):Play()
 				self.TweenService:Create(TabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageColor3 = self.getSelectedTheme().SelectedTabTextColor}):Play()
-	
+
 				for _, OtherTabButton in ipairs(self.TabList:GetChildren()) do
-					if OtherTabButton.Name ~= "Template" and OtherTabButton.ClassName == "Frame" and OtherTabButton ~= TabButton and OtherTabButton.Name ~= "Placeholder" then
+					if OtherTabButton.Name ~= "Template" and OtherTabButton.ClassName == "Frame" and OtherTabButton ~= TabButton and OtherTabButton.Name ~= "Placeholder" and OtherTabButton.Visible then
 						self.TweenService:Create(OtherTabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().TabBackground}):Play()
 						self.TweenService:Create(OtherTabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextColor3 = self.getSelectedTheme().TabTextColor}):Play()
 						self.TweenService:Create(OtherTabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageColor3 = self.getSelectedTheme().TabTextColor}):Play()
@@ -175,14 +188,32 @@ function ElementsModule.init(ctx)
 						self.TweenService:Create(OtherTabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
 					end
 				end
-	
+
 				if self.Elements.UIPageLayout.CurrentPage ~= TabPage then
 					self.Elements.UIPageLayout:JumpTo(TabPage)
 				end
+
+				return true
+			end
+
+			tabRecord.Activate = activateTab
+	
+			TabButton.Interact.MouseButton1Click:Connect(function()
+				if tabRecord.SuppressNextClick then
+					tabRecord.SuppressNextClick = false
+					return
+				end
+
+				activateTab(false)
 			end)
 	
 			-- Preserve module context for Tab:Create* methods where `self` is Tab.
 			local Tab = setmetatable({}, { __index = self })
+			Tab.__TabRecord = tabRecord
+			function Tab:GetInternalRecord()
+				return tabRecord
+			end
+			tabRecord.Tab = Tab
 	
 			-- Element tracking system for extended API
 			local TabElements = {} -- Stores all elements created in this tab

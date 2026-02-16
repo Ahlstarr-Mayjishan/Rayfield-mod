@@ -638,6 +638,7 @@ local UIStateModuleLib = useStudio and require(script.Parent['rayfield-ui-state'
 local ElementsModuleLib = useStudio and require(script.Parent['rayfield-elements']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-elements.lua'))()
 local ConfigModuleLib = useStudio and require(script.Parent['rayfield-config']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-config.lua'))()
 local UtilitiesModuleLib = useStudio and require(script.Parent['rayfield-utilities']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-utilities.lua'))()
+local TabSplitModuleLib = useStudio and require(script.Parent['rayfield-tab-split']) or compileString(game:HttpGet(MODULE_BASE_URL .. 'rayfield-tab-split.lua'))()
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -992,6 +993,8 @@ local UIStateSystem = UIStateModuleLib.init({
 	useMobilePrompt = useMobilePrompt
 })
 
+local TabSplitSystem = nil
+
 -- Wrapper functions for UI State
 local function openSearch()
 	UIStateSystem.openSearch()
@@ -1007,6 +1010,10 @@ local function Hide(notify)
 	UIStateSystem.Hide(notify)
 	Hidden = UIStateSystem.getHidden()
 	Debounce = UIStateSystem.getDebounce()
+	if TabSplitSystem then
+		TabSplitSystem.syncHidden(Hidden)
+		TabSplitSystem.syncMinimized(Minimised)
+	end
 end
 
 local function Unhide()
@@ -1014,18 +1021,28 @@ local function Unhide()
 	Hidden = UIStateSystem.getHidden()
 	Minimised = UIStateSystem.getMinimised()
 	Debounce = UIStateSystem.getDebounce()
+	if TabSplitSystem then
+		TabSplitSystem.syncHidden(Hidden)
+		TabSplitSystem.syncMinimized(Minimised)
+	end
 end
 
 local function Maximise()
 	UIStateSystem.Maximise()
 	Minimised = UIStateSystem.getMinimised()
 	Debounce = UIStateSystem.getDebounce()
+	if TabSplitSystem then
+		TabSplitSystem.syncMinimized(Minimised)
+	end
 end
 
 local function Minimise()
 	UIStateSystem.Minimise()
 	Minimised = UIStateSystem.getMinimised()
 	Debounce = UIStateSystem.getDebounce()
+	if TabSplitSystem then
+		TabSplitSystem.syncMinimized(Minimised)
+	end
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
@@ -1184,6 +1201,25 @@ function RayfieldLibrary:CreateWindow(Settings)
 	-- Users can explicitly set DisableRayfieldPrompts = false to enable notifications
 	if Settings.DisableRayfieldPrompts == nil then
 		Settings.DisableRayfieldPrompts = true -- Default to disabled
+	end
+
+	-- Tab split settings
+	if Settings.EnableTabSplit == nil then
+		Settings.EnableTabSplit = true
+	end
+	if type(Settings.TabSplitHoldDuration) ~= "number" or Settings.TabSplitHoldDuration <= 0 then
+		Settings.TabSplitHoldDuration = 3
+	end
+	if Settings.AllowSettingsTabSplit == nil then
+		Settings.AllowSettingsTabSplit = false
+	end
+	if Settings.MaxSplitTabs ~= nil then
+		local maxSplitTabs = tonumber(Settings.MaxSplitTabs)
+		if maxSplitTabs and maxSplitTabs >= 1 then
+			Settings.MaxSplitTabs = math.floor(maxSplitTabs)
+		else
+			Settings.MaxSplitTabs = nil
+		end
 	end
 
 	if not Settings.DisableRayfieldPrompts then
@@ -1500,6 +1536,12 @@ function RayfieldLibrary:CreateWindow(Settings)
 	local FirstTab = false
 	local Window = {}
 
+	-- Recreate tab split system per-window setup to keep references fresh
+	if TabSplitSystem and TabSplitSystem.destroy then
+		TabSplitSystem.destroy()
+		TabSplitSystem = nil
+	end
+
 	-- Initialize Elements Module
 	local ElementsSystem = ElementsModuleLib.init({
 		TweenService = TweenService,
@@ -1529,10 +1571,45 @@ function RayfieldLibrary:CreateWindow(Settings)
 		Settings = Settings
 	})
 
+	TabSplitSystem = TabSplitModuleLib.init({
+		UserInputService = UserInputService,
+		RunService = RunService,
+		TweenService = TweenService,
+		HttpService = HttpService,
+		Rayfield = Rayfield,
+		Main = Main,
+		Topbar = Topbar,
+		TabList = TabList,
+		Elements = Elements,
+		getSelectedTheme = function() return SelectedTheme end,
+		rayfieldDestroyed = function() return rayfieldDestroyed end,
+		useMobileSizing = useMobileSizing,
+		Notify = function(data)
+			RayfieldLibrary:Notify(data)
+		end,
+		getBlockedState = function()
+			return Debounce or searchOpen
+		end,
+		enabled = Settings.EnableTabSplit,
+		holdDuration = Settings.TabSplitHoldDuration,
+		allowSettingsSplit = Settings.AllowSettingsTabSplit,
+		maxSplitTabs = Settings.MaxSplitTabs
+	})
+	TabSplitSystem.syncHidden(Hidden)
+	TabSplitSystem.syncMinimized(Minimised)
+
 	-- Wrapper for Window:CreateTab
 	function Window:CreateTab(Name, Image, Ext)
 		local tab = ElementsSystem.CreateTab(Name, Image, Ext)
 		FirstTab = ElementsSystem.getFirstTab()
+		if TabSplitSystem and tab and tab.GetInternalRecord then
+			local ok, tabRecord = pcall(function()
+				return tab:GetInternalRecord()
+			end)
+			if ok and tabRecord then
+				TabSplitSystem.registerTab(tabRecord)
+			end
+		end
 		return tab
 	end
 
@@ -1656,6 +1733,9 @@ local function setVisibility(visibility: boolean, notify: boolean?)
 	if UtilitiesSystem then
 		UtilitiesSystem.setVisibility(visibility, notify)
 		Hidden = not visibility
+		if TabSplitSystem then
+			TabSplitSystem.syncHidden(Hidden)
+		end
 	end
 end
 
@@ -1672,6 +1752,10 @@ function RayfieldLibrary:Destroy()
 	-- Cleanup theme connections to prevent memory leaks on reload
 	if ThemeSystem and ThemeSystem.cleanup then
 		ThemeSystem.cleanup()
+	end
+	if TabSplitSystem and TabSplitSystem.destroy then
+		TabSplitSystem.destroy()
+		TabSplitSystem = nil
 	end
 	if UtilitiesSystem then
 		UtilitiesSystem.destroy(hideHotkeyConnection)
@@ -1758,7 +1842,16 @@ if Topbar:FindFirstChild('Settings') then
 				end
 			end
 
-			Elements.UIPageLayout:JumpTo(Elements['Rayfield Settings'])
+			local settingsPage = Elements:FindFirstChild("Rayfield Settings")
+			if settingsPage then
+				Elements.UIPageLayout:JumpTo(settingsPage)
+			else
+				RayfieldLibrary:Notify({
+					Title = "Settings Tab",
+					Content = "Settings tab is currently split. Dock it back to open from topbar.",
+					Duration = 3
+				})
+			end
 		end)
 	end)
 
