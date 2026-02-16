@@ -1760,6 +1760,30 @@ function RayfieldLibrary:Destroy()
 	if UtilitiesSystem then
 		UtilitiesSystem.destroy(hideHotkeyConnection)
 	end
+
+	-- Reset global runtime/cache flags so the next execution reloads a fresh UI tree.
+	pcall(function()
+		if getgenv then
+			local env = getgenv()
+			env.rayfieldCached = nil
+		end
+	end)
+	_G.Rayfield = nil
+	_G.RayfieldUI = nil
+	_G.RayfieldAllInOneLoaded = nil
+	if type(_G.RayfieldCache) == "table" then
+		table.clear(_G.RayfieldCache)
+	end
+end
+
+function RayfieldLibrary:IsDestroyed(): boolean
+	if rayfieldDestroyed then
+		return true
+	end
+	local ok, parent = pcall(function()
+		return Rayfield.Parent
+	end)
+	return (not ok) or parent == nil
 end
 
 Topbar.ChangeSize.MouseButton1Click:Connect(function()

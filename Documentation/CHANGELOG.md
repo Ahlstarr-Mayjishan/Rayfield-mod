@@ -45,6 +45,7 @@
 - Fixed element detach cue styling to use stronger glow/hold/ready feedback during hold-drag.
 - Fixed split-panel hover state sticking by switching to explicit hover booleans instead of counter-based accumulation.
 - Fixed residual idle glow by forcing detach/split cue glow transparency to fully hide (`1`) when not hovered/holding.
+- Fixed re-run-after-destroy crash by resetting global Rayfield cache/state on `Rayfield:Destroy()` and invalidating stale cached base modules in all-in-one loader.
 
 ## 2026-02-15
 

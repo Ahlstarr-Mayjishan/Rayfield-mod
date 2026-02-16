@@ -111,6 +111,27 @@ local function getCacheKey(name, url)
 	return tostring(name) .. "|" .. tostring(url)
 end
 
+local function isCachedModuleUsable(name, moduleValue)
+	if type(moduleValue) ~= "table" then
+		return false
+	end
+
+	-- Base module holds live GUI refs; if destroyed, force reload instead of reusing stale cache.
+	if name == "base" then
+		if type(moduleValue.CreateWindow) ~= "function" then
+			return false
+		end
+		if type(moduleValue.IsDestroyed) == "function" then
+			local ok, destroyed = pcall(moduleValue.IsDestroyed, moduleValue)
+			if ok and destroyed then
+				return false
+			end
+		end
+	end
+
+	return true
+end
+
 -- ============================================
 -- MODULE LOADER
 -- ============================================
@@ -120,7 +141,13 @@ local function loadModule(name, url)
 
 	-- Check cache
 	local cached = getCached(cacheKey)
-	if cached then return cached end
+	if cached then
+		if isCachedModuleUsable(name, cached) then
+			return cached
+		end
+		_G.RayfieldCache[cacheKey] = nil
+		print("♻️ [Rayfield] Cache invalidated:", cacheKey)
+	end
 	
 	print("⬇️ [Rayfield] Loading:", name)
 	
