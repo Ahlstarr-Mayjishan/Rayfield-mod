@@ -943,6 +943,31 @@ function ElementsModule.init(ctx)
 			function Tab:CreateDropdown(DropdownSettings)
 				local ctx = self
 				local Dropdown = self.Elements.Template.Dropdown:Clone()
+				local function normalizeDropdownOptions(rawOptions)
+					local normalized = {}
+					if type(rawOptions) ~= "table" then
+						if rawOptions ~= nil then
+							table.insert(normalized, tostring(rawOptions))
+						end
+						return normalized
+					end
+					if #rawOptions > 0 then
+						for _, option in ipairs(rawOptions) do
+							if option ~= nil then
+								table.insert(normalized, tostring(option))
+							end
+						end
+						return normalized
+					end
+					for _, option in pairs(rawOptions) do
+						if option ~= nil then
+							table.insert(normalized, tostring(option))
+						end
+					end
+					return normalized
+				end
+
+				DropdownSettings.Options = normalizeDropdownOptions(DropdownSettings.Options)
 				if string.find(DropdownSettings.Name,"closed") then
 					Dropdown.Name = "Dropdown"
 				else
@@ -952,7 +977,9 @@ function ElementsModule.init(ctx)
 				Dropdown.Visible = true
 				Dropdown.Parent = TabPage
 	
+				Dropdown.Size = UDim2.new(1, -10, 0, 45)
 				Dropdown.List.Visible = false
+				Dropdown.List.ScrollBarImageTransparency = 1
 				if DropdownSettings.CurrentOption then
 					if type(DropdownSettings.CurrentOption) == "string" then
 						DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption}
@@ -1047,10 +1074,23 @@ function ElementsModule.init(ctx)
 				end)
 	
 				local function SetDropdownOptions()
+					local listTemplate = Dropdown.List:FindFirstChild("Template")
+					if not listTemplate then
+						warn("Rayfield | Dropdown template not found for " .. tostring(DropdownSettings.Name))
+						return
+					end
+
+					for _, optionObject in ipairs(Dropdown.List:GetChildren()) do
+						if optionObject.ClassName == "Frame" and optionObject.Name ~= "Placeholder" and optionObject.Name ~= "Template" then
+							optionObject:Destroy()
+						end
+					end
+
 					for _, Option in ipairs(DropdownSettings.Options) do
-						local DropdownOption = self.Elements.Template.Dropdown.List.Template:Clone()
-						DropdownOption.Name = Option
-						DropdownOption.Title.Text = Option
+						local optionName = tostring(Option)
+						local DropdownOption = listTemplate:Clone()
+						DropdownOption.Name = optionName
+						DropdownOption.Title.Text = optionName
 						DropdownOption.Parent = Dropdown.List
 						DropdownOption.Visible = true
 	
@@ -1072,12 +1112,12 @@ function ElementsModule.init(ctx)
 	
 						DropdownOption.Interact.ZIndex = 50
 						DropdownOption.Interact.MouseButton1Click:Connect(function()
-							if not DropdownSettings.MultipleOptions and table.find(DropdownSettings.CurrentOption, Option) then 
+							if not DropdownSettings.MultipleOptions and table.find(DropdownSettings.CurrentOption, optionName) then 
 								return
 							end
 	
-							if table.find(DropdownSettings.CurrentOption, Option) then
-								table.remove(DropdownSettings.CurrentOption, table.find(DropdownSettings.CurrentOption, Option))
+							if table.find(DropdownSettings.CurrentOption, optionName) then
+								table.remove(DropdownSettings.CurrentOption, table.find(DropdownSettings.CurrentOption, optionName))
 								if DropdownSettings.MultipleOptions then
 									if #DropdownSettings.CurrentOption == 1 then
 										Dropdown.Selected.Text = DropdownSettings.CurrentOption[1]
@@ -1093,7 +1133,7 @@ function ElementsModule.init(ctx)
 								if not DropdownSettings.MultipleOptions then
 									table.clear(DropdownSettings.CurrentOption)
 								end
-								table.insert(DropdownSettings.CurrentOption, Option)
+								table.insert(DropdownSettings.CurrentOption, optionName)
 								if DropdownSettings.MultipleOptions then
 									if #DropdownSettings.CurrentOption == 1 then
 										Dropdown.Selected.Text = DropdownSettings.CurrentOption[1]
@@ -1230,12 +1270,16 @@ function ElementsModule.init(ctx)
 				end
 	
 				function DropdownSettings:Refresh(optionsTable) -- updates a dropdown with new options from optionsTable
-					DropdownSettings.Options = optionsTable
+					DropdownSettings.Options = normalizeDropdownOptions(optionsTable)
 					for _, option in Dropdown.List:GetChildren() do
-						if option.ClassName == "Frame" and option.Name ~= "Placeholder" then
+						if option.ClassName == "Frame" and option.Name ~= "Placeholder" and option.Name ~= "Template" then
 							option:Destroy()
 						end
 					end
+					Dropdown.List.Visible = false
+					Dropdown.Size = UDim2.new(1, -10, 0, 45)
+					Dropdown.Toggle.Rotation = 180
+					Dropdown.List.ScrollBarImageTransparency = 1
 					SetDropdownOptions()
 				end
 	
