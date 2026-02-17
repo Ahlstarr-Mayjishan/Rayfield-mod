@@ -2,6 +2,15 @@
 
 Modified Rayfield UI package for executor environments.
 
+Source layout:
+- Canonical logic: `src/*`
+- Legacy compatibility wrappers: `feature/*` and `Main loader/*`
+
+Canonical test layout:
+- `tests/smoke/*`
+- `tests/regression/*`
+- `tests/helpers/*`
+
 ## Requirements
 
 - `loadstring`
@@ -39,7 +48,7 @@ MainTab:CreateButton({
 
 ```lua
 local UI = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/rayfield-all-in-one.lua"
+    "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/Main%20loader/rayfield-all-in-one.lua"
 ))()
 
 -- UI.Rayfield, UI.ErrorManager, UI.GarbageCollector, etc.

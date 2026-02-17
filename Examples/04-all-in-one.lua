@@ -2,8 +2,11 @@
 -- Handles both first-run auto-load and later manual quickSetup flow.
 
 local Loaded = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/rayfield-all-in-one.lua"
+    "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/Main%20loader/rayfield-all-in-one.lua"
 ))()
+
+-- Legacy URL (still supported):
+-- https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/feature/rayfield-all-in-one.lua
 
 local UI
 
@@ -46,4 +49,3 @@ Tab:CreateButton({
         print("Has Advanced:", UI.Advanced ~= nil)
     end
 })
-

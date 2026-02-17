@@ -1,0 +1,23 @@
+return {
+	theme = { canonical = "src/services/theme.lua", legacy = "feature/rayfield-theme.lua", studio = "rayfield-theme" },
+	settings = { canonical = "src/services/settings.lua", legacy = "feature/rayfield-settings.lua", studio = "rayfield-settings" },
+	drag = { canonical = "src/feature/drag/init.lua", legacy = "feature/rayfield-drag.lua", studio = "rayfield-drag" },
+	uiState = { canonical = "src/core/ui-state.lua", legacy = "feature/rayfield-ui-state.lua", studio = "rayfield-ui-state" },
+	elements = { canonical = "src/ui/elements/factory/init.lua", legacy = "feature/rayfield-elements.lua", studio = "rayfield-elements" },
+	elementsExtracted = { canonical = "src/ui/elements/widgets/index.lua", legacy = "feature/rayfield-elements-extracted.lua", studio = "rayfield-elements-extracted" },
+	config = { canonical = "src/services/config.lua", legacy = "feature/rayfield-config.lua", studio = "rayfield-config" },
+	utilities = { canonical = "src/services/utilities.lua", legacy = "feature/rayfield-utilities.lua", studio = "rayfield-utilities" },
+	tabSplit = { canonical = "src/feature/tabsplit/init.lua", legacy = "feature/rayfield-tab-split.lua", studio = "rayfield-tab-split" },
+	miniWindow = { canonical = "src/feature/mini-window/init.lua", legacy = "feature/mini-window-system.lua", studio = "mini-window-system" },
+	enhanced = { canonical = "src/feature/enhanced/init.lua", legacy = "feature/rayfield-enhanced.lua", studio = "rayfield-enhanced" },
+	advanced = { canonical = "src/feature/enhanced/advanced.lua", legacy = "feature/rayfield-advanced-features.lua", studio = "rayfield-advanced-features" },
+	animationEngine = { canonical = "src/core/animation/engine.lua", legacy = "src/core/animation/engine.lua", studio = "animation-engine" },
+	animationPublic = { canonical = "src/core/animation/public.lua", legacy = "src/core/animation/public.lua", studio = "animation-public" },
+	animationSequence = { canonical = "src/core/animation/sequence.lua", legacy = "src/core/animation/sequence.lua", studio = "animation-sequence" },
+	animationUI = { canonical = "src/core/animation/ui.lua", legacy = "src/core/animation/ui.lua", studio = "animation-ui" },
+	animationText = { canonical = "src/core/animation/text.lua", legacy = "src/core/animation/text.lua", studio = "animation-text" },
+	animationEasing = { canonical = "src/core/animation/easing.lua", legacy = "src/core/animation/easing.lua", studio = "animation-easing" },
+	animationCleanup = { canonical = "src/core/animation/cleanup.lua", legacy = "src/core/animation/cleanup.lua", studio = "animation-cleanup" },
+	allInOne = { canonical = "src/entry/rayfield-all-in-one.entry.lua", legacy = "Main%20loader/rayfield-all-in-one.lua", studio = "rayfield-all-in-one" },
+	modifiedEntry = { canonical = "src/entry/rayfield-modified.entry.lua", legacy = "Main%20loader/rayfield-modified.lua", studio = "rayfield-modified" }
+}

@@ -8,7 +8,7 @@ Cause:
 Use these known-good paths:
 - Base: `.../main/Main%20loader/rayfield-modified.lua`
 - Enhanced: `.../main/feature/rayfield-enhanced.lua`
-- All-in-one: `.../main/feature/rayfield-all-in-one.lua`
+- All-in-one (canonical): `.../main/Main%20loader/rayfield-all-in-one.lua`
 
 ## 2) `attempt to index nil with 'CreateWindow'`
 
@@ -72,4 +72,3 @@ Expected behavior:
 
 If needed:
 - Use `AllInOne.quickSetup(...)` manually.
-

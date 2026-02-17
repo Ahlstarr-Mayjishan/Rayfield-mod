@@ -1,0 +1,23 @@
+return {
+	theme = {"src/services/theme.lua", "feature/rayfield-theme.lua"},
+	settings = {"src/services/settings.lua", "feature/rayfield-settings.lua"},
+	config = {"src/services/config.lua", "feature/rayfield-config.lua"},
+	utilities = {"src/services/utilities.lua", "feature/rayfield-utilities.lua"},
+	uiState = {"src/core/ui-state.lua", "feature/rayfield-ui-state.lua"},
+	elements = {"src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua"},
+	elementsExtracted = {"src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua"},
+	drag = {"src/feature/drag/init.lua", "feature/rayfield-drag.lua"},
+	tabSplit = {"src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua"},
+	miniWindow = {"src/feature/mini-window/init.lua", "feature/mini-window-system.lua"},
+	enhanced = {"src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua"},
+	advanced = {"src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua"},
+	animationEngine = {"src/core/animation/engine.lua", "src/core/animation/engine.lua"},
+	animationPublic = {"src/core/animation/public.lua", "src/core/animation/public.lua"},
+	animationSequence = {"src/core/animation/sequence.lua", "src/core/animation/sequence.lua"},
+	animationUI = {"src/core/animation/ui.lua", "src/core/animation/ui.lua"},
+	animationText = {"src/core/animation/text.lua", "src/core/animation/text.lua"},
+	animationEasing = {"src/core/animation/easing.lua", "src/core/animation/easing.lua"},
+	animationCleanup = {"src/core/animation/cleanup.lua", "src/core/animation/cleanup.lua"},
+	allInOne = {"src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"},
+	modifiedEntry = {"src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua"}
+}

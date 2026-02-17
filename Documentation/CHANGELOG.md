@@ -1,10 +1,119 @@
 # Changelog
 
+## 2026-02-17
+
+### Added
+- Added all-in-one GitHub commit watcher with optional auto UI reload:
+  - `autoReload` / `autoReloadEnabled`
+  - `autoReloadInterval`
+  - `autoReloadRepo`
+  - `autoReloadBranch`
+  - `autoReloadClearCache`
+  - new loader methods: `checkForUpdates`, `reloadNow`, `startAutoReload`, `stopAutoReload`, `setAutoReloadCallback`
+- Added new tab slider variants:
+  - `Tab:CreateTrackBar(settings)` (draggable, no numeric text)
+  - `Tab:CreateStatusBar(settings)` (rounded, taller bar with in-bar text)
+- Added slider variant aliases:
+  - `CreateDragBar` and `CreateSliderLite` -> `CreateTrackBar`
+  - `CreateInfoBar` and `CreateSliderDisplay` -> `CreateStatusBar`
+- Added unified animation core package:
+  - `src/core/animation/engine.lua`
+  - `src/core/animation/public.lua`
+  - `src/core/animation/sequence.lua`
+  - `src/core/animation/ui.lua`
+  - `src/core/animation/text.lua`
+  - `src/core/animation/easing.lua`
+  - `src/core/animation/cleanup.lua`
+- Added new public base API:
+  - `Rayfield.Animate(...)`
+  - `Rayfield.Animate.UI(...)`
+  - `Rayfield.Animate.Text(...)`
+  - `Rayfield:GetAnimationEngine()`
+- Added tween guardrail script:
+  - `scripts/verify-no-direct-tweencreate.lua`
+- Added unified animation smoke regression:
+  - `tests/regression/test-unified-animation-api.lua`
+- Added canonical orchestration split for modified entry:
+  - `src/entry/rayfield-modified.runtime.lua`
+  - `src/core/runtime-env.lua`
+  - `src/core/window-controller.lua`
+  - `src/ui/window/init.lua`
+  - `src/ui/topbar/init.lua`
+  - `src/ui/tabs/init.lua`
+  - `src/ui/notifications/init.lua`
+- Added deep feature split scaffolding (non-breaking wrappers):
+  - Drag: `src/feature/drag/controller.lua`, `detach-gesture.lua`, `merge-indicator.lua`, `cleanup.lua`
+  - TabSplit: `src/feature/tabsplit/controller.lua`, `zindex.lua`, `hover-effects.lua`, `layout-free-drag.lua`
+  - Enhanced: `src/feature/enhanced/create-enhanced-rayfield.lua`, `error-manager.lua`, `garbage-collector.lua`, `remote-protection.lua`, `memory-leak-detector.lua`, `profiler.lua`
+  - Mini-window: `src/feature/mini-window/controller.lua`, `layout.lua`, `drag.lua`, `dock.lua`
+- Added elements canonical split entrypoints:
+  - `src/ui/elements/factory/init.lua`
+  - `src/ui/elements/factory/create-tab.lua`
+  - `src/ui/elements/factory/create-section.lua`
+  - `src/ui/elements/common/*`
+  - `src/ui/elements/widgets/index.lua`
+  - `src/ui/elements/widgets/button.lua`
+  - `src/ui/elements/widgets/toggle.lua`
+  - `src/ui/elements/widgets/dropdown.lua`
+  - `src/ui/elements/widgets/slider.lua`
+  - `src/ui/elements/widgets/input.lua`
+  - `src/ui/elements/widgets/keybind.lua`
+- Added architecture document:
+  - `Documentation/architecture/module-boundaries.md`
+- Added canonical test tree:
+  - `tests/smoke/rayfield-smoke-test.lua`
+  - `tests/regression/test-animation-api.lua`
+  - `tests/helpers/assert.lua`
+- Added validation scripts:
+  - `scripts/verify-module-map.lua`
+  - `scripts/verify-no-direct-httpget.lua`
+
+### Changed
+- Changed runtime module map/registry/manifest to include unified animation modules.
+- Changed core runtime to initialize one shared animation engine and bind it onto `RayfieldLibrary`.
+- Changed animation call-sites in canonical runtime/UI/features to use shared animation layer (`Animation:Create`) instead of direct `TweenService:Create`.
+- Changed API loader to canonical-only resolution (no automatic legacy path fallback in `src/api/loader.lua`).
+- Changed animation regression `tests/regression/test-animation-api.lua` to validate unified `Rayfield.Animate` surface instead of legacy advanced bridge.
+- Changed canonical elements mapping from:
+  - `src/ui/elements/factory.lua` -> `src/ui/elements/factory/init.lua`
+  - `src/ui/elements/widgets/extracted.lua` -> `src/ui/elements/widgets/index.lua`
+- Changed `src/entry/rayfield-modified.entry.lua` to orchestration-only entry that delegates runtime behavior to `src/entry/rayfield-modified.runtime.lua`.
+- Updated `src/api/registry.lua`, `src/entry/module-map.lua`, and `src/manifest.json` to align canonical `src/feature/*` paths and new split module structure.
+- Updated `src/README.md` with current canonical tree and split status.
+- Reintroduced top-level test entry files as compatibility wrappers:
+  - `rayfield-smoke-test.lua`
+  - `test-animation-api.lua`
+
+### Removed
+- Removed canonical export of `RayfieldAdvanced.AnimationAPI` from `src/feature/enhanced/advanced.lua`.
+- Removed enhanced bridge method `GetAnimateFacade()` from `src/feature/enhanced/create-enhanced-rayfield.lua`.
+- Removed compatibility regression script `tests/compatibility/legacy-wrapper-parity.lua`.
+
 ## 2026-02-16
 
 ### Added
 - Officialized `AnimationAPI:GetActiveAnimationCount()` for runtime visibility of live tweens.
 - Added `AnimationAPI:Sequence(guiObject)` for chaining animation steps.
+- Added layered `src/` architecture scaffold:
+  - `src/api`
+  - `src/core`
+  - `src/services`
+  - `src/ui`
+  - `src/feature`
+  - `src/legacy`
+  - `src/entry`
+- Added shared Lua API loading layer:
+  - `src/api/client.lua`
+  - `src/api/cache.lua`
+  - `src/api/resolver.lua`
+  - `src/api/registry.lua`
+  - `src/api/loader.lua`
+  - `src/api/errors.lua`
+- Added legacy wrapper helper:
+  - `src/legacy/forward.lua`
+- Added build/manifest foundation:
+  - `scripts/build-rayfield.lua`
+  - `src/manifest.json`
 - Added tab split panel system (hold 3 seconds on a tab, then drag outside main UI to split).
 - Added multi split-panel support with dock-back flow by hold-dragging panel header into main `TabList`.
 - Added `CreateWindow` options for tab splitting:
@@ -31,6 +140,12 @@
 - Updated tab split gesture visuals to use element-style hold/ready border cue on tab buttons.
 - Updated hover/hold visual style to soft multi-layer glow (blur-like) to avoid harsh bright outlines.
 - Tuned glow thickness/transparency to a thinner, subtler profile across tabs, split panels, and detach/tab-split cues.
+- Changed `Main loader/rayfield-modified.lua` module loading to hybrid fallback order:
+  - prefer `src/*` runtime modules
+  - fallback to legacy `feature/*` modules
+- Changed all-in-one canonical location to `Main loader/rayfield-all-in-one.lua` while preserving old URL compatibility via wrapper at `feature/rayfield-all-in-one.lua`.
+- Changed repository module organization so canonical logic is now under `src/*`; legacy files under `feature/*` and `Main loader/*` now forward through `src/legacy/forward.lua`.
+- Replaced PowerShell build tooling with Lua-only build script (`scripts/build-rayfield.lua`).
 
 ### Fixed
 - Fixed animation collision risk by keying active tween tracking by `Instance` instead of `tostring(guiObject)`.
