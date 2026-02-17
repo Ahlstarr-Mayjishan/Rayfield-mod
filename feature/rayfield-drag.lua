@@ -1086,6 +1086,16 @@ function DragModule.init(ctx)
 			if not (tabPage and tabPage.Parent and point) then
 				return nil, {}
 			end
+			local function isDockCandidate(child)
+				if not (child and child:IsA("GuiObject") and child.Visible) then
+					return false
+				end
+				local childName = tostring(child.Name)
+				if childName == "Placeholder" or childName == "DetachPlaceholder" then
+					return false
+				end
+				return true
+			end
 			local rawChildren = tabPage:GetChildren()
 			local insertionOrder = {}
 			for index, child in ipairs(rawChildren) do
@@ -1093,7 +1103,7 @@ function DragModule.init(ctx)
 			end
 			local ordered = {}
 			for _, child in ipairs(rawChildren) do
-				if child:IsA("GuiObject") and child.Visible then
+				if isDockCandidate(child) then
 					table.insert(ordered, child)
 				end
 			end
@@ -1165,6 +1175,11 @@ function DragModule.init(ctx)
 		local function showMainDropPreview(point)
 			local currentTabPage = self.Elements.UIPageLayout.CurrentPage
 			if not (currentTabPage and currentTabPage.Parent) then
+				clearMainDropPreview(false)
+				return
+			end
+			local targetState = originalState or rememberedState
+			if targetState and targetState.Parent and currentTabPage ~= targetState.Parent then
 				clearMainDropPreview(false)
 				return
 			end
@@ -1605,9 +1620,10 @@ function DragModule.init(ctx)
 			-- Float → self.Main: dock back to a specific position in the self.Main UI
 			if isInsideMain(point) then
 				local targetInsertIndex = lastMainDropInsertIndex
+				local targetState = originalState or rememberedState
 				if type(targetInsertIndex) ~= "number" then
 					local currentTabPage = self.Elements.UIPageLayout.CurrentPage
-					if currentTabPage and currentTabPage.Parent then
+					if targetState and targetState.Parent and currentTabPage == targetState.Parent then
 						targetInsertIndex = calculateMainInsertIndex(currentTabPage, point)
 					end
 				end
