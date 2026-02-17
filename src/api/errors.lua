@@ -1,4 +1,4 @@
-﻿local Errors = {}
+local Errors = {}
 
 function Errors.moduleLoadError(moduleName, attempts)
 	attempts = attempts or {}

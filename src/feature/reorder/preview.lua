@@ -1,4 +1,4 @@
-﻿local ReorderPreview = {}
+local ReorderPreview = {}
 
 function ReorderPreview.init(ctx)
 	local tweenService = ctx and ctx.TweenService

@@ -90,6 +90,12 @@ local function httpGet(url)
 end
 
 local function compileChunk(source)
+	if type(source) == "string" then
+		-- Strip UTF-8 BOM (U+FEFF) and leading NUL bytes for strict loadstring parsers
+		source = source:gsub("^\239\187\191", "")
+		source = source:gsub("^\0+", "")
+	end
+
 	if type(loadstring) == "function" then
 		local fn, err = loadstring(source)
 		if not fn then

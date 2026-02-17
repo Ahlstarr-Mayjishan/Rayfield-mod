@@ -1,4 +1,4 @@
-﻿local Dispatcher = {}
+local Dispatcher = {}
 
 function Dispatcher.new(UserInputService)
 	local changed = {}

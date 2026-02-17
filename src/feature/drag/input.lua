@@ -1,4 +1,4 @@
-﻿local DragInput = {}
+local DragInput = {}
 
 function DragInput.create(UserInputService)
 	local sharedInputChanged = {}

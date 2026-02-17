@@ -1,4 +1,4 @@
-﻿local TabSplitPanel = {}
+local TabSplitPanel = {}
 
 function TabSplitPanel.bindHover(panelData, syncPanelHover)
 	table.insert(panelData.Cleanup, panelData.Frame.MouseEnter:Connect(function()

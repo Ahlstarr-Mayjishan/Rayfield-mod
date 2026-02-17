@@ -1,4 +1,4 @@
-﻿local TabSplitState = {}
+local TabSplitState = {}
 
 function TabSplitState.create(ctx)
 	local sharedInputChanged = {}

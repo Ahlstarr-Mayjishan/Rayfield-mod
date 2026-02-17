@@ -1,4 +1,4 @@
-﻿local Bootstrap = {}
+local Bootstrap = {}
 
 function Bootstrap.createRuntimeContext(overrides)
 	overrides = overrides or {}

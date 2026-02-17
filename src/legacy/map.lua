@@ -1,4 +1,4 @@
-﻿return {
+return {
 	legacyWrappers = {
 		"Main loader/rayfield-modified.lua",
 		"Main loader/rayfield-all-in-one.lua",

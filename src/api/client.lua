@@ -1,6 +1,15 @@
-﻿local Client = {}
+local Client = {}
 
 local DEFAULT_TIMEOUT = 8
+
+local function sanitizeLuaSource(code)
+	if type(code) ~= "string" then
+		return code
+	end
+	code = code:gsub("^\239\187\191", "")
+	code = code:gsub("^\0+", "")
+	return code
+end
 
 local function normalizeUrl(url)
 	if type(url) ~= "string" or #url == 0 then
@@ -57,6 +66,7 @@ function Client.compile(code)
 	if type(code) ~= "string" or #code == 0 then
 		error("Client.compile expected non-empty Lua source string")
 	end
+	code = sanitizeLuaSource(code)
 	local compileString = loadstring or load
 	if not compileString then
 		error("No Lua compiler function available (loadstring/load)")

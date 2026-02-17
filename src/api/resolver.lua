@@ -1,4 +1,4 @@
-﻿local Resolver = {}
+local Resolver = {}
 
 local DEFAULT_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 

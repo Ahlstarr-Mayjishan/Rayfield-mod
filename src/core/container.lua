@@ -1,4 +1,4 @@
-﻿local Container = {}
+local Container = {}
 
 function Container.new(seed)
 	local registry = seed or {}

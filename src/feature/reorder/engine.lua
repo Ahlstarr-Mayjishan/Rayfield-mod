@@ -1,4 +1,4 @@
-﻿local ReorderEngine = {}
+local ReorderEngine = {}
 
 local function getOrderedGuiChildren(parent, excludes)
 	excludes = excludes or {}

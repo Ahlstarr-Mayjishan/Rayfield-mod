@@ -1,4 +1,4 @@
-﻿local Lifecycle = {}
+local Lifecycle = {}
 
 function Lifecycle.new()
 	local cleanups = {}

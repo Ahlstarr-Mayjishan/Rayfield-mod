@@ -1,4 +1,4 @@
-﻿local DragDock = {}
+local DragDock = {}
 
 local function getOrderedGuiChildren(parent, excludeA, excludeB)
 	if not parent then

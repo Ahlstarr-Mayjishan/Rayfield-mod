@@ -1,4 +1,4 @@
-﻿local Cache = {}
+local Cache = {}
 
 _G.__RayfieldApiModuleCache = _G.__RayfieldApiModuleCache or {}
 

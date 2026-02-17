@@ -1,4 +1,4 @@
-﻿local compileString = loadstring or load
+local compileString = loadstring or load
 if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end

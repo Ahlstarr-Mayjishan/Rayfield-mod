@@ -1,4 +1,4 @@
-﻿local Logger = {}
+local Logger = {}
 
 function Logger.new(config)
 	config = config or {}

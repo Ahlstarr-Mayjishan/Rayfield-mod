@@ -53,9 +53,23 @@ if not compileString then
 end
 local HttpService = game:GetService("HttpService")
 
+local function compileChunk(source, label)
+	if type(source) ~= "string" then
+		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
+	end
+	source = source:gsub("^\239\187\191", "")
+	source = source:gsub("^\0+", "")
+	local chunk, err = compileString(source)
+	if not chunk then
+		error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
+	end
+	return chunk
+end
+
 local MODULE_ROOT_URL = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 _G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
-local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
+local apiClientSource = game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua")
+local ApiClient = compileChunk(apiClientSource, "src/api/client.lua")()
 if _G then
 	_G.__RayfieldApiClient = ApiClient
 end

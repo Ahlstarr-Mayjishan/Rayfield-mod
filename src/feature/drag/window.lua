@@ -1,4 +1,4 @@
-﻿local DragWindow = {}
+local DragWindow = {}
 
 function DragWindow.create(ctx)
 	local detachedScreenGui = nil

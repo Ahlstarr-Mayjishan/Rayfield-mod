@@ -1,4 +1,4 @@
-﻿local TabSplitDragDock = {}
+local TabSplitDragDock = {}
 
 function TabSplitDragDock.attachPanelDrag(panelData, opts)
 	local state = {
