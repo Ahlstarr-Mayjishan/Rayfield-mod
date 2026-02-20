@@ -1091,19 +1091,50 @@ function ElementsModule.init(ctx)
 				Dropdown.Size = UDim2.new(1, -10, 0, 45)
 				Dropdown.List.Visible = false
 				Dropdown.List.ScrollBarImageTransparency = 1
-				if DropdownSettings.CurrentOption then
-					if type(DropdownSettings.CurrentOption) == "string" then
-						DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption}
+				local function normalizeCurrentOption(rawSelection, allowFallbackToFirst)
+					local normalized = {}
+					if type(rawSelection) == "string" then
+						table.insert(normalized, rawSelection)
+					elseif type(rawSelection) == "table" then
+						if #rawSelection > 0 then
+							for _, value in ipairs(rawSelection) do
+								if value ~= nil then
+									table.insert(normalized, tostring(value))
+								end
+							end
+						else
+							for _, value in pairs(rawSelection) do
+								if value ~= nil then
+									table.insert(normalized, tostring(value))
+								end
+							end
+						end
+					elseif rawSelection ~= nil then
+						table.insert(normalized, tostring(rawSelection))
 					end
-					if not DropdownSettings.MultipleOptions and type(DropdownSettings.CurrentOption) == "table" then
-						DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption[1]}
+
+					local filtered = {}
+					local seen = {}
+					for _, option in ipairs(normalized) do
+						local optionName = tostring(option)
+						if table.find(DropdownSettings.Options, optionName) and not seen[optionName] then
+							seen[optionName] = true
+							table.insert(filtered, optionName)
+							if not DropdownSettings.MultipleOptions then
+								break
+							end
+						end
 					end
-				else
-					DropdownSettings.CurrentOption = {}
+
+					if #filtered == 0 and allowFallbackToFirst and not DropdownSettings.MultipleOptions and DropdownSettings.Options[1] ~= nil then
+						filtered = { tostring(DropdownSettings.Options[1]) }
+					end
+
+					return filtered
 				end
-	
-				if DropdownSettings.MultipleOptions then
-					if DropdownSettings.CurrentOption and type(DropdownSettings.CurrentOption) == "table" then
+
+				local function updateSelectedTextFromCurrent()
+					if DropdownSettings.MultipleOptions then
 						if #DropdownSettings.CurrentOption == 1 then
 							Dropdown.Selected.Text = DropdownSettings.CurrentOption[1]
 						elseif #DropdownSettings.CurrentOption == 0 then
@@ -1112,13 +1143,30 @@ function ElementsModule.init(ctx)
 							Dropdown.Selected.Text = "Various"
 						end
 					else
-						DropdownSettings.CurrentOption = {}
-						Dropdown.Selected.Text = "None"
+						Dropdown.Selected.Text = DropdownSettings.CurrentOption[1] or "None"
 					end
-				else
-					Dropdown.Selected.Text = DropdownSettings.CurrentOption[1] or "None"
 				end
-	
+
+				local function updateOptionVisuals()
+					for _, droption in ipairs(Dropdown.List:GetChildren()) do
+						if droption.ClassName == "Frame" and droption.Name ~= "Placeholder" then
+							if table.find(DropdownSettings.CurrentOption, droption.Name) then
+								droption.BackgroundColor3 = self.getSelectedTheme().DropdownSelected
+							else
+								droption.BackgroundColor3 = self.getSelectedTheme().DropdownUnselected
+							end
+						end
+					end
+				end
+
+				local function applySelectionState(rawSelection, allowFallbackToFirst)
+					DropdownSettings.CurrentOption = normalizeCurrentOption(rawSelection, allowFallbackToFirst ~= false)
+					updateSelectedTextFromCurrent()
+					updateOptionVisuals()
+				end
+
+				applySelectionState(DropdownSettings.CurrentOption, true)
+
 				self.bindTheme(Dropdown.Toggle, "ImageColor3", "TextColor")
 				
 				-- Reactive coloring for Dropdown options
@@ -1329,32 +1377,9 @@ function ElementsModule.init(ctx)
 					end
 				end
 	
-				function DropdownSettings:Set(NewOption)
-					DropdownSettings.CurrentOption = NewOption
-	
-					if typeof(DropdownSettings.CurrentOption) == "string" then
-						DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption}
-					end
-	
-					if not DropdownSettings.MultipleOptions then
-						DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption[1]}
-					end
-	
-					if DropdownSettings.MultipleOptions then
-						if #DropdownSettings.CurrentOption == 1 then
-							Dropdown.Selected.Text = DropdownSettings.CurrentOption[1]
-						elseif #DropdownSettings.CurrentOption == 0 then
-							Dropdown.Selected.Text = "None"
-						else
-							Dropdown.Selected.Text = "Various"
-						end
-					else
-						Dropdown.Selected.Text = DropdownSettings.CurrentOption[1]
-					end
-	
-	
+				local function emitDropdownCallback(payload)
 					local Success, Response = pcall(function()
-						DropdownSettings.Callback(NewOption)
+						DropdownSettings.Callback(payload or DropdownSettings.CurrentOption)
 					end)
 					if not Success then
 						ctx.Animation:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
@@ -1367,17 +1392,14 @@ function ElementsModule.init(ctx)
 						ctx.Animation:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = ctx.getSelectedTheme().ElementBackground}):Play()
 						ctx.Animation:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					end
-	
-					for _, droption in ipairs(Dropdown.List:GetChildren()) do
-						if droption.ClassName == "Frame" and droption.Name ~= "Placeholder" then
-							if not table.find(DropdownSettings.CurrentOption, droption.Name) then
-								droption.BackgroundColor3 = ctx.getSelectedTheme().DropdownUnselected
-							else
-								droption.BackgroundColor3 = ctx.getSelectedTheme().DropdownSelected
-							end
-						end
+				end
+
+				function DropdownSettings:Set(NewOption)
+					applySelectionState(NewOption, true)
+					emitDropdownCallback(DropdownSettings.CurrentOption)
+					if not DropdownSettings.Ext then
+						self.SaveConfiguration()
 					end
-					--self.SaveConfiguration()
 				end
 	
 				function DropdownSettings:Refresh(optionsTable) -- updates a dropdown with new options from optionsTable
@@ -1392,16 +1414,14 @@ function ElementsModule.init(ctx)
 					Dropdown.Toggle.Rotation = 180
 					Dropdown.List.ScrollBarImageTransparency = 1
 					SetDropdownOptions()
+					applySelectionState(DropdownSettings.CurrentOption, true)
 				end
 	
 				function DropdownSettings:Clear()
-					DropdownSettings.CurrentOption = {}
-					Dropdown.Selected.Text = "None"
-					-- Update visual state of all options
-					for _, droption in ipairs(Dropdown.List:GetChildren()) do
-						if droption.ClassName == "Frame" and droption.Name ~= "Placeholder" then
-							droption.BackgroundColor3 = self.getSelectedTheme().DropdownUnselected
-						end
+					applySelectionState({}, false)
+					emitDropdownCallback(DropdownSettings.CurrentOption)
+					if not DropdownSettings.Ext then
+						self.SaveConfiguration()
 					end
 				end
 	
