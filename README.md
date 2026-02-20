@@ -17,6 +17,17 @@ Canonical test layout:
 - `game:HttpGet`
 - Optional for config saving: `writefile`, `readfile`, `isfile`, `isfolder`, `makefolder`
 
+## jsDelivr Loader Links
+
+- Main Loader (recommended):
+  - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/Main%20loader/rayfield-modified.lua
+- Main All-in-One Loader:
+  - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/Main%20loader/rayfield-all-in-one.lua
+- Legacy All-in-One Loader:
+  - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/feature/rayfield-all-in-one.lua
+- Enhanced Wrapper Loader:
+  - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/feature/rayfield-enhanced.lua
+
 ## Quick Start (Direct)
 
 ```lua
