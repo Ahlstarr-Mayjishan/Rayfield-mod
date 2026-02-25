@@ -163,6 +163,7 @@ Tab element factories:
 - `Tab:CreateToggle(settings)`
 - `Tab:CreateToggleBind(settings)` (wrapper bật keybind cho toggle)
 - `Tab:CreateHotToggle(settings)` (alias của `CreateToggleBind`)
+- `Tab:CreateKeybindToggle(settings)` (alias rõ nghĩa của `CreateToggleBind`)
 - `Tab:CreateSlider(settings)`
 - `Tab:CreateTrackBar(settings)`
 - `Tab:CreateStatusBar(settings)`

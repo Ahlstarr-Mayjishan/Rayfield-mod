@@ -520,6 +520,17 @@ local hotToggle = tabSettings:CreateHotToggle({
 	end
 })
 
+local keybindToggle = tabSettings:CreateKeybindToggle({
+	Name = "KeybindToggle Example",
+	CurrentValue = false,
+	Keybind = {
+		CurrentKeybind = "LeftControl+3"
+	},
+	Callback = function(value)
+		settingsLog("info", "KeybindToggle => " .. tostring(value))
+	end
+})
+
 local settingsImage = tabSettings:CreateImage({
 	Name = "UI Preview Image",
 	Source = "rbxassetid://4483362458",
@@ -658,6 +669,13 @@ runCheck("Extended API exists (Pin/Tooltip)", function()
 		and type(elButton.ClearTooltip) == "function"
 end)
 
+runCheck("Keybind toggle aliases available", function()
+	return type(tabSettings.CreateToggleBind) == "function"
+		and type(tabSettings.CreateHotToggle) == "function"
+		and type(tabSettings.CreateKeybindToggle) == "function"
+		and type(keybindToggle.GetKeybind) == "function"
+end)
+
 runCheck("ExportSettings returns code", function()
 	local code, _ = Rayfield:ExportSettings()
 	if type(code) ~= "string" or code == "" then
@@ -758,6 +776,7 @@ return {
 			ConfirmReset = confirmReset,
 			WrapperToggle = wrapperToggle,
 			HotToggle = hotToggle,
+			KeybindToggle = keybindToggle,
 			Image = settingsImage,
 			Gallery = settingsGallery,
 			Chart = settingsChart,

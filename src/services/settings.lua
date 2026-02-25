@@ -385,12 +385,11 @@ function SettingsModule.init(ctx)
 
 	-- Create settings UI tab
 	function self.createSettings(window)
-		if not (writefile and isfile and readfile and isfolder and makefolder) and not self.useStudio then
-			if self.Topbar['Settings'] then self.Topbar.Settings.Visible = false end
-			self.Topbar['Search'].Position = UDim2.new(1, -75, 0.5, 0)
-			warn('Can\'t create settings as no file-saving functionality is available.')
-			return
-		end
+		local hasFilePersistence = type(writefile) == "function"
+			and type(isfile) == "function"
+			and type(readfile) == "function"
+			and type(isfolder) == "function"
+			and type(makefolder) == "function"
 
 		local newTab = window:CreateTab('Rayfield Settings', 0, true)
 
@@ -400,6 +399,15 @@ function SettingsModule.init(ctx)
 
 		if self.Elements['Rayfield Settings'] then
 			self.Elements['Rayfield Settings'].LayoutOrder = 1000
+		end
+
+		if not hasFilePersistence and not self.useStudio then
+			warn("Rayfield | File APIs are unavailable. Settings, Theme Studio, and Share Code will run in session-only mode.")
+			newTab:CreateSection("Session")
+			newTab:CreateParagraph({
+				Title = "Session-only settings",
+				Content = "File APIs are not available. Export/import code and UI customization still work, but local file persistence is disabled for this session."
+			})
 		end
 
 		local function notifyShareCodeResult(success, message)

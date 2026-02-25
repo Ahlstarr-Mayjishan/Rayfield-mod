@@ -5757,6 +5757,10 @@ function ElementsModule.init(ctx)
 			function Tab:CreateHotToggle(ToggleSettings)
 				return self:CreateToggleBind(ToggleSettings)
 			end
+
+			function Tab:CreateKeybindToggle(ToggleSettings)
+				return self:CreateToggleBind(ToggleSettings)
+			end
 	
 			-- Slider
 			function Tab:CreateSlider(SliderSettings)
