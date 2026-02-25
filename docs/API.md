@@ -42,6 +42,15 @@ Main methods:
 - `Rayfield:ShowOnboarding(force?) -> (boolean, string)`
 - `Rayfield:SetOnboardingSuppressed(boolean) -> (boolean, string)`
 - `Rayfield:IsOnboardingSuppressed() -> boolean`
+- `Rayfield:SetAudioFeedbackEnabled(boolean) -> (boolean, string)`
+- `Rayfield:IsAudioFeedbackEnabled() -> boolean`
+- `Rayfield:SetAudioFeedbackPack(name, packDefinition?) -> (boolean, string)`
+- `Rayfield:GetAudioFeedbackState() -> table`
+- `Rayfield:PlayUICue(cueName) -> (boolean, string)`
+- `Rayfield:SetGlassMode(mode) -> (boolean, string)`
+- `Rayfield:GetGlassMode() -> string`
+- `Rayfield:SetGlassIntensity(number0to1) -> (boolean, string)`
+- `Rayfield:GetGlassIntensity() -> number`
 - `Rayfield:GetThemeStudioState() -> table`
 - `Rayfield:ApplyThemeStudioTheme(themeOrName) -> (boolean, string)`
 - `Rayfield:ResetThemeStudio() -> (boolean, string)`
@@ -88,6 +97,15 @@ Main methods:
 - Onboarding:
   - `ShowOnboarding(true)` bypasses suppression.
   - Checkbox label in onboarding UI: `Don't show this again`.
+- Audio feedback:
+  - default state: `enabled = false`, `pack = "Mute"`.
+  - custom pack contract:
+    - `{ click, hover, success, error }` with values as `rbxassetid://...` (or numeric IDs).
+  - `PlayUICue("click"|"hover"|"success"|"error")` uses current audio state.
+- Glass mode:
+  - `SetGlassMode("auto"|"off"|"canvas"|"fallback")`.
+  - `auto` attempts canvas first when supported, otherwise degrades to fallback.
+  - `SetGlassIntensity(0..1)` controls tint/stroke strength.
 
 `CreateWindow` setting note:
 - `ToggleUIKeybind` hỗ trợ key đơn (`"K"`) hoặc sequence canonical (`"LeftControl+K>LeftShift+M"`).

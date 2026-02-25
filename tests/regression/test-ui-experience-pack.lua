@@ -66,6 +66,15 @@ assertTrue(type(Rayfield.GetPinnedControls) == "function", "GetPinnedControls mi
 assertTrue(type(Rayfield.ShowOnboarding) == "function", "ShowOnboarding missing")
 assertTrue(type(Rayfield.SetOnboardingSuppressed) == "function", "SetOnboardingSuppressed missing")
 assertTrue(type(Rayfield.IsOnboardingSuppressed) == "function", "IsOnboardingSuppressed missing")
+assertTrue(type(Rayfield.SetAudioFeedbackEnabled) == "function", "SetAudioFeedbackEnabled missing")
+assertTrue(type(Rayfield.IsAudioFeedbackEnabled) == "function", "IsAudioFeedbackEnabled missing")
+assertTrue(type(Rayfield.SetAudioFeedbackPack) == "function", "SetAudioFeedbackPack missing")
+assertTrue(type(Rayfield.GetAudioFeedbackState) == "function", "GetAudioFeedbackState missing")
+assertTrue(type(Rayfield.PlayUICue) == "function", "PlayUICue missing")
+assertTrue(type(Rayfield.SetGlassMode) == "function", "SetGlassMode missing")
+assertTrue(type(Rayfield.GetGlassMode) == "function", "GetGlassMode missing")
+assertTrue(type(Rayfield.SetGlassIntensity) == "function", "SetGlassIntensity missing")
+assertTrue(type(Rayfield.GetGlassIntensity) == "function", "GetGlassIntensity missing")
 assertTrue(type(Rayfield.GetThemeStudioState) == "function", "GetThemeStudioState missing")
 assertTrue(type(Rayfield.ApplyThemeStudioTheme) == "function", "ApplyThemeStudioTheme missing")
 assertTrue(type(Rayfield.ResetThemeStudio) == "function", "ResetThemeStudio missing")
@@ -138,6 +147,25 @@ assertTrue(Rayfield:IsOnboardingSuppressed() == true, "Onboarding should be supp
 
 local showForcedOk = select(1, Rayfield:ShowOnboarding(true))
 assertTrue(showForcedOk == true, "ShowOnboarding(true) should bypass suppression")
+
+assertTrue(Rayfield:IsAudioFeedbackEnabled() == false, "Audio should be disabled by default")
+local audioEnableOk = select(1, Rayfield:SetAudioFeedbackEnabled(true))
+assertTrue(audioEnableOk == true, "SetAudioFeedbackEnabled(true) should succeed")
+assertTrue(Rayfield:IsAudioFeedbackEnabled() == true, "Audio should be enabled")
+
+local setCustomPackOk = select(1, Rayfield:SetAudioFeedbackPack("Custom", {
+	click = "rbxassetid://0",
+	hover = "rbxassetid://0",
+	success = "rbxassetid://0",
+	error = "rbxassetid://0"
+}))
+assertTrue(setCustomPackOk == true, "SetAudioFeedbackPack(Custom) should succeed")
+
+local audioState = Rayfield:GetAudioFeedbackState()
+assertTrue(type(audioState) == "table" and audioState.pack == "Custom", "Audio state should reflect Custom pack")
+
+local audioDisableOk = select(1, Rayfield:SetAudioFeedbackEnabled(false))
+assertTrue(audioDisableOk == true and Rayfield:IsAudioFeedbackEnabled() == false, "SetAudioFeedbackEnabled(false) should disable audio")
 
 print("UI Experience regression: PASS")
 

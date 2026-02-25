@@ -575,6 +575,9 @@ local AnimationSequenceLib = requireModule("animationSequence")
 local AnimationUILib = requireModule("animationUI")
 local AnimationTextLib = requireModule("animationText")
 local AnimationCleanupLib = requireModule("animationCleanup")
+local VisibilityControllerLib = requireModule("runtimeVisibilityController")
+local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
+local RuntimeApiLib = requireModule("runtimeApi")
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -776,6 +779,24 @@ local ExperienceState = {
 	favoritesTabWindow = nil,
 	onboardingOverlay = nil,
 	onboardingRendered = false,
+	audioState = {
+		enabled = false,
+		pack = "Mute",
+		volume = 0.45,
+		customPack = {},
+		hoverRateLimitSec = 0.08,
+		lastCueAt = {},
+		sounds = nil,
+		soundFolder = nil
+	},
+	glassState = {
+		mode = "auto",
+		intensity = 0.32,
+		resolvedMode = "off",
+		root = nil,
+		masks = nil,
+		highlight = nil
+	},
 	themeStudioState = {
 		baseTheme = "Default",
 		useCustom = false,
@@ -1132,51 +1153,59 @@ local function closeSearch()
 	searchOpen = UIStateSystem.getSearchOpen()
 end
 
-local function Hide(notify)
-	UIStateSystem.Hide(notify)
-	Hidden = UIStateSystem.getHidden()
-	Debounce = UIStateSystem.getDebounce()
-	AnimationEngine:SetUiSuppressed(Hidden or Minimised or rayfieldDestroyed)
-	if TabSplitSystem then
-		TabSplitSystem.syncHidden(Hidden)
-		TabSplitSystem.syncMinimized(Minimised)
+local applyGlassLayer = nil
+local VisibilityController = VisibilityControllerLib.create({
+	getUIStateSystem = function()
+		return UIStateSystem
+	end,
+	getUtilitiesSystem = function()
+		return UtilitiesSystem
+	end,
+	applyRuntimeState = function(state)
+		if state.hidden ~= nil then
+			Hidden = state.hidden == true
+		end
+		if state.minimised ~= nil then
+			Minimised = state.minimised == true
+		end
+		if state.debounce ~= nil then
+			Debounce = state.debounce == true
+		end
+	end,
+	onVisibilityChanged = function(state)
+		local action = state.action
+		AnimationEngine:SetUiSuppressed(Hidden or Minimised or rayfieldDestroyed)
+		if TabSplitSystem then
+			if action == "hide" or action == "unhide" then
+				TabSplitSystem.syncHidden(Hidden)
+				TabSplitSystem.syncMinimized(Minimised)
+			elseif action == "maximise" or action == "minimise" then
+				TabSplitSystem.syncMinimized(Minimised)
+			elseif action == "set_visible_true" or action == "set_visible_false" then
+				TabSplitSystem.syncHidden(Hidden)
+			end
+		end
+		if applyGlassLayer then
+			applyGlassLayer()
+		end
+		markLayoutDirty("main", action)
 	end
-	markLayoutDirty("main", "hide")
+})
+
+local function Hide(notify)
+	VisibilityController.Hide(notify)
 end
 
 local function Unhide()
-	UIStateSystem.Unhide()
-	Hidden = UIStateSystem.getHidden()
-	Minimised = UIStateSystem.getMinimised()
-	Debounce = UIStateSystem.getDebounce()
-	AnimationEngine:SetUiSuppressed(Hidden or Minimised or rayfieldDestroyed)
-	if TabSplitSystem then
-		TabSplitSystem.syncHidden(Hidden)
-		TabSplitSystem.syncMinimized(Minimised)
-	end
-	markLayoutDirty("main", "unhide")
+	VisibilityController.Unhide()
 end
 
 local function Maximise()
-	UIStateSystem.Maximise()
-	Minimised = UIStateSystem.getMinimised()
-	Debounce = UIStateSystem.getDebounce()
-	AnimationEngine:SetUiSuppressed(Hidden or Minimised or rayfieldDestroyed)
-	if TabSplitSystem then
-		TabSplitSystem.syncMinimized(Minimised)
-	end
-	markLayoutDirty("main", "maximise")
+	VisibilityController.Maximise()
 end
 
 local function Minimise()
-	UIStateSystem.Minimise()
-	Minimised = UIStateSystem.getMinimised()
-	Debounce = UIStateSystem.getDebounce()
-	AnimationEngine:SetUiSuppressed(Hidden or Minimised or rayfieldDestroyed)
-	if TabSplitSystem then
-		TabSplitSystem.syncMinimized(Minimised)
-	end
-	markLayoutDirty("main", "minimise")
+	VisibilityController.Minimise()
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
@@ -1730,6 +1759,369 @@ local function listThemeNames()
 	return names
 end
 
+local AUDIO_PACK_NAMES = {
+	mute = "Mute",
+	custom = "Custom"
+}
+
+local function normalizeAudioPackName(name)
+	local normalized = string.lower(tostring(name or ""))
+	return AUDIO_PACK_NAMES[normalized]
+end
+
+local function sanitizeSoundId(value)
+	if value == nil then
+		return nil
+	end
+	local text = tostring(value)
+	text = text:gsub("^%s+", ""):gsub("%s+$", "")
+	if text == "" then
+		return nil
+	end
+	if text:match("^rbxassetid://%d+$") then
+		return text
+	end
+	local numeric = tonumber(text)
+	if numeric then
+		return "rbxassetid://" .. tostring(math.floor(numeric))
+	end
+	return nil
+end
+
+local function cloneAudioPack(pack)
+	local out = {}
+	if type(pack) ~= "table" then
+		return out
+	end
+	for _, key in ipairs({"click", "hover", "success", "error"}) do
+		local sanitized = sanitizeSoundId(pack[key])
+		if sanitized then
+			out[key] = sanitized
+		end
+	end
+	return out
+end
+
+local function ensureAudioSoundFolder()
+	if not Rayfield then
+		return nil
+	end
+	local audioState = ExperienceState.audioState
+	if audioState.soundFolder and audioState.soundFolder.Parent == Rayfield then
+		return audioState.soundFolder
+	end
+	local folder = Rayfield:FindFirstChild("RayfieldAudioFeedback")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "RayfieldAudioFeedback"
+		folder.Parent = Rayfield
+	end
+	audioState.soundFolder = folder
+	return folder
+end
+
+local function ensureAudioCueSound(cueName)
+	local folder = ensureAudioSoundFolder()
+	if not folder then
+		return nil
+	end
+	local audioState = ExperienceState.audioState
+	audioState.sounds = audioState.sounds or {}
+	local existing = audioState.sounds[cueName]
+	if existing and existing.Parent == folder then
+		return existing
+	end
+	local sound = folder:FindFirstChild("Cue_" .. tostring(cueName))
+	if not (sound and sound:IsA("Sound")) then
+		sound = Instance.new("Sound")
+		sound.Name = "Cue_" .. tostring(cueName)
+		sound.RollOffMode = Enum.RollOffMode.Inverse
+		sound.Volume = tonumber(audioState.volume) or 0.45
+		sound.Parent = folder
+	end
+	audioState.sounds[cueName] = sound
+	return sound
+end
+
+local function syncAudioCueSounds()
+	local audioState = ExperienceState.audioState
+	local pack = audioState.pack == "Custom" and audioState.customPack or {}
+	for _, cueName in ipairs({"click", "hover", "success", "error"}) do
+		local sound = ensureAudioCueSound(cueName)
+		if sound then
+			local soundId = sanitizeSoundId(pack[cueName])
+			sound.SoundId = soundId or ""
+			sound.Volume = math.clamp(tonumber(audioState.volume) or 0.45, 0, 1)
+		end
+	end
+end
+
+local function setAudioFeedbackVolumeInternal(volume, persist)
+	local audioState = ExperienceState.audioState
+	audioState.volume = math.clamp(tonumber(volume) or audioState.volume or 0.45, 0, 1)
+	syncAudioCueSounds()
+	if persist ~= false then
+		setSettingValue("Audio", "volume", audioState.volume, true)
+	end
+	return true, "Audio volume updated."
+end
+
+local function setAudioFeedbackEnabledInternal(enabled, persist)
+	local audioState = ExperienceState.audioState
+	audioState.enabled = enabled == true
+	syncAudioCueSounds()
+	if persist ~= false then
+		setSettingValue("Audio", "enabled", audioState.enabled, true)
+	end
+	return true, audioState.enabled and "Audio feedback enabled." or "Audio feedback disabled."
+end
+
+local function setAudioFeedbackPackInternal(name, packDefinition, persist)
+	local audioState = ExperienceState.audioState
+	local canonical = normalizeAudioPackName(name)
+	if not canonical then
+		return false, "Invalid audio pack name."
+	end
+	if canonical == "Custom" and packDefinition ~= nil then
+		if type(packDefinition) ~= "table" then
+			return false, "Custom audio pack must be a table."
+		end
+		audioState.customPack = cloneAudioPack(packDefinition)
+	end
+	audioState.pack = canonical
+	syncAudioCueSounds()
+	if persist ~= false then
+		setSettingValue("Audio", "pack", audioState.pack, false)
+		setSettingValue("Audio", "customPack", cloneValue(audioState.customPack), true)
+	end
+	return true, "Audio pack set to " .. tostring(audioState.pack) .. "."
+end
+
+local function getAudioFeedbackStateSnapshot()
+	local audioState = ExperienceState.audioState
+	return {
+		enabled = audioState.enabled == true,
+		pack = audioState.pack,
+		volume = tonumber(audioState.volume) or 0.45,
+		customPack = cloneValue(audioState.customPack)
+	}
+end
+
+local function playUICueInternal(cueName, options)
+	options = options or {}
+	if rayfieldDestroyed then
+		return false, "Rayfield destroyed."
+	end
+	local audioState = ExperienceState.audioState
+	if audioState.enabled ~= true then
+		return false, "Audio feedback disabled."
+	end
+	local cueKey = string.lower(tostring(cueName or ""))
+	if cueKey ~= "click" and cueKey ~= "hover" and cueKey ~= "success" and cueKey ~= "error" then
+		return false, "Unknown cue."
+	end
+
+	if cueKey == "hover" then
+		local now = os.clock()
+		local lastAt = tonumber(audioState.lastCueAt.hover) or 0
+		local minDelta = tonumber(audioState.hoverRateLimitSec) or 0.08
+		if (now - lastAt) < minDelta then
+			return false, "Hover cue rate-limited."
+		end
+		audioState.lastCueAt.hover = now
+	end
+
+	local pack = audioState.pack == "Custom" and audioState.customPack or {}
+	local soundId = sanitizeSoundId(pack[cueKey])
+	if not soundId then
+		return false, "Cue sound not configured."
+	end
+
+	local sound = ensureAudioCueSound(cueKey)
+	if not sound then
+		return false, "Audio cue sound unavailable."
+	end
+	sound.SoundId = soundId
+	sound.Volume = math.clamp(tonumber(audioState.volume) or 0.45, 0, 1)
+
+	local okPlay, playErr = pcall(function()
+		sound.TimePosition = 0
+		sound:Play()
+	end)
+	if not okPlay then
+		return false, tostring(playErr)
+	end
+	return true, "played"
+end
+
+local canvasGroupSupportCache = nil
+
+local function canUseCanvasGroup()
+	if canvasGroupSupportCache ~= nil then
+		return canvasGroupSupportCache
+	end
+	local ok, instanceOrErr = pcall(function()
+		return Instance.new("CanvasGroup")
+	end)
+	if ok and instanceOrErr then
+		instanceOrErr:Destroy()
+		canvasGroupSupportCache = true
+	else
+		canvasGroupSupportCache = false
+	end
+	return canvasGroupSupportCache
+end
+
+local function cleanupGlassLayer()
+	local glassState = ExperienceState.glassState
+	if glassState.root and glassState.root.Parent then
+		glassState.root:Destroy()
+	end
+	glassState.root = nil
+	glassState.masks = nil
+	glassState.highlight = nil
+	glassState.resolvedMode = "off"
+end
+
+local function resolveGlassMode(mode)
+	local normalized = string.lower(tostring(mode or "auto"))
+	if normalized ~= "auto" and normalized ~= "off" and normalized ~= "canvas" and normalized ~= "fallback" then
+		normalized = "auto"
+	end
+	if normalized == "off" then
+		return "off"
+	end
+
+	local lowSpecMode = activePerformanceProfile
+		and activePerformanceProfile.enabled == true
+		and (
+			activePerformanceProfile.aggressive == true
+			or activePerformanceProfile.resolvedMode == "potato"
+			or activePerformanceProfile.resolvedMode == "mobile"
+		)
+	if lowSpecMode and normalized ~= "fallback" then
+		return "fallback"
+	end
+
+	if normalized == "canvas" then
+		return canUseCanvasGroup() and "canvas" or "fallback"
+	end
+	if normalized == "fallback" then
+		return "fallback"
+	end
+	return canUseCanvasGroup() and "canvas" or "fallback"
+end
+
+local function ensureGlassLayerRoot(resolvedMode)
+	local glassState = ExperienceState.glassState
+	if resolvedMode == "off" then
+		cleanupGlassLayer()
+		return nil
+	end
+	local requiredClass = resolvedMode == "canvas" and "CanvasGroup" or "Frame"
+	if glassState.root and glassState.root.Parent == Main and glassState.root.ClassName == requiredClass then
+		return glassState.root
+	end
+	cleanupGlassLayer()
+
+	local root = Instance.new(requiredClass)
+	root.Name = "RayfieldGlassLayer"
+	root.Size = UDim2.new(1, 0, 1, 0)
+	root.Position = UDim2.new(0.5, 0, 0.5, 0)
+	root.AnchorPoint = Vector2.new(0.5, 0.5)
+	root.BorderSizePixel = 0
+	root.ZIndex = 1
+	root.Active = false
+	root.Selectable = false
+	root.Parent = Main
+
+	local gradient = Instance.new("UIGradient")
+	gradient.Name = "GlassGradient"
+	gradient.Rotation = 120
+	gradient.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.12),
+		NumberSequenceKeypoint.new(0.35, 0.32),
+		NumberSequenceKeypoint.new(1, 0.65)
+	})
+	gradient.Parent = root
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "GlassStroke"
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Thickness = 1
+	stroke.Transparency = 0.45
+	stroke.Parent = root
+
+	if resolvedMode == "canvas" and root:IsA("CanvasGroup") then
+		root.GroupTransparency = 0.08
+	end
+
+	glassState.root = root
+	glassState.resolvedMode = resolvedMode
+	return root
+end
+
+applyGlassLayer = function()
+	local glassState = ExperienceState.glassState
+	local resolvedMode = resolveGlassMode(glassState.mode)
+	local root = ensureGlassLayerRoot(resolvedMode)
+	if not root then
+		return true, "Glass mode off."
+	end
+
+	local intensity = math.clamp(tonumber(glassState.intensity) or 0.32, 0, 1)
+	local tint = (SelectedTheme and (SelectedTheme.GlassTint or SelectedTheme.Topbar or SelectedTheme.Background)) or Color3.fromRGB(28, 28, 34)
+	local strokeColor = (SelectedTheme and (SelectedTheme.GlassStroke or SelectedTheme.ElementStroke or SelectedTheme.TabStroke)) or Color3.fromRGB(135, 145, 165)
+	local accent = (SelectedTheme and (SelectedTheme.GlassAccent or SelectedTheme.SliderProgress or SelectedTheme.ToggleEnabled)) or Color3.fromRGB(120, 175, 235)
+
+	root.BackgroundColor3 = tint:Lerp(accent, 0.09 + (intensity * 0.12))
+	root.BackgroundTransparency = 0.78 - (intensity * 0.28)
+	root.Visible = not Hidden
+
+	local gradient = root:FindFirstChild("GlassGradient")
+	if gradient and gradient:IsA("UIGradient") then
+		gradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, tint:Lerp(Color3.fromRGB(255, 255, 255), 0.2)),
+			ColorSequenceKeypoint.new(1, tint:Lerp(accent, 0.35))
+		})
+	end
+
+	local stroke = root:FindFirstChild("GlassStroke")
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Color = strokeColor
+		stroke.Transparency = 0.68 - (intensity * 0.35)
+	end
+
+	if root:IsA("CanvasGroup") then
+		root.GroupTransparency = 0.2 - (intensity * 0.12)
+	end
+
+	glassState.resolvedMode = resolvedMode
+	return true, "Glass applied (" .. tostring(resolvedMode) .. ")."
+end
+
+local function setGlassModeInternal(mode, persist)
+	local normalized = string.lower(tostring(mode or "auto"))
+	if normalized ~= "auto" and normalized ~= "off" and normalized ~= "canvas" and normalized ~= "fallback" then
+		return false, "Invalid glass mode."
+	end
+	ExperienceState.glassState.mode = normalized
+	local okApply, applyMessage = applyGlassLayer()
+	if persist ~= false then
+		setSettingValue("Glass", "mode", normalized, true)
+	end
+	return okApply, applyMessage
+end
+
+local function setGlassIntensityInternal(value, persist)
+	ExperienceState.glassState.intensity = math.clamp(tonumber(value) or ExperienceState.glassState.intensity or 0.32, 0, 1)
+	local okApply, applyMessage = applyGlassLayer()
+	if persist ~= false then
+		setSettingValue("Glass", "intensity", ExperienceState.glassState.intensity, true)
+	end
+	return okApply, applyMessage
+end
+
 local function getMainScale()
 	if not Main then
 		return nil
@@ -1810,6 +2202,8 @@ local function setUIPresetInternal(name, persist)
 		setSettingValue("Appearance", "uiPreset", canonical, true)
 	end
 
+	applyGlassLayer()
+
 	return true, "UI preset set to " .. canonical .. "."
 end
 
@@ -1861,6 +2255,7 @@ local function applyThemeStudioState(persist)
 	else
 		ChangeTheme(baseThemeName)
 	end
+	applyGlassLayer()
 
 	if persist ~= false then
 		setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
@@ -2017,18 +2412,69 @@ local function ensureOnboardingOverlay()
 	overlay.Name = "ExperienceOnboardingOverlay"
 	overlay.Size = UDim2.new(1, 0, 1, 0)
 	overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	overlay.BackgroundTransparency = 0.28
+	overlay.BackgroundTransparency = 1
 	overlay.Visible = false
 	overlay.ZIndex = 80
+	overlay.ClipsDescendants = true
 	overlay.Parent = Main
+
+	local maskTop = Instance.new("Frame")
+	maskTop.Name = "MaskTop"
+	maskTop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	maskTop.BackgroundTransparency = 0.42
+	maskTop.BorderSizePixel = 0
+	maskTop.ZIndex = 80
+	maskTop.Parent = overlay
+
+	local maskLeft = Instance.new("Frame")
+	maskLeft.Name = "MaskLeft"
+	maskLeft.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	maskLeft.BackgroundTransparency = 0.42
+	maskLeft.BorderSizePixel = 0
+	maskLeft.ZIndex = 80
+	maskLeft.Parent = overlay
+
+	local maskRight = Instance.new("Frame")
+	maskRight.Name = "MaskRight"
+	maskRight.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	maskRight.BackgroundTransparency = 0.42
+	maskRight.BorderSizePixel = 0
+	maskRight.ZIndex = 80
+	maskRight.Parent = overlay
+
+	local maskBottom = Instance.new("Frame")
+	maskBottom.Name = "MaskBottom"
+	maskBottom.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	maskBottom.BackgroundTransparency = 0.42
+	maskBottom.BorderSizePixel = 0
+	maskBottom.ZIndex = 80
+	maskBottom.Parent = overlay
+
+	local highlight = Instance.new("Frame")
+	highlight.Name = "Highlight"
+	highlight.BackgroundTransparency = 1
+	highlight.BorderSizePixel = 0
+	highlight.Visible = false
+	highlight.ZIndex = 81
+	highlight.Parent = overlay
+
+	local highlightStroke = Instance.new("UIStroke")
+	highlightStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	highlightStroke.Thickness = 2
+	highlightStroke.Transparency = 0.1
+	highlightStroke.Parent = highlight
+
+	local highlightCorner = Instance.new("UICorner")
+	highlightCorner.CornerRadius = UDim.new(0, 8)
+	highlightCorner.Parent = highlight
 
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
-	panel.AnchorPoint = Vector2.new(0.5, 0.5)
-	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-	panel.Size = UDim2.new(0, 360, 0, 220)
+	panel.AnchorPoint = Vector2.new(0.5, 1)
+	panel.Position = UDim2.new(0.5, 0, 1, -18)
+	panel.Size = UDim2.new(0, 390, 0, 250)
 	panel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-	panel.BackgroundTransparency = 0.08
+	panel.BackgroundTransparency = 0.06
 	panel.ZIndex = 81
 	panel.Parent = overlay
 
@@ -2051,7 +2497,7 @@ local function ensureOnboardingOverlay()
 	local body = Instance.new("TextLabel")
 	body.Name = "Body"
 	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, -24, 0, 90)
+	body.Size = UDim2.new(1, -24, 0, 112)
 	body.Position = UDim2.new(0, 12, 0, 46)
 	body.Font = Enum.Font.Gotham
 	body.TextSize = 14
@@ -2066,7 +2512,7 @@ local function ensureOnboardingOverlay()
 	stepLabel.Name = "Step"
 	stepLabel.BackgroundTransparency = 1
 	stepLabel.Size = UDim2.new(1, -24, 0, 20)
-	stepLabel.Position = UDim2.new(0, 12, 1, -86)
+	stepLabel.Position = UDim2.new(0, 12, 1, -108)
 	stepLabel.Font = Enum.Font.Gotham
 	stepLabel.TextSize = 12
 	stepLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -2078,7 +2524,7 @@ local function ensureOnboardingOverlay()
 	checkbox.Name = "DontShowAgain"
 	checkbox.BackgroundTransparency = 1
 	checkbox.Size = UDim2.new(1, -24, 0, 22)
-	checkbox.Position = UDim2.new(0, 12, 1, -62)
+	checkbox.Position = UDim2.new(0, 12, 1, -84)
 	checkbox.Font = Enum.Font.Gotham
 	checkbox.TextSize = 13
 	checkbox.TextXAlignment = Enum.TextXAlignment.Left
@@ -2103,6 +2549,23 @@ local function ensureOnboardingOverlay()
 	nextCorner.CornerRadius = UDim.new(0, 8)
 	nextCorner.Parent = nextButton
 
+	local backButton = Instance.new("TextButton")
+	backButton.Name = "Back"
+	backButton.AnchorPoint = Vector2.new(1, 1)
+	backButton.Position = UDim2.new(1, -108, 1, -12)
+	backButton.Size = UDim2.new(0, 88, 0, 30)
+	backButton.Font = Enum.Font.GothamBold
+	backButton.TextSize = 13
+	backButton.Text = "Back"
+	backButton.TextColor3 = Color3.fromRGB(235, 235, 235)
+	backButton.BackgroundColor3 = Color3.fromRGB(58, 58, 58)
+	backButton.ZIndex = 82
+	backButton.Parent = panel
+
+	local backCorner = Instance.new("UICorner")
+	backCorner.CornerRadius = UDim.new(0, 8)
+	backCorner.Parent = backButton
+
 	local closeButton = Instance.new("TextButton")
 	closeButton.Name = "Close"
 	closeButton.AnchorPoint = Vector2.new(0, 1)
@@ -2123,21 +2586,116 @@ local function ensureOnboardingOverlay()
 	local steps = {
 		{
 			title = "Welcome to Rayfield",
-			body = "Use the topbar to search controls, open settings, and manage window state."
+			body = "This guided tour highlights key controls so you can navigate large scripts faster.",
+			targetResolver = function()
+				return Topbar and Topbar:FindFirstChild("Search")
+			end
 		},
 		{
-			title = "Favorites and Presets",
-			body = "Pin your frequently used controls and switch presets to quickly change UI behavior."
+			title = "Search Controls",
+			body = "Use Search to quickly find controls in the active tab. It's faster than manually browsing long lists.",
+			targetResolver = function()
+				return Main and Main:FindFirstChild("Search")
+			end
 		},
 		{
-			title = "Share and Theme Studio",
-			body = "Export/import share codes and use Theme Studio for live visual customization."
+			title = "Settings & Experience",
+			body = "Open Settings to manage presets, theme studio, share code, and Premium UX preferences.",
+			targetResolver = function()
+				return Topbar and Topbar:FindFirstChild("Settings")
+			end
+		},
+		{
+			title = "Tabs & Elements",
+			body = "Switch tabs here, then use the elements panel to interact with script features.",
+			targetResolver = function()
+				return TabList
+			end
 		}
 	}
 	local state = {
 		step = 1,
 		dontShowAgain = false
 	}
+
+	local function resolveTarget(stepInfo)
+		if type(stepInfo) ~= "table" then
+			return nil
+		end
+		local resolver = stepInfo.targetResolver
+		if type(resolver) ~= "function" then
+			return nil
+		end
+		local okTarget, target = pcall(resolver)
+		if not okTarget then
+			return nil
+		end
+		if typeof(target) ~= "Instance" then
+			return nil
+		end
+		if not target:IsA("GuiObject") then
+			return nil
+		end
+		if not target.Parent then
+			return nil
+		end
+		return target
+	end
+
+	local function applySpotlight(stepInfo)
+		local target = resolveTarget(stepInfo)
+		local overlayPos = overlay.AbsolutePosition
+		local overlaySize = overlay.AbsoluteSize
+
+		local function showFullDimmer()
+			maskTop.Position = UDim2.new(0, 0, 0, 0)
+			maskTop.Size = UDim2.new(1, 0, 1, 0)
+			maskLeft.Size = UDim2.new(0, 0, 0, 0)
+			maskRight.Size = UDim2.new(0, 0, 0, 0)
+			maskBottom.Size = UDim2.new(0, 0, 0, 0)
+			highlight.Visible = false
+		end
+
+		if not target or overlaySize.X <= 0 or overlaySize.Y <= 0 then
+			showFullDimmer()
+			return
+		end
+
+		local margin = 8
+		local absPos = target.AbsolutePosition
+		local absSize = target.AbsoluteSize
+		local x = math.floor(absPos.X - overlayPos.X - margin)
+		local y = math.floor(absPos.Y - overlayPos.Y - margin)
+		local w = math.floor(absSize.X + margin * 2)
+		local h = math.floor(absSize.Y + margin * 2)
+
+		if w <= 4 or h <= 4 then
+			showFullDimmer()
+			return
+		end
+
+		x = math.clamp(x, 0, math.max(0, overlaySize.X - 4))
+		y = math.clamp(y, 0, math.max(0, overlaySize.Y - 4))
+		w = math.clamp(w, 4, math.max(4, overlaySize.X - x))
+		h = math.clamp(h, 4, math.max(4, overlaySize.Y - y))
+
+		maskTop.Position = UDim2.new(0, 0, 0, 0)
+		maskTop.Size = UDim2.new(1, 0, 0, y)
+
+		maskBottom.Position = UDim2.new(0, 0, 0, y + h)
+		maskBottom.Size = UDim2.new(1, 0, 0, math.max(0, overlaySize.Y - (y + h)))
+
+		maskLeft.Position = UDim2.new(0, 0, 0, y)
+		maskLeft.Size = UDim2.new(0, x, 0, h)
+
+		maskRight.Position = UDim2.new(0, x + w, 0, y)
+		maskRight.Size = UDim2.new(0, math.max(0, overlaySize.X - (x + w)), 0, h)
+
+		highlight.Position = UDim2.new(0, x, 0, y)
+		highlight.Size = UDim2.new(0, w, 0, h)
+		highlight.Visible = true
+		highlightStroke.Color = (SelectedTheme and (SelectedTheme.SliderProgress or SelectedTheme.ToggleEnabled)) or Color3.fromRGB(120, 185, 255)
+	end
 
 	local function render()
 		local active = steps[state.step] or steps[1]
@@ -2146,6 +2704,8 @@ local function ensureOnboardingOverlay()
 		stepLabel.Text = string.format("Step %d/%d", state.step, #steps)
 		checkbox.Text = string.format("%s Don't show this again", state.dontShowAgain and "[x]" or "[ ]")
 		nextButton.Text = state.step >= #steps and "Done" or "Next"
+		backButton.Visible = state.step > 1
+		applySpotlight(active)
 	end
 
 	checkbox.MouseButton1Click:Connect(function()
@@ -2154,13 +2714,22 @@ local function ensureOnboardingOverlay()
 	end)
 	closeButton.MouseButton1Click:Connect(function()
 		overlay.Visible = false
+		highlight.Visible = false
 		if state.dontShowAgain then
 			RayfieldLibrary:SetOnboardingSuppressed(true)
 		end
 	end)
+	backButton.MouseButton1Click:Connect(function()
+		if state.step <= 1 then
+			return
+		end
+		state.step -= 1
+		render()
+	end)
 	nextButton.MouseButton1Click:Connect(function()
 		if state.step >= #steps then
 			overlay.Visible = false
+			highlight.Visible = false
 			if state.dontShowAgain then
 				RayfieldLibrary:SetOnboardingSuppressed(true)
 			end
@@ -2170,272 +2739,80 @@ local function ensureOnboardingOverlay()
 		render()
 	end)
 
+	overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if overlay.Visible then
+			render()
+		end
+	end)
+
 	ExperienceState.onboardingOverlay = {
 		Root = overlay,
 		State = state,
-		Render = render
+		Render = render,
+		ApplySpotlight = applySpotlight
 	}
 	render()
 	return ExperienceState.onboardingOverlay
 end
 
+local ExperienceBindings = ExperienceBindingsLib.bind({
+	RayfieldLibrary = RayfieldLibrary,
+	SettingsSystem = SettingsSystem,
+	ThemeModule = ThemeModule,
+	HttpService = HttpService,
+	themeStudioKeys = THEME_STUDIO_KEYS,
+	getExperienceState = function()
+		return ExperienceState
+	end,
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	getUIStateSystem = function()
+		return UIStateSystem
+	end,
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	setTransitionProfileInternal = setTransitionProfileInternal,
+	setUIPresetInternal = setUIPresetInternal,
+	setAudioFeedbackEnabledInternal = setAudioFeedbackEnabledInternal,
+	setAudioFeedbackPackInternal = setAudioFeedbackPackInternal,
+	getAudioFeedbackStateSnapshot = getAudioFeedbackStateSnapshot,
+	playUICueInternal = playUICueInternal,
+	setGlassModeInternal = setGlassModeInternal,
+	setGlassIntensityInternal = setGlassIntensityInternal,
+	applyGlassLayer = function()
+		if applyGlassLayer then
+			return applyGlassLayer()
+		end
+		return false, "Glass layer unavailable."
+	end,
+	ensureOnboardingOverlay = ensureOnboardingOverlay,
+	setThemeStudioBaseTheme = setThemeStudioBaseTheme,
+	applyThemeStudioState = applyThemeStudioState,
+	resetThemeStudioState = resetThemeStudioState,
+	cloneValue = cloneValue,
+	cloneArray = cloneArray,
+	color3ToPacked = color3ToPacked,
+	packedToColor3 = packedToColor3,
+	normalizeAudioPackName = normalizeAudioPackName,
+	cloneAudioPack = cloneAudioPack,
+	syncAudioCueSounds = syncAudioCueSounds,
+	setAudioFeedbackVolumeInternal = setAudioFeedbackVolumeInternal,
+	listThemeNames = listThemeNames,
+	getThemeStudioColor = getThemeStudioColor,
+	setThemeStudioUseCustom = setThemeStudioUseCustom,
+	setThemeStudioColor = setThemeStudioColor,
+	refreshFavoritesSettingsPersistence = refreshFavoritesSettingsPersistence,
+	ensureFavoritesTab = ensureFavoritesTab,
+	renderFavoritesTab = renderFavoritesTab,
+	openFavoritesTab = openFavoritesTab
+})
+
 local function restoreExperienceStateFromSettings(windowRef)
-	local transition = getSetting("Appearance", "transitionProfile") or ExperienceState.transitionProfile
-	setTransitionProfileInternal(transition, false)
-
-	local preset = getSetting("Appearance", "uiPreset") or ExperienceState.uiPreset
-	setUIPresetInternal(preset, false)
-
-	local baseTheme = getSetting("ThemeStudio", "baseTheme")
-	if type(baseTheme) == "string" and ThemeModule.Themes[baseTheme] then
-		ExperienceState.themeStudioState.baseTheme = baseTheme
+	if ExperienceBindings and type(ExperienceBindings.restoreFromSettings) == "function" then
+		return ExperienceBindings.restoreFromSettings(windowRef)
 	end
-	ExperienceState.themeStudioState.useCustom = getSetting("ThemeStudio", "useCustom") == true
-
-	local packedTheme = getSetting("ThemeStudio", "customThemePacked")
-	if type(packedTheme) == "table" then
-		ExperienceState.themeStudioState.customThemePacked = cloneValue(packedTheme)
-	end
-	applyThemeStudioState(false)
-
-	if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
-		local showBadges = getSetting("Favorites", "showPinBadges")
-		ElementsSystem.setPinBadgesVisible(showBadges ~= false)
-	end
-	if ElementsSystem and type(ElementsSystem.setPinnedIds) == "function" then
-		local pinnedIds = getSetting("Favorites", "pinnedIds")
-		if type(pinnedIds) == "table" then
-			ElementsSystem.setPinnedIds(cloneArray(pinnedIds))
-		end
-	end
-
-	local pinnedControls = ElementsSystem and ElementsSystem.getPinnedIds and ElementsSystem.getPinnedIds(true) or {}
-	if type(pinnedControls) == "table" and #pinnedControls > 0 then
-		ensureFavoritesTab(windowRef)
-		renderFavoritesTab()
-	end
-
-	ExperienceState.onboardingSuppressed = getSetting("Onboarding", "suppressed") == true
-end
-
-function RayfieldLibrary:SetTransitionProfile(name)
-	return setTransitionProfileInternal(name, true)
-end
-
-function RayfieldLibrary:GetTransitionProfile()
-	return ExperienceState.transitionProfile
-end
-
-function RayfieldLibrary:SetUIPreset(name)
-	return setUIPresetInternal(name, true)
-end
-
-function RayfieldLibrary:GetUIPreset()
-	return ExperienceState.uiPreset
-end
-
-function RayfieldLibrary:ListControls()
-	if not ElementsSystem or type(ElementsSystem.listControlsForFavorites) ~= "function" then
-		return {}
-	end
-	return ElementsSystem.listControlsForFavorites(true)
-end
-
-function RayfieldLibrary:PinControl(idOrFlag)
-	if not ElementsSystem or type(ElementsSystem.pinControl) ~= "function" then
-		return false, "Control registry unavailable."
-	end
-	local ok, message = ElementsSystem.pinControl(tostring(idOrFlag or ""))
-	if ok then
-		refreshFavoritesSettingsPersistence()
-		if ExperienceState.favoritesTabWindow then
-			ensureFavoritesTab(ExperienceState.favoritesTabWindow)
-		end
-		renderFavoritesTab()
-	end
-	return ok, message
-end
-
-function RayfieldLibrary:UnpinControl(idOrFlag)
-	if not ElementsSystem or type(ElementsSystem.unpinControl) ~= "function" then
-		return false, "Control registry unavailable."
-	end
-	local ok, message = ElementsSystem.unpinControl(tostring(idOrFlag or ""))
-	if ok then
-		refreshFavoritesSettingsPersistence()
-		renderFavoritesTab()
-	end
-	return ok, message
-end
-
-function RayfieldLibrary:GetPinnedControls()
-	if not ElementsSystem or type(ElementsSystem.getPinnedIds) ~= "function" then
-		return {}
-	end
-	return ElementsSystem.getPinnedIds(true)
-end
-
-function RayfieldLibrary:SetOnboardingSuppressed(value)
-	ExperienceState.onboardingSuppressed = value == true
-	setSettingValue("Onboarding", "suppressed", ExperienceState.onboardingSuppressed, true)
-	return true, ExperienceState.onboardingSuppressed and "Onboarding suppressed." or "Onboarding enabled."
-end
-
-function RayfieldLibrary:IsOnboardingSuppressed()
-	return ExperienceState.onboardingSuppressed == true
-end
-
-function RayfieldLibrary:ShowOnboarding(force)
-	if ExperienceState.onboardingSuppressed and force ~= true then
-		return false, "Onboarding is suppressed."
-	end
-	local overlayRef = ensureOnboardingOverlay()
-	if not overlayRef or not overlayRef.Root then
-		return false, "Onboarding UI unavailable."
-	end
-	overlayRef.State.step = 1
-	overlayRef.State.dontShowAgain = false
-	overlayRef.Render()
-	overlayRef.Root.Visible = true
-	ExperienceState.onboardingRendered = true
-	return true, "Onboarding shown."
-end
-
-function RayfieldLibrary:GetThemeStudioState()
-	return {
-		baseTheme = ExperienceState.themeStudioState.baseTheme,
-		useCustom = ExperienceState.themeStudioState.useCustom == true,
-		customThemePacked = cloneValue(ExperienceState.themeStudioState.customThemePacked)
-	}
-end
-
-function RayfieldLibrary:ApplyThemeStudioTheme(themeOrName)
-	if type(themeOrName) == "string" then
-		return setThemeStudioBaseTheme(themeOrName, true)
-	end
-	if type(themeOrName) ~= "table" then
-		return false, "Theme input must be a theme name or table."
-	end
-
-	local nextPacked = {}
-	for _, key in ipairs(THEME_STUDIO_KEYS) do
-		local value = themeOrName[key]
-		if typeof(value) == "Color3" then
-			nextPacked[key] = color3ToPacked(value)
-		elseif type(value) == "table" then
-			local packed = packedToColor3(value)
-			if packed then
-				nextPacked[key] = color3ToPacked(packed)
-			end
-		end
-	end
-	ExperienceState.themeStudioState.customThemePacked = nextPacked
-	ExperienceState.themeStudioState.useCustom = true
-	return applyThemeStudioState(true)
-end
-
-function RayfieldLibrary:ResetThemeStudio()
-	return resetThemeStudioState(true)
-end
-
-local function notifyExperienceStatus(success, message)
-	if UIStateSystem and type(UIStateSystem.Notify) == "function" then
-		pcall(UIStateSystem.Notify, {
-			Title = "Rayfield Experience",
-			Content = tostring(message or ""),
-			Image = success and 4483362458 or 4384402990
-		})
-	elseif success ~= true then
-		warn("Rayfield | " .. tostring(message or "UI experience operation failed."))
-	end
-end
-
-if SettingsSystem and type(SettingsSystem.setExperienceHandlers) == "function" then
-	SettingsSystem.setExperienceHandlers({
-		setUIPreset = function(name)
-			return RayfieldLibrary:SetUIPreset(name)
-		end,
-		setTransitionProfile = function(name)
-			return RayfieldLibrary:SetTransitionProfile(name)
-		end,
-		listControls = function(pruneMissing)
-			if ElementsSystem and type(ElementsSystem.listControlsForFavorites) == "function" then
-				return ElementsSystem.listControlsForFavorites(pruneMissing == true)
-			end
-			return {}
-		end,
-		pinControl = function(id)
-			return RayfieldLibrary:PinControl(id)
-		end,
-		unpinControl = function(id)
-			return RayfieldLibrary:UnpinControl(id)
-		end,
-		setPinBadgesVisible = function(visible)
-			if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
-				ElementsSystem.setPinBadgesVisible(visible ~= false)
-				setSettingValue("Favorites", "showPinBadges", visible ~= false, true)
-				return true, "Pin badge visibility updated."
-			end
-			return false, "Pin badge controller unavailable."
-		end,
-		openFavoritesTab = function()
-			return openFavoritesTab(ExperienceState.favoritesTabWindow)
-		end,
-		showOnboarding = function(force)
-			return RayfieldLibrary:ShowOnboarding(force == true)
-		end,
-		getThemeNames = function()
-			return listThemeNames()
-		end,
-		getThemeStudioKeys = function()
-			return cloneArray(THEME_STUDIO_KEYS)
-		end,
-		getThemeStudioColor = function(themeKey)
-			return getThemeStudioColor(themeKey)
-		end,
-		setThemeStudioBaseTheme = function(themeName)
-			local ok, message = setThemeStudioBaseTheme(themeName, true)
-			if ok then
-				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, true)
-			end
-			return ok, message
-		end,
-		setThemeStudioUseCustom = function(value)
-			local ok, message = setThemeStudioUseCustom(value == true, true)
-			if ok then
-				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, true)
-			end
-			return ok, message
-		end,
-		setThemeStudioColor = function(themeKey, color)
-			local ok, message = setThemeStudioColor(themeKey, color)
-			if ok then
-				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), false)
-				setSettingValue("ThemeStudio", "useCustom", true, true)
-			end
-			return ok, message
-		end,
-		applyThemeStudioDraft = function()
-			local ok, message = applyThemeStudioState(true)
-			if ok then
-				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
-				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, false)
-				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), true)
-			end
-			return ok, message
-		end,
-		resetThemeStudio = function()
-			local ok, message = resetThemeStudioState(true)
-			if ok then
-				setSettingValue("ThemeStudio", "useCustom", false, false)
-				setSettingValue("ThemeStudio", "customThemePacked", {}, true)
-			end
-			return ok, message
-		end,
-		notify = function(success, message)
-			notifyExperienceStatus(success == true, message)
-		end
-	})
+	return false, "Experience bindings unavailable."
 end
 
 -- Note: UI State Management (Notify, Search, Hide/Minimize) moved to rayfield-ui-state.lua module
@@ -2717,6 +3094,14 @@ function RayfieldLibrary:GetRuntimeDiagnostics()
 			disableDetach = activePerformanceProfile.disableDetach == true,
 			disableTabSplit = activePerformanceProfile.disableTabSplit == true,
 			disableAnimations = activePerformanceProfile.disableAnimations == true
+		},
+		experience = {
+			audioEnabled = ExperienceState.audioState.enabled == true,
+			audioPack = ExperienceState.audioState.pack,
+			glassMode = ExperienceState.glassState.mode,
+			glassResolvedMode = ExperienceState.glassState.resolvedMode,
+			glassIntensity = tonumber(ExperienceState.glassState.intensity) or 0.32,
+			onboardingSuppressed = ExperienceState.onboardingSuppressed == true
 		}
 	}
 end
@@ -3526,6 +3911,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 		keybindConnections = keybindConnections,
 		getDebounce = function() return Debounce end,
 		setDebounce = function(val) Debounce = val end,
+		playUICue = function(cueName)
+			return playUICueInternal(cueName)
+		end,
 		useMobileSizing = useMobileSizing,
 		ElementSync = ElementSyncSystem,
 		ViewportVirtualization = ViewportVirtualizationSystem,
@@ -3794,6 +4182,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 		if not success then
 			RayfieldLibrary:Notify({Title = 'Unable to Change Theme', Content = 'We are unable find a theme on file.', Image = 4400704299})
 		else
+			applyGlassLayer()
 			RayfieldLibrary:Notify({Title = 'Theme Changed', Content = 'Successfully changed theme to '..(typeof(NewTheme) == 'string' and NewTheme or 'Custom Theme')..'.', Image = 4483362748})
 		end
 	end
@@ -3838,26 +4227,11 @@ function RayfieldLibrary:CreateWindow(Settings)
 end
 
 local function setVisibility(visibility: boolean, notify: boolean?)
-	if UtilitiesSystem then
-		UtilitiesSystem.setVisibility(visibility, notify)
-		Hidden = not visibility
-		if TabSplitSystem then
-			TabSplitSystem.syncHidden(Hidden)
-		end
-		markLayoutDirty("main", visibility and "set_visible_true" or "set_visible_false")
-	end
-end
-
-function RayfieldLibrary:SetVisibility(visibility: boolean)
-	setVisibility(visibility, false)
-end
-
-function RayfieldLibrary:IsVisible(): boolean
-	return not Hidden
+	VisibilityController.SetVisibility(visibility, notify)
 end
 
 local hideHotkeyConnection -- Has to be initialized here since the connection is made later in the script
-function RayfieldLibrary:Destroy()
+local function destroyRuntime()
 	AnimationEngine:SetUiSuppressed(true)
 	detachPathEnabled = true
 	activePerformanceProfile = {
@@ -3911,6 +4285,16 @@ function RayfieldLibrary:Destroy()
 		_G.__RayfieldViewportVirtualization = nil
 		_G.__RayfieldOwnership = nil
 	end
+	cleanupGlassLayer()
+	local audioState = ExperienceState.audioState
+	if audioState then
+		audioState.lastCueAt = {}
+		audioState.sounds = {}
+		if audioState.soundFolder and audioState.soundFolder.Parent then
+			audioState.soundFolder:Destroy()
+		end
+		audioState.soundFolder = nil
+	end
 	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
 		ExperienceState.onboardingOverlay.Root:Destroy()
 	end
@@ -3940,7 +4324,7 @@ function RayfieldLibrary:Destroy()
 	OwnershipSystem = nil
 end
 
-function RayfieldLibrary:IsDestroyed(): boolean
+local function isRuntimeDestroyed()
 	if rayfieldDestroyed then
 		return true
 	end
@@ -3949,6 +4333,16 @@ function RayfieldLibrary:IsDestroyed(): boolean
 	end)
 	return (not ok) or parent == nil
 end
+
+RuntimeApiLib.bind({
+	RayfieldLibrary = RayfieldLibrary,
+	setVisibility = setVisibility,
+	getHidden = function()
+		return Hidden
+	end,
+	destroyRuntime = destroyRuntime,
+	isDestroyed = isRuntimeDestroyed
+})
 
 Topbar.ChangeSize.MouseButton1Click:Connect(function()
 	if Debounce then return end

@@ -105,22 +105,22 @@ local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 
 ## Documentation
 
-- `Documentation/API.md`
-- `Documentation/TROUBLESHOOTING.md`
-- `Documentation/CHANGELOG.md`
+- `docs/API.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/CHANGELOG.md`
 
 ## Legal and Policy
 
 - `LICENSE`
-- `TERMS_OF_USE.md`
-- `THIRD_PARTY_NOTICES.md`
-- `SECURITY.md`
-- `CODE_OF_CONDUCT.md`
+- `legal/TERMS_OF_USE.md`
+- `legal/THIRD_PARTY_NOTICES.md`
+- `.github/SECURITY.md`
+- `.github/CODE_OF_CONDUCT.md`
 
 ## Examples
 
-- `Examples/01-base-quickstart.lua`
-- `Examples/02-extended-api.lua`
-- `Examples/03-enhanced-wrapper.lua`
-- `Examples/04-all-in-one.lua`
+- `examples/01-base-quickstart.lua`
+- `examples/02-extended-api.lua`
+- `examples/03-enhanced-wrapper.lua`
+- `examples/04-all-in-one.lua`
 - `Main loader/rayfield-all-in-one-2tabs-elements-check.lua` (3 tabs: Elements A, Elements B, Settings)

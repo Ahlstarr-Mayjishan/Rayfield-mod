@@ -36,6 +36,9 @@ return {
 	animationText = row("src/core/animation/text.lua"),
 	animationEasing = row("src/core/animation/easing.lua"),
 	animationCleanup = row("src/core/animation/cleanup.lua"),
+	runtimeVisibilityController = row("src/core/runtime/visibility-controller.lua"),
+	runtimeExperienceBindings = row("src/core/runtime/experience-bindings.lua"),
+	runtimeApi = row("src/core/runtime/runtime-api.lua"),
 	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
 	modifiedEntry = row("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua")
 }

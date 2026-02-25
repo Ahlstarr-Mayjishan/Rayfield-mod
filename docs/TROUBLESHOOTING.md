@@ -72,3 +72,32 @@ Expected behavior:
 
 If needed:
 - Use `AllInOne.quickSetup(...)` manually.
+
+## 9) Audio feedback is enabled but no sound plays
+
+Cause:
+- Audio pack is still `Mute` or cue IDs are missing/invalid.
+
+Check:
+- `Rayfield:GetAudioFeedbackState()` should show:
+  - `enabled = true`
+  - `pack = "Custom"`
+  - `customPack.click/hover/success/error` as valid `rbxassetid://...` strings.
+
+Use:
+- `Rayfield:SetAudioFeedbackPack("Custom", { click = "rbxassetid://...", hover = "...", success = "...", error = "..." })`
+
+## 10) Glass mode looks different across executors/devices
+
+Expected behavior:
+- `SetGlassMode("canvas")` may degrade to fallback if `CanvasGroup` is unsupported.
+- `SetGlassMode("auto")` chooses a safe mode based on runtime support/profile.
+
+Check:
+- `Rayfield:GetRuntimeDiagnostics().experience.glassResolvedMode`
+
+If needed:
+- Force fallback:
+  - `Rayfield:SetGlassMode("fallback")`
+- Disable entirely:
+  - `Rayfield:SetGlassMode("off")`

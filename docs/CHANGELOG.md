@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-02-25
+
+### Added
+- Added Premium UX Pack v1 runtime APIs:
+  - `SetAudioFeedbackEnabled`, `IsAudioFeedbackEnabled`, `SetAudioFeedbackPack`, `GetAudioFeedbackState`, `PlayUICue`
+  - `SetGlassMode`, `GetGlassMode`, `SetGlassIntensity`, `GetGlassIntensity`
+- Added Guided Tour V2 overlay (spotlight masks + step navigation + replay support) while keeping onboarding API signatures unchanged.
+- Added premium settings controls in Rayfield Settings tab:
+  - Audio enable/pack + custom JSON pack apply
+  - Glass mode + intensity
+  - Replay Guided Tour
+- Added Premium UX regression test:
+  - `tests/regression/test-premium-ux-pack.lua`
+
+### Changed
+- Changed element factory interaction flow to emit premium cues on:
+  - hover (via extended API hover binding)
+  - click/success/error paths for `Button`, `Toggle`, `Dropdown`, `Input`, `Keybind`, `ConfirmButton`
+- Changed theme fallback map with glass keys:
+  - `GlassTint`, `GlassStroke`, `GlassAccent`
+- Changed runtime diagnostics payload to include `experience` state:
+  - audio enabled/pack, glass mode/resolved mode/intensity, onboarding suppression
+- Changed runtime visibility transitions (`Hide/Unhide/Minimise/Maximise/SetVisibility`) to re-apply glass layer.
+
 ## 2026-02-24
 
 ### Added
@@ -219,7 +243,7 @@
 - Added widget bootstrap regression test:
   - `tests/regression/test-widget-bootstrap.lua`
 - Added architecture document:
-  - `Documentation/architecture/module-boundaries.md`
+  - `docs/architecture/module-boundaries.md`
 - Added canonical test tree:
   - `tests/smoke/rayfield-smoke-test.lua`
   - `tests/regression/test-animation-api.lua`

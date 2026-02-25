@@ -54,7 +54,7 @@ find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
 - Do not bypass API client boundaries with direct `HttpGet` in runtime modules.
 - Do not bypass animation wrapper with direct `TweenService:Create` where project rules disallow it.
 - Keep loader/runtime compatibility with executor environments (`loadstring`, `game:HttpGet`).
-- Update docs for public API changes in `Documentation/API.md`.
+- Update docs for public API changes in `docs/API.md`.
 - Add or update smoke/regression coverage when adding element contracts.
 
 ## Pull Requests
@@ -65,10 +65,10 @@ find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
   - Risk / compatibility impact
   - Test evidence (commands and results)
 - If build outputs are affected, include generated artifacts in the same PR.
-- By contributing, you agree to `CLA.md`.
+- By contributing, you agree to `legal/CLA.md`.
 
 ## Release Process
-- Update user-facing docs (`Documentation/API.md`, examples, changelog) in the same PR.
+- Update user-facing docs (`docs/API.md`, examples, changelog) in the same PR.
 - Run local validation and ensure CI is green on `main`.
 - Tag releases using semantic version tags (`vMAJOR.MINOR.PATCH`).
 - Keep release notes clear about behavioral changes and migration impact.
@@ -81,7 +81,7 @@ find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
 
 ## Breaking Change Policy
 - Breaking changes must be explicitly marked in PR title/body.
-- Include migration notes in `Documentation/CHANGELOG.md`.
+- Include migration notes in `docs/CHANGELOG.md`.
 - Preserve loader compatibility when possible; if not possible, document exact impact and fallback path.
 
 ## Branch Protection (Maintainers)
@@ -107,4 +107,4 @@ Enable GitHub branch protection on `main` with:
 
 ## Security
 - Do not post exploit details or sensitive bypass chains in public issues.
-- Report vulnerabilities via the process in `SECURITY.md`.
+- Report vulnerabilities via the process in `.github/SECURITY.md`.

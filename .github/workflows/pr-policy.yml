@@ -53,8 +53,8 @@ jobs:
         shell: bash
         run: |
           if grep -Eq '^(src/ui/elements/factory/|src/services/config.lua|src/entry/rayfield-modified.runtime.lua|src/entry/rayfield-all-in-one.entry.lua|Main loader/)' changed-files.txt; then
-            if ! grep -Eq '^(tests/|Examples/)' changed-files.txt; then
-              echo "Core logic changed but no tests/ or Examples/ updates found."
+            if ! grep -Eq '^(tests/|examples/)' changed-files.txt; then
+              echo "Core logic changed but no tests/ or examples/ updates found."
               exit 1
             fi
           fi
@@ -63,8 +63,8 @@ jobs:
         shell: bash
         run: |
           if grep -Eq '^(src/ui/elements/factory/|src/services/theme.lua|src/entry/rayfield-modified.runtime.lua|src/entry/rayfield-all-in-one.entry.lua)' changed-files.txt; then
-            if ! grep -Eq '^(Documentation/API.md|Documentation/CHANGELOG.md)' changed-files.txt; then
-              echo "Public/runtime surface changed but Documentation/API.md or Documentation/CHANGELOG.md was not updated."
+            if ! grep -Eq '^(docs/API.md|docs/CHANGELOG.md)' changed-files.txt; then
+              echo "Public/runtime surface changed but docs/API.md or docs/CHANGELOG.md was not updated."
               exit 1
             fi
           fi

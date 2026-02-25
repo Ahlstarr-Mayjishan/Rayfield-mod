@@ -21,7 +21,7 @@ The project maintainers are not a party to those transactions and have no obliga
 4. Third-Party Components
 Some files may include or depend on third-party code under separate licenses.
 Those third-party licenses remain in effect for their respective components.
-See `THIRD_PARTY_NOTICES.md`.
+See `legal/THIRD_PARTY_NOTICES.md`.
 
 5. Warranty Disclaimer
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.

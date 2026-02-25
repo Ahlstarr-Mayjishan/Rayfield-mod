@@ -34,6 +34,7 @@ function ElementsModule.init(ctx)
 	self.ViewportVirtualization = ctx.ViewportVirtualization
 	self.KeybindSequence = ctx.KeybindSequence
 	self.ResourceOwnership = ctx.ResourceOwnership
+	self.playUICue = ctx.playUICue
 	-- Improvement 4: Add safe fallbacks for critical dependencies
 	self.keybindConnections = ctx.keybindConnections or {} -- Fallback to empty table
 	self.getDebounce = ctx.getDebounce or function() return false end
@@ -84,6 +85,14 @@ function ElementsModule.init(ctx)
 			out[index] = value
 		end
 		return out
+	end
+
+	local function emitUICue(cueName)
+		if type(self.playUICue) ~= "function" then
+			return false
+		end
+		local okCall = pcall(self.playUICue, cueName)
+		return okCall
 	end
 
 	local function ownershipCreateScope(scopeId, metadata)
@@ -1183,6 +1192,15 @@ function ElementsModule.init(ctx)
 
 				return TabPage
 			end
+
+			local hoverCueElementTypes = {
+				Button = true,
+				Toggle = true,
+				Dropdown = true,
+				Input = true,
+				Keybind = true,
+				ConfirmButton = true
+			}
 	
 			-- Helper function to add extended API to all elements
 			local function addExtendedAPI(elementObject, elementName, elementType, guiObject, hoverBindingKey, syncToken)
@@ -1262,6 +1280,7 @@ function ElementsModule.init(ctx)
 				local ancestrySyncConnection = nil
 				local pinConnection = nil
 				local tooltipHoverBindingKey = nil
+				local hoverCueBindingKey = nil
 				local tooltipTouchBeganConnection = nil
 				local tooltipTouchEndedConnection = nil
 				local tooltipTouchActive = false
@@ -1404,6 +1423,16 @@ function ElementsModule.init(ctx)
 				if type(tooltipOptions) == "table" then
 					applyTooltipBehavior(tooltipOptions)
 				end
+
+				if guiObject and hoverCueElementTypes[controlRecord.Type] then
+					hoverCueBindingKey = registerHoverBinding(guiObject,
+						function()
+							emitUICue("hover")
+						end,
+						nil,
+						"cue:hover:" .. favoriteId
+					)
+				end
 				emitControlRegistryChange("control_added")
 	
 				-- Destroy with tracking removal
@@ -1453,6 +1482,10 @@ function ElementsModule.init(ctx)
 					if tooltipHoverBindingKey then
 						cleanupHoverBinding(tooltipHoverBindingKey)
 						tooltipHoverBindingKey = nil
+					end
+					if hoverCueBindingKey then
+						cleanupHoverBinding(hoverCueBindingKey)
+						hoverCueBindingKey = nil
 					end
 					hideTooltip(favoriteId)
 					if controlRecord.PinButton and controlRecord.PinButton.Parent then
@@ -1671,12 +1704,14 @@ function ElementsModule.init(ctx)
 	
 	
 				Button.Interact.MouseButton1Click:Connect(function()
+					emitUICue("click")
 					local Success, Response = pcall(ButtonSettings.Callback)
 					-- Prevents animation from trying to play if the button's callback called RayfieldLibrary:Destroy()
 					if self.rayfieldDestroyed() then
 						return
 					end
 					if not Success then
+						emitUICue("error")
 						self.Animation:Create(Button, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 						self.Animation:Create(Button.ElementIndicator, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
 						self.Animation:Create(Button.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
@@ -1689,6 +1724,7 @@ function ElementsModule.init(ctx)
 						self.Animation:Create(Button.ElementIndicator, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0.9}):Play()
 						self.Animation:Create(Button.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					else
+						emitUICue("success")
 						if not ButtonSettings.Ext then
 							self.SaveConfiguration(ButtonSettings.Name..'\n')
 						end
@@ -2459,9 +2495,13 @@ function ElementsModule.init(ctx)
 
 				local function fireConfirmed()
 					setArmedVisual(false)
+					emitUICue("click")
 					local okCallback, callbackErr = pcall(callback)
 					if not okCallback then
+						emitUICue("error")
 						warn("Rayfield | ConfirmButton callback failed: " .. tostring(callbackErr))
+					else
+						emitUICue("success")
 					end
 					if settingsValue.Ext ~= true then
 						self.SaveConfiguration()
@@ -4473,6 +4513,7 @@ function ElementsModule.init(ctx)
 				resizeInputFrame()
 
 				local function handleInputCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Input, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Input.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Input.Title.Text = "Callback Error"
@@ -4568,13 +4609,17 @@ function ElementsModule.init(ctx)
 				end
 
 				Input.InputFrame.InputBox.FocusLost:Connect(function()
-					commitInput(Input.InputFrame.InputBox.Text, {
+					emitUICue("click")
+					local callbackOk = commitInput(Input.InputFrame.InputBox.Text, {
 						reason = "focus_lost",
 						source = "user_input",
 						emitCallback = true,
 						persist = true,
 						forceCallback = true
 					})
+					if callbackOk == true then
+						emitUICue("success")
+					end
 
 					if InputSettings.RemoveTextAfterFocusLost then
 						Input.InputFrame.InputBox.Text = ""
@@ -4824,6 +4869,7 @@ function ElementsModule.init(ctx)
 				end
 
 				local function handleSelectionCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Dropdown.Title.Text = "Callback Error"
@@ -5091,6 +5137,7 @@ function ElementsModule.init(ctx)
 				end
 
 				Dropdown.Interact.MouseButton1Click:Connect(function()
+					emitUICue("click")
 					self.Animation:Create(Dropdown, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
 					self.Animation:Create(Dropdown.UIStroke, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					task.wait(0.1)
@@ -5173,6 +5220,7 @@ function ElementsModule.init(ctx)
 	
 						DropdownOption.Interact.ZIndex = 50
 						DropdownOption.Interact.MouseButton1Click:Connect(function()
+							emitUICue("click")
 							local nextSelection = cloneSelection(DropdownSettings.CurrentOption)
 							local selectedIndex = table.find(nextSelection, optionName)
 							local wasSelected = selectedIndex ~= nil
@@ -5193,13 +5241,16 @@ function ElementsModule.init(ctx)
 								self.setDebounce(true)
 							end
 
-							commitSelection(nextSelection, {
+							local _, _, callbackOk = commitSelection(nextSelection, {
 								emitCallback = true,
 								persist = true,
 								forceCallback = true,
 								reason = "option_click",
 								animatedVisuals = true
 							})
+							if callbackOk == true then
+								emitUICue("success")
+							end
 
 							if not DropdownSettings.MultipleOptions then
 								task.wait(0.1)
@@ -5656,8 +5707,10 @@ function ElementsModule.init(ctx)
 						end)
 	
 						if not KeybindSettings.HoldToInteract then
+							emitUICue("click")
 							local Success, Response = pcall(KeybindSettings.Callback)
 							if not Success then
+								emitUICue("error")
 								self.Animation:Create(Keybind, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 								self.Animation:Create(Keybind.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 								Keybind.Title.Text = "Callback Error"
@@ -5667,6 +5720,8 @@ function ElementsModule.init(ctx)
 								Keybind.Title.Text = KeybindSettings.Name
 								self.Animation:Create(Keybind, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
 								self.Animation:Create(Keybind.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+							else
+								emitUICue("success")
 							end
 						else
 							task.wait(0.25)
@@ -5823,6 +5878,7 @@ function ElementsModule.init(ctx)
 				end
 
 				local function handleToggleCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Toggle.Title.Text = "Callback Error"
@@ -6209,13 +6265,17 @@ function ElementsModule.init(ctx)
 						suppressNextToggleClick = false
 						return
 					end
-					commitToggleState(not ToggleSettings.CurrentValue, {
+					emitUICue("click")
+					local callbackOk = commitToggleState(not ToggleSettings.CurrentValue, {
 						reason = "interact_click",
 						source = "ui_click",
 						emitCallback = true,
 						persist = true,
 						forceCallback = true
 					})
+					if callbackOk == true then
+						emitUICue("success")
+					end
 				end)
 	
 				function ToggleSettings:Set(NewToggleValue)

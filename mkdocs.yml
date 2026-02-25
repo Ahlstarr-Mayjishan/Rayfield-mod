@@ -3,7 +3,7 @@ site_description: Rayfield Mod API, architecture, troubleshooting, and release n
 site_url: https://ahlstarr-mayjishan.github.io/Rayfield-mod/
 repo_url: https://github.com/Ahlstarr-Mayjishan/Rayfield-mod
 repo_name: Ahlstarr-Mayjishan/Rayfield-mod
-docs_dir: Documentation
+docs_dir: docs
 theme:
   name: material
 nav:

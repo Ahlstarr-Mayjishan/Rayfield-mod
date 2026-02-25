@@ -5,7 +5,7 @@ This document describes usage terms for Rayfield Mod distributions and source ac
 ## 1) No Malware Policy
 - This project is intended to be distributed without malicious payloads.
 - Maintainers do not intentionally add malware, credential theft, hidden remote execution, or persistence backdoors.
-- If you suspect malicious behavior, report it privately using `SECURITY.md`.
+- If you suspect malicious behavior, report it privately using `.github/SECURITY.md`.
 
 ## 2) Unauthorized Resale and Refunds
 - Third parties are not allowed to resell this project without written permission.
@@ -14,7 +14,7 @@ This document describes usage terms for Rayfield Mod distributions and source ac
 
 ## 3) Ownership and Distribution
 - Original project code and assets are proprietary unless a file states another license.
-- See `LICENSE` and `THIRD_PARTY_NOTICES.md` for legal scope.
+- See `LICENSE` and `legal/THIRD_PARTY_NOTICES.md` for legal scope.
 
 ## 4) Right to Change Distribution Model
 - Maintainers may move future versions to closed-source/private distribution.

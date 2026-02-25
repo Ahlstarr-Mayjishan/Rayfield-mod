@@ -616,6 +616,15 @@ runCheck("UI API methods available", function()
 	return type(Rayfield.SetUIPreset) == "function"
 		and type(Rayfield.SetTransitionProfile) == "function"
 		and type(Rayfield.ShowOnboarding) == "function"
+		and type(Rayfield.SetAudioFeedbackEnabled) == "function"
+		and type(Rayfield.IsAudioFeedbackEnabled) == "function"
+		and type(Rayfield.SetAudioFeedbackPack) == "function"
+		and type(Rayfield.GetAudioFeedbackState) == "function"
+		and type(Rayfield.PlayUICue) == "function"
+		and type(Rayfield.SetGlassMode) == "function"
+		and type(Rayfield.GetGlassMode) == "function"
+		and type(Rayfield.SetGlassIntensity) == "function"
+		and type(Rayfield.GetGlassIntensity) == "function"
 		and type(Rayfield.ApplyThemeStudioTheme) == "function"
 		and type(Rayfield.ResetThemeStudio) == "function"
 		and type(Rayfield.ExportSettings) == "function"
@@ -714,6 +723,51 @@ runCheck("Loading bar hybrid behavior", function()
 	end
 	local okStart, _ = settingsLoadingBar:Start()
 	return okStart == true
+end)
+
+runCheck("Audio feedback API roundtrip", function()
+	local okEnable, _ = Rayfield:SetAudioFeedbackEnabled(true)
+	if not okEnable then
+		return false
+	end
+
+	local okPack, _ = Rayfield:SetAudioFeedbackPack("Custom", {
+		click = "rbxassetid://0",
+		hover = "rbxassetid://0",
+		success = "rbxassetid://0",
+		error = "rbxassetid://0"
+	})
+	if not okPack then
+		return false
+	end
+
+	local state = Rayfield:GetAudioFeedbackState()
+	if type(state) ~= "table" or state.enabled ~= true or state.pack ~= "Custom" then
+		return false
+	end
+
+	local okDisable, _ = Rayfield:SetAudioFeedbackEnabled(false)
+	return okDisable == true and Rayfield:IsAudioFeedbackEnabled() == false
+end)
+
+runCheck("Glass API roundtrip", function()
+	local okMode, _ = Rayfield:SetGlassMode("fallback")
+	if not okMode then
+		return false
+	end
+
+	local okIntensity, _ = Rayfield:SetGlassIntensity(0.4)
+	if not okIntensity then
+		return false
+	end
+
+	local mode = Rayfield:GetGlassMode()
+	local intensity = Rayfield:GetGlassIntensity()
+	return type(mode) == "string"
+		and (mode == "fallback" or mode == "auto" or mode == "canvas" or mode == "off")
+		and type(intensity) == "number"
+		and intensity >= 0
+		and intensity <= 1
 end)
 
 runCheck("ExportSettings returns code", function()

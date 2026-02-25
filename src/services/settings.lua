@@ -45,6 +45,26 @@ SettingsModule.defaultSettings = {
 		useCustom = {Type = "toggle", Value = false, Name = "Use Custom Theme"},
 		customThemePacked = {Type = "hidden", Value = {}, Name = "Custom Theme Colors"}
 	},
+	Audio = {
+		enabled = {Type = "toggle", Value = false, Name = "Enable Audio Feedback"},
+		pack = {
+			Type = "dropdown",
+			Value = "Mute",
+			Name = "Audio Pack",
+			Options = {"Mute", "Custom"}
+		},
+		volume = {Type = "hidden", Value = 0.45, Name = "Audio Volume"},
+		customPack = {Type = "hidden", Value = {}, Name = "Custom Audio Pack"}
+	},
+	Glass = {
+		mode = {
+			Type = "dropdown",
+			Value = "auto",
+			Name = "Glass Mode",
+			Options = {"auto", "off", "canvas", "fallback"}
+		},
+		intensity = {Type = "hidden", Value = 0.32, Name = "Glass Intensity"}
+	},
 	Layout = {
 		collapsedSections = {Type = "hidden", Value = {}, Name = "Collapsed Sections"}
 	}
@@ -531,7 +551,9 @@ function SettingsModule.init(ctx)
 			Appearance = true,
 			Favorites = true,
 			ThemeStudio = true,
-			Onboarding = true
+			Onboarding = true,
+			Audio = true,
+			Glass = true
 		}
 
 		-- Create generic sections and elements
@@ -663,6 +685,145 @@ function SettingsModule.init(ctx)
 
 		newTab:CreateButton({
 			Name = "Replay Onboarding",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("showOnboarding", true)
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Premium UX")
+		local audioCategory = self.settingsTable.Audio or {}
+		local glassCategory = self.settingsTable.Glass or {}
+		local audioCustomPackDraft = ""
+
+		local function encodeJsonSafe(value, fallback)
+			local okEncode, encoded = pcall(self.HttpService.JSONEncode, self.HttpService, value)
+			if okEncode and type(encoded) == "string" then
+				return encoded
+			end
+			return tostring(fallback or "{}")
+		end
+
+		local audioEnabledSetting = audioCategory.enabled
+		if audioEnabledSetting then
+			audioEnabledSetting.Element = newTab:CreateToggle({
+				Name = audioEnabledSetting.Name or "Enable Audio Feedback",
+				CurrentValue = self.getSetting("Audio", "enabled") == true,
+				Ext = true,
+				Callback = function(value)
+					local boolValue = value == true
+					local ok, message = invokeExperience("setAudioEnabled", boolValue)
+					if ok then
+						self.setSettingValue("Audio", "enabled", boolValue, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		local audioPackSetting = audioCategory.pack
+		if audioPackSetting then
+			audioPackSetting.Element = newTab:CreateDropdown({
+				Name = audioPackSetting.Name or "Audio Pack",
+				Options = audioPackSetting.Options or {"Mute", "Custom"},
+				CurrentOption = self.getSetting("Audio", "pack") or audioPackSetting.Value or "Mute",
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = tostring(value or "Mute")
+					local ok, message = invokeExperience("setAudioPack", value)
+					if ok then
+						self.setSettingValue("Audio", "pack", value, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		local storedCustomPack = self.getSetting("Audio", "customPack")
+		if type(storedCustomPack) ~= "table" then
+			storedCustomPack = {}
+		end
+		audioCustomPackDraft = encodeJsonSafe(storedCustomPack, "{}")
+
+		local audioPackInput = newTab:CreateInput({
+			Name = "Custom Audio Pack (JSON)",
+			CurrentValue = audioCustomPackDraft,
+			PlaceholderText = "{\"click\":\"rbxassetid://...\"}",
+			Ext = true,
+			RemoveTextAfterFocusLost = false,
+			Callback = function(value)
+				audioCustomPackDraft = tostring(value or "")
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Apply Custom Audio Pack",
+			Ext = true,
+			Callback = function()
+				if audioCustomPackDraft == "" then
+					notifyExperienceResult(false, "Custom audio pack JSON is empty.")
+					return
+				end
+				local okApply, message, normalizedPack = invokeExperience("setAudioPackJson", audioCustomPackDraft)
+				if okApply then
+					if type(normalizedPack) == "table" then
+						self.setSettingValue("Audio", "customPack", normalizedPack, false)
+						audioCustomPackDraft = encodeJsonSafe(normalizedPack, audioCustomPackDraft)
+						if audioPackInput and type(audioPackInput.Set) == "function" then
+							audioPackInput:Set(audioCustomPackDraft)
+						end
+					end
+					self.setSettingValue("Audio", "pack", "Custom", true)
+					if audioPackSetting and audioPackSetting.Element and type(audioPackSetting.Element.Set) == "function" then
+						audioPackSetting.Element:Set("Custom")
+					end
+				end
+				notifyExperienceResult(okApply, message)
+			end
+		})
+
+		local glassModeSetting = glassCategory.mode
+		if glassModeSetting then
+			glassModeSetting.Element = newTab:CreateDropdown({
+				Name = glassModeSetting.Name or "Glass Mode",
+				Options = glassModeSetting.Options or {"auto", "off", "canvas", "fallback"},
+				CurrentOption = self.getSetting("Glass", "mode") or glassModeSetting.Value or "auto",
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = string.lower(tostring(value or "auto"))
+					local ok, message = invokeExperience("setGlassMode", value)
+					if ok then
+						self.setSettingValue("Glass", "mode", value, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		newTab:CreateSlider({
+			Name = "Glass Intensity",
+			Range = {0, 100},
+			Increment = 1,
+			CurrentValue = math.floor((tonumber(self.getSetting("Glass", "intensity")) or 0.32) * 100 + 0.5),
+			Ext = true,
+			Callback = function(value)
+				local numeric = math.clamp((tonumber(value) or 0) / 100, 0, 1)
+				local ok, message = invokeExperience("setGlassIntensity", numeric)
+				if ok then
+					self.setSettingValue("Glass", "intensity", numeric, true)
+				else
+					notifyExperienceResult(false, message)
+				end
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Replay Guided Tour",
 			Ext = true,
 			Callback = function()
 				local ok, message = invokeExperience("showOnboarding", true)

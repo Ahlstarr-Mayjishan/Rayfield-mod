@@ -26,7 +26,7 @@ lua scripts/build-bundle.lua
 ## Compatibility Checklist
 - [ ] Existing loaders still work (`Main loader/*`, `feature/*`)
 - [ ] Existing element contracts not regressed
-- [ ] Documentation updated (`Documentation/API.md`, changelog if needed)
+- [ ] Documentation updated (`docs/API.md`, changelog if needed)
 - [ ] Tests updated/added (`tests/regression/*`, `tests/smoke/*` as needed)
 
 ## Migration Notes (if breaking)

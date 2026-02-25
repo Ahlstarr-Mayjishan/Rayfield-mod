@@ -1,0 +1,26 @@
+﻿name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          lua-version: "5.4"
+
+      - name: Build Bundle
+        run: lua scripts/build-bundle.lua
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.lua
+          generate_release_notes: true
