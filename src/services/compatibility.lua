@@ -92,15 +92,20 @@ function Compatibility.getGuiContainer(useStudio, preferredContainer)
 	end
 
 	if coreGui then
-		local robloxGui = safePcall(function()
-			return coreGui:FindFirstChild("RobloxGui")
+		return coreGui
+	end
+
+	local players = Compatibility.getService("Players")
+	if players and players.LocalPlayer then
+		local playerGui = safePcall(function()
+			return players.LocalPlayer:FindFirstChild("PlayerGui") or players.LocalPlayer:WaitForChild("PlayerGui", 5)
 		end)
-		if robloxGui then
-			return robloxGui
+		if playerGui then
+			return playerGui
 		end
 	end
 
-	return coreGui
+	return nil
 end
 
 function Compatibility.protectAndParent(guiObject, preferredContainer, options)

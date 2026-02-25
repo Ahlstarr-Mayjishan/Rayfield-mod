@@ -79,7 +79,7 @@ else
 	error("All-in-one loader returned unexpected value: " .. type(loaded))
 end
 
-if type(UI) ~= "table" or type(UI.Rayfield) ~= "table" then
+if not isReadyUI(UI) then
 	error("All-in-one UI bootstrap failed: Rayfield not available")
 end
 
@@ -107,12 +107,10 @@ local function runCheck(name, checkFn)
 		report(false, name, resultOrErr)
 		return false
 	end
-
 	if resultOrErr == false then
 		report(false, name, "condition returned false")
 		return false
 	end
-
 	report(true, name)
 	return true
 end
@@ -135,11 +133,8 @@ local settingsState = {
 	themeAccent = Color3.fromRGB(0, 170, 255),
 	importCode = "",
 	lastExportCode = nil,
-    autoSave = false,
-    glassMode = "auto",
-    glassIntensity = 0.32,
-    audioEnabled = false,
-    audioPack = "Default"
+	statusPreview = 35,
+	trackPreview = 35
 }
 
 do
@@ -159,269 +154,629 @@ do
 	if okThemeState and type(themeState) == "table" and type(themeState.baseTheme) == "string" then
 		settingsState.themeBase = themeState.baseTheme
 	end
-    
-    if type(Rayfield.GetGlassMode) == "function" then
-        settingsState.glassMode = Rayfield:GetGlassMode()
-    end
-    if type(Rayfield.GetGlassIntensity) == "function" then
-        settingsState.glassIntensity = Rayfield:GetGlassIntensity() or 0.32
-    end
-    if type(Rayfield.IsAudioFeedbackEnabled) == "function" then
-        settingsState.audioEnabled = Rayfield:IsAudioFeedbackEnabled()
-    end
 end
 
 local window = Rayfield:CreateWindow({
-	Name = "Rayfield Mod | Ultimate",
+	Name = "Rayfield Mod | Full UI Sample",
 	LoadingTitle = "Rayfield Mod Bundle",
-	LoadingSubtitle = "All-in-One Extreme Pack",
-    ToggleUIKeybind = "RightControl",
+	LoadingSubtitle = "All-in-One Full Controls",
 	ConfigurationSaving = {
-		Enabled = true,
-        FolderName = "RayfieldModAIO",
-        FileName = "Config",
-        AutoSave = false
+		Enabled = false
 	},
-	DisableRayfieldPrompts = false,
-	DisableBuildWarnings = false
+	DisableRayfieldPrompts = true,
+	DisableBuildWarnings = true
 })
 
-local tabMain = window:CreateTab("General", 4483362458)
-local tabLayout = window:CreateTab("Layout", 4483362458)
-local tabSettings = window:CreateTab("UI Settings", 4483362458)
-local tabDeveloper = window:CreateTab("Developer", 4483362458)
+local tabCore = window:CreateTab("Core", 4483362458)
+local tabAdvanced = window:CreateTab("Advanced", 4483362458)
+local tabSettings = window:CreateTab("Settings", 4483362458)
+local tabSystem = window:CreateTab("System", 4483362458)
 
--- 1. General Tab
-tabMain:CreateSection("Core Input Elements")
-local elButton = tabMain:CreateButton({
+local sampleLogConsole = nil
+local function sampleLog(level, message)
+	local safeLevel = tostring(level or "info")
+	local safeMessage = tostring(message or "")
+	print("[AIO-Sample][" .. safeLevel .. "] " .. safeMessage)
+	if sampleLogConsole then
+		if safeLevel == "warn" and type(sampleLogConsole.Warn) == "function" then
+			sampleLogConsole:Warn(safeMessage)
+		elseif safeLevel == "error" and type(sampleLogConsole.Error) == "function" then
+			sampleLogConsole:Error(safeMessage)
+		elseif type(sampleLogConsole.Info) == "function" then
+			sampleLogConsole:Info(safeMessage)
+		end
+	end
+end
+
+-- Core tab
+local elButton = tabCore:CreateButton({
 	Name = "Standard Button",
 	Callback = function()
 		runtimeState.buttonClicks += 1
-        Rayfield:Notify({Title = "Notification", Content = "Clicks: "..runtimeState.buttonClicks, Duration = 2})
-	end
-})
-
-local elToggle = tabMain:CreateToggle({
-	Name = "Feature Toggle",
-	CurrentValue = false,
-	Callback = function(v) runtimeState.toggle = v end
-})
-
-local elSlider = tabMain:CreateSlider({
-	Name = "Value Adjuster",
-	Range = {0, 100},
-	Increment = 1,
-	CurrentValue = 50,
-	Callback = function(v) runtimeState.slider = v end
-})
-
-local elInput = tabMain:CreateInput({
-	Name = "Data Input",
-	CurrentValue = "",
-	PlaceholderText = "Input data here...",
-	Callback = function(v) runtimeState.input = v end
-})
-
-local elDropdown = tabMain:CreateDropdown({
-	Name = "Choice Dropdown",
-	Options = {"Alpha", "Beta", "Gamma", "Delta"},
-	CurrentOption = "Alpha",
-	Callback = function(v) runtimeState.dropdown = firstOption(v) end
-})
-
-tabMain:CreateDivider()
-tabMain:CreateSection("Complex Control")
-local elKeybind = tabMain:CreateKeybind({
-	Name = "Trigger Keybind",
-	CurrentKeybind = "Q",
-	Callback = function(v) runtimeState.keybind = v end
-})
-
-local elColor = tabMain:CreateColorPicker({
-	Name = "Theme Picker",
-	Color = Color3.fromRGB(255, 170, 0),
-	Callback = function(v) runtimeState.color = v end
-})
-
--- 2. Layout Tab
-tabLayout:CreateSection("Display Elements")
-local elLabel = tabLayout:CreateLabel("Static Information Label")
-local elParagraph = tabLayout:CreateParagraph({
-	Title = "Hub Manual",
-	Content = "Welcome to the Ultimate Bundle. Use the Settings tab to customize your experience and the Developer tab to debug systems."
-})
-
-tabLayout:CreateDivider()
-local layoutCollapsible = tabLayout:CreateCollapsibleSection({
-	Name = "Advanced Layout Widgets",
-	Collapsed = false
-})
-
-local statusP = layoutCollapsible:CreateStatusBar({
-	Name = "Engine Load",
-	Range = {0, 100},
-	CurrentValue = 42,
-    ParentSection = layoutCollapsible
-})
-
-local trackP = layoutCollapsible:CreateTrackBar({
-	Name = "Volume Track",
-	Range = {0, 100},
-	CurrentValue = 75,
-    ParentSection = layoutCollapsible
-})
-
-layoutCollapsible:CreateNumberStepper({
-	Name = "Step Control",
-	CurrentValue = 10,
-	Callback = function(v) statusP:Set(v) end,
-    ParentSection = layoutCollapsible
-})
-
--- 3. UI Settings Tab
-local function settingsLog(level, message)
-	print("[UI-Settings][" .. tostring(level) .. "] " .. tostring(message))
-end
-
-tabSettings:CreateSection("Visual Customization")
-tabSettings:CreateDropdown({
-	Name = "Sizing Preset",
-	Options = {"Comfort", "Compact", "Focus"},
-	CurrentOption = settingsState.uiPreset,
-	Callback = function(v) Rayfield:SetUIPreset(firstOption(v)) end
-})
-
-tabSettings:CreateDropdown({
-	Name = "Animation Profile",
-	Options = {"Smooth", "Snappy", "Minimal", "Off"},
-	CurrentOption = settingsState.transitionProfile,
-	Callback = function(v) Rayfield:SetTransitionProfile(firstOption(v)) end
-})
-
-local themeNames = sortedThemeNames(Rayfield)
-tabSettings:CreateDropdown({
-	Name = "Base Theme",
-	Options = themeNames,
-	CurrentOption = settingsState.themeBase,
-	Callback = function(v) Rayfield:ApplyThemeStudioTheme(firstOption(v)) end
-})
-
-tabSettings:CreateColorPicker({
-	Name = "Accent Highlight",
-	Color = settingsState.themeAccent,
-	Callback = function(value)
-        Rayfield:ApplyThemeStudioTheme({
-			SliderBackground = value, SliderProgress = value, SliderStroke = value,
-			ToggleEnabled = value, ToggleEnabledStroke = value, ToggleEnabledOuterStroke = value,
-			TabBackgroundSelected = value, SelectedTabTextColor = Color3.fromRGB(20, 20, 20)
+		Rayfield:Notify({
+			Title = "Rayfield Sample",
+			Content = "Button clicked " .. tostring(runtimeState.buttonClicks) .. " times",
+			Duration = 2
 		})
 	end
 })
 
-tabSettings:CreateSection("Premium UX (Engine)")
-tabSettings:CreateDropdown({
-	Name = "Glass Rendering",
-	Options = {"auto", "off", "canvas", "fallback"},
-	CurrentOption = settingsState.glassMode,
-	Callback = function(v) Rayfield:SetGlassMode(firstOption(v)) end
-})
-
-tabSettings:CreateSlider({
-	Name = "Glass Intensity",
-	Range = {0, 100},
-	CurrentValue = math.floor(settingsState.glassIntensity * 100),
-	Callback = function(v) Rayfield:SetGlassIntensity(v / 100) end
-})
-
-tabSettings:CreateToggle({
-	Name = "Audio Feedback",
-	CurrentValue = settingsState.audioEnabled,
-	Callback = function(v) Rayfield:SetAudioFeedbackEnabled(v) end
-})
-
-tabSettings:CreateDropdown({
-	Name = "Audio Sound Pack",
-	Options = {"Default", "Classic", "Modern", "Ghost"},
-	CurrentOption = "Default",
-	Callback = function(v) Rayfield:SetAudioFeedbackPack(firstOption(v)) end
-})
-
-tabSettings:CreateButton({
-	Name = "Test Sound Cue",
-	Callback = function() Rayfield:PlayUICue("success") end
-})
-
--- 4. Developer Tab
-tabDeveloper:CreateSection("Configuration & State")
-tabDeveloper:CreateToggle({
-	Name = "Autosave UI State",
+local elToggle = tabCore:CreateToggle({
+	Name = "Feature Toggle",
 	CurrentValue = false,
-	Callback = function(v) if Rayfield.ConfigurationSaving then Rayfield.ConfigurationSaving.AutoSave = v end end
-})
-
-tabDeveloper:CreateButton({
-	Name = "Save Configuration Now",
-	Callback = function() Rayfield:SaveConfiguration() Rayfield:Notify({Title="Saved", Content="Config persisted to Disk.", Duration=2}) end
-})
-
-tabDeveloper:CreateSection("Data Exchange")
-local codeInput = tabDeveloper:CreateInput({
-	Name = "Settings Code",
-	PlaceholderText = "RFSC Code...",
-	Callback = function(v) settingsState.importCode = v end
-})
-
-tabDeveloper:CreateButton({
-	Name = "Export Hub Code",
-	Callback = function()
-		local code = Rayfield:ExportSettings()
-		if code then codeInput:Set(code) end
+	Callback = function(value)
+		runtimeState.toggle = value == true
 	end
 })
 
-tabDeveloper:CreateButton({
-	Name = "Import from Code",
-	Callback = function() if settingsState.importCode then Rayfield:ImportCode(settingsState.importCode) end end
+local elSlider = tabCore:CreateSlider({
+	Name = "Value Adjuster",
+	Range = { 0, 100 },
+	Increment = 1,
+	CurrentValue = 50,
+	Callback = function(value)
+		runtimeState.slider = tonumber(value) or 0
+	end
 })
 
-tabDeveloper:CreateSection("System Monitor")
-local devChart = tabDeveloper:CreateChart({
-	Name = "Performance Stats",
-	Preset = "fps"
+local elInput = tabCore:CreateInput({
+	Name = "Data Input",
+	CurrentValue = "",
+	PlaceholderText = "Input data here...",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(value)
+		runtimeState.input = tostring(value or "")
+	end
 })
 
-local devLogs = tabDeveloper:CreateLogConsole({
-	Name = "Runtime Logs",
-	MaxEntries = 100
+local elDropdown = tabCore:CreateDropdown({
+	Name = "Choice Dropdown",
+	Options = { "Alpha", "Beta", "Gamma", "Delta" },
+	CurrentOption = "Alpha",
+	Callback = function(value)
+		runtimeState.dropdown = firstOption(value)
+	end
 })
 
-tabDeveloper:CreateSection("Maintenance")
-tabDeveloper:CreateButton({
-	Name = "Replay Guided Tour",
-	Callback = function() Rayfield:ShowOnboarding(true) end
+tabCore:CreateDivider()
+
+local elKeybind = tabCore:CreateKeybind({
+	Name = "Trigger Keybind",
+	CurrentKeybind = "Q",
+	CallOnChange = true,
+	Callback = function(value)
+		runtimeState.keybind = tostring(value or "")
+	end
 })
 
-tabDeveloper:CreateConfirmButton({
-	Name = "Factory Reset UI",
-	ConfirmMode = "hold",
-	Callback = function() Rayfield:ResetThemeStudio() end
+local elColor = tabCore:CreateColorPicker({
+	Name = "Theme Picker",
+	Color = Color3.fromRGB(255, 170, 0),
+	Callback = function(value)
+		runtimeState.color = value
+	end
 })
 
--- Final logic checks
-runCheck("API Validation", function()
-	return type(Rayfield.SetUIPreset) == "function" 
-		and type(Rayfield.SetAudioFeedbackEnabled) == "function"
-		and type(Rayfield.ExportSettings) == "function"
+-- Advanced tab
+local elLabel = tabAdvanced:CreateLabel("Static Information Label")
+local elParagraph = tabAdvanced:CreateParagraph({
+	Title = "Hub Manual",
+	Content = "This sample loader includes core, advanced, settings, and system controls."
+})
+local elSection = tabAdvanced:CreateSection("Advanced Widgets")
+
+tabAdvanced:CreateDivider()
+
+local advancedSection = tabAdvanced:CreateCollapsibleSection({
+	Name = "Interactive Widgets",
+	Id = "sample-advanced-controls",
+	Collapsed = false
+})
+
+local statusPreview = tabAdvanced:CreateStatusBar({
+	Name = "Status Preview",
+	Range = { 0, 100 },
+	Increment = 1,
+	CurrentValue = settingsState.statusPreview,
+	TextFormatter = function(current, max, percent)
+		return string.format("Load %.0f%% (%d/%d)", percent, current, max)
+	end,
+	Callback = function(value)
+		settingsState.statusPreview = tonumber(value) or 0
+	end,
+	ParentSection = advancedSection
+})
+
+local trackPreview = tabAdvanced:CreateTrackBar({
+	Name = "Track Preview",
+	Range = { 0, 100 },
+	Increment = 1,
+	CurrentValue = settingsState.trackPreview,
+	Callback = function(value)
+		settingsState.trackPreview = tonumber(value) or 0
+	end,
+	ParentSection = advancedSection
+})
+
+local stepper = tabAdvanced:CreateNumberStepper({
+	Name = "Value Stepper",
+	CurrentValue = 35,
+	Min = 0,
+	Max = 100,
+	Step = 1,
+	Precision = 0,
+	ParentSection = advancedSection,
+	Callback = function(value)
+		local numeric = tonumber(value) or 0
+		if statusPreview and statusPreview.Set then
+			statusPreview:Set(numeric)
+		end
+		if trackPreview and trackPreview.Set then
+			trackPreview:Set(numeric)
+		end
+	end
+})
+
+local confirmReset = tabAdvanced:CreateConfirmButton({
+	Name = "Confirm Theme Reset",
+	ConfirmMode = "either",
+	HoldDuration = 1,
+	DoubleWindow = 0.4,
+	Callback = function()
+		local okReset, status = Rayfield:ResetThemeStudio()
+		sampleLog(okReset and "info" or "error", "ResetThemeStudio => " .. tostring(status))
+	end,
+	ParentSection = advancedSection
+})
+
+local wrapperToggle = nil
+if type(tabAdvanced.CreateToggleBind) == "function" then
+	wrapperToggle = tabAdvanced:CreateToggleBind({
+		Name = "ToggleBind Example",
+		CurrentValue = false,
+		Keybind = { CurrentKeybind = "LeftControl+1" },
+		Callback = function(value)
+			sampleLog("info", "ToggleBind => " .. tostring(value))
+		end,
+		ParentSection = advancedSection
+	})
+end
+
+local hotToggle = nil
+if type(tabAdvanced.CreateHotToggle) == "function" then
+	hotToggle = tabAdvanced:CreateHotToggle({
+		Name = "HotToggle Example",
+		CurrentValue = false,
+		Keybind = { CurrentKeybind = "LeftControl+2" },
+		Callback = function(value)
+			sampleLog("info", "HotToggle => " .. tostring(value))
+		end,
+		ParentSection = advancedSection
+	})
+end
+
+local keybindToggle = nil
+if type(tabAdvanced.CreateKeybindToggle) == "function" then
+	keybindToggle = tabAdvanced:CreateKeybindToggle({
+		Name = "KeybindToggle Example",
+		CurrentValue = false,
+		Keybind = { CurrentKeybind = "LeftControl+3" },
+		Callback = function(value)
+			sampleLog("info", "KeybindToggle => " .. tostring(value))
+		end,
+		ParentSection = advancedSection
+	})
+end
+
+local loadingSpinner = nil
+if type(tabAdvanced.CreateLoadingSpinner) == "function" then
+	loadingSpinner = tabAdvanced:CreateLoadingSpinner({
+		Name = "Loading Spinner",
+		Speed = 1.2,
+		AutoStart = true,
+		ParentSection = advancedSection
+	})
+end
+
+local loadingBar = nil
+if type(tabAdvanced.CreateLoadingBar) == "function" then
+	loadingBar = tabAdvanced:CreateLoadingBar({
+		Name = "Loading Bar",
+		Mode = "indeterminate",
+		AutoStart = true,
+		ShowLabel = false,
+		ParentSection = advancedSection
+	})
+end
+
+local settingsImage = nil
+if type(tabAdvanced.CreateImage) == "function" then
+	settingsImage = tabAdvanced:CreateImage({
+		Name = "Preview Image",
+		Source = "rbxassetid://4483362458",
+		FitMode = "fill",
+		Height = 110,
+		Caption = "Rayfield Icon"
+	})
+end
+
+local settingsGallery = nil
+if type(tabAdvanced.CreateGallery) == "function" then
+	settingsGallery = tabAdvanced:CreateGallery({
+		Name = "Sample Gallery",
+		SelectionMode = "multi",
+		Columns = "auto",
+		Items = {
+			{ id = "a", name = "Item A", image = "rbxassetid://4483362458" },
+			{ id = "b", name = "Item B", image = "rbxassetid://4483362458" },
+			{ id = "c", name = "Item C", image = "rbxassetid://4483362458" }
+		},
+		Callback = function(selection)
+			local count = type(selection) == "table" and #selection or 0
+			sampleLog("info", "Gallery selection count => " .. tostring(count))
+		end
+	})
+end
+
+local settingsChart = nil
+if type(tabAdvanced.CreateChart) == "function" then
+	settingsChart = tabAdvanced:CreateChart({
+		Name = "Sample Chart",
+		MaxPoints = 180,
+		UpdateHz = 8,
+		Preset = "fps",
+		ShowAreaFill = true
+	})
+	settingsChart:AddPoint(35)
+	settingsChart:AddPoint(45)
+	settingsChart:AddPoint(55)
+end
+
+if type(tabAdvanced.CreateLogConsole) == "function" then
+	sampleLogConsole = tabAdvanced:CreateLogConsole({
+		Name = "Sample Logs",
+		CaptureMode = "manual",
+		MaxEntries = 120,
+		ShowTimestamp = true
+	})
+	sampleLog("info", "Advanced tab initialized.")
+end
+
+-- Settings tab
+local themeNames = sortedThemeNames(Rayfield)
+tabSettings:CreateDropdown({
+	Name = "UI Preset",
+	Options = { "Comfort", "Compact", "Focus" },
+	CurrentOption = settingsState.uiPreset,
+	Callback = function(value)
+		local selected = firstOption(value)
+		if selected ~= "" then
+			local okSet, status = Rayfield:SetUIPreset(selected)
+			sampleLog(okSet and "info" or "error", "SetUIPreset(" .. selected .. ") => " .. tostring(status))
+		end
+	end
+})
+
+tabSettings:CreateDropdown({
+	Name = "Transition Profile",
+	Options = { "Smooth", "Snappy", "Minimal", "Off" },
+	CurrentOption = settingsState.transitionProfile,
+	Callback = function(value)
+		local selected = firstOption(value)
+		if selected ~= "" then
+			local okSet, status = Rayfield:SetTransitionProfile(selected)
+			sampleLog(okSet and "info" or "error", "SetTransitionProfile(" .. selected .. ") => " .. tostring(status))
+		end
+	end
+})
+
+tabSettings:CreateToggle({
+	Name = "Suppress Onboarding",
+	CurrentValue = settingsState.onboardingSuppressed,
+	Callback = function(value)
+		local okSet, status = Rayfield:SetOnboardingSuppressed(value == true)
+		sampleLog(okSet and "info" or "error", "SetOnboardingSuppressed(" .. tostring(value) .. ") => " .. tostring(status))
+	end
+})
+
+tabSettings:CreateDropdown({
+	Name = "Theme Base",
+	Options = themeNames,
+	CurrentOption = settingsState.themeBase,
+	Callback = function(value)
+		local selected = firstOption(value)
+		if selected ~= "" then
+			local okTheme, status = Rayfield:ApplyThemeStudioTheme(selected)
+			sampleLog(okTheme and "info" or "error", "ApplyThemeStudioTheme(" .. selected .. ") => " .. tostring(status))
+		end
+	end
+})
+
+tabSettings:CreateColorPicker({
+	Name = "Accent Color",
+	Color = settingsState.themeAccent,
+	Callback = function(accent)
+		local okTheme, status = Rayfield:ApplyThemeStudioTheme({
+			SliderBackground = accent,
+			SliderProgress = accent,
+			SliderStroke = accent,
+			ToggleEnabled = accent,
+			ToggleEnabledStroke = accent,
+			ToggleEnabledOuterStroke = accent,
+			TabBackgroundSelected = accent,
+			SelectedTabTextColor = Color3.fromRGB(20, 20, 20)
+		})
+		sampleLog(okTheme and "info" or "error", "ApplyThemeStudioTheme(custom) => " .. tostring(status))
+	end
+})
+
+tabSettings:CreateButton({
+	Name = "Replay Onboarding",
+	Callback = function()
+		local okShow, status = Rayfield:ShowOnboarding(true)
+		sampleLog(okShow and "info" or "error", "ShowOnboarding(true) => " .. tostring(status))
+	end
+})
+
+tabSettings:CreateButton({
+	Name = "Reset Theme Studio",
+	Callback = function()
+		local okReset, status = Rayfield:ResetThemeStudio()
+		sampleLog(okReset and "info" or "error", "ResetThemeStudio() => " .. tostring(status))
+	end
+})
+
+-- System tab
+local importCodeInput = tabSystem:CreateInput({
+	Name = "Settings Code Buffer",
+	CurrentValue = "",
+	PlaceholderText = "RFSC1:....",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		settingsState.importCode = tostring(text or "")
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Export Settings Code",
+	Callback = function()
+		local code, status = Rayfield:ExportSettings()
+		if type(code) == "string" and code ~= "" then
+			settingsState.lastExportCode = code
+			settingsState.importCode = code
+			importCodeInput:Set(code)
+			sampleLog("info", "ExportSettings => " .. tostring(status) .. " (len=" .. tostring(#code) .. ")")
+		else
+			sampleLog("error", "ExportSettings failed => " .. tostring(status))
+		end
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Import From Buffer",
+	Callback = function()
+		if settingsState.importCode == "" then
+			sampleLog("warn", "Import buffer is empty.")
+			return
+		end
+		local okImport, status = Rayfield:ImportCode(settingsState.importCode)
+		sampleLog(okImport and "info" or "error", "ImportCode(buffer) => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Import Last Export",
+	Callback = function()
+		if type(settingsState.lastExportCode) ~= "string" or settingsState.lastExportCode == "" then
+			sampleLog("warn", "No exported code cached yet.")
+			return
+		end
+		local okImport, status = Rayfield:ImportCode(settingsState.lastExportCode)
+		sampleLog(okImport and "info" or "error", "ImportCode(lastExport) => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Copy Share Code",
+	Callback = function()
+		local okCopy, status = Rayfield:CopyShareCode()
+		sampleLog(okCopy and "info" or "error", "CopyShareCode => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Import Active Settings",
+	Callback = function()
+		local okImport, status = Rayfield:ImportSettings()
+		sampleLog(okImport and "info" or "error", "ImportSettings => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Print Controls Snapshot",
+	Callback = function()
+		local controls = Rayfield:ListControls()
+		sampleLog("info", "ListControls count = " .. tostring(type(controls) == "table" and #controls or 0))
+	end
+})
+
+-- Checks
+runCheck("All-in-one services ready", function()
+	return type(UI.ErrorManager) == "table"
+		and type(UI.GarbageCollector) == "table"
+		and type(UI.RemoteProtection) == "table"
+		and type(UI.MemoryLeakDetector) == "table"
+		and type(UI.Profiler) == "table"
 end)
 
+runCheck("Core tab has baseline controls", function()
+	local list = tabCore:GetElements()
+	return type(list) == "table" and #list >= 7
+end)
+
+runCheck("Advanced tab has rich controls", function()
+	local list = tabAdvanced:GetElements()
+	return type(list) == "table" and #list >= 12
+end)
+
+runCheck("Settings/System tabs populated", function()
+	local settingsList = tabSettings:GetElements()
+	local systemList = tabSystem:GetElements()
+	return type(settingsList) == "table" and #settingsList >= 6
+		and type(systemList) == "table" and #systemList >= 6
+end)
+
+runCheck("UI API methods available", function()
+	return type(Rayfield.SetUIPreset) == "function"
+		and type(Rayfield.SetTransitionProfile) == "function"
+		and type(Rayfield.ShowOnboarding) == "function"
+		and type(Rayfield.ApplyThemeStudioTheme) == "function"
+		and type(Rayfield.ResetThemeStudio) == "function"
+		and type(Rayfield.ExportSettings) == "function"
+		and type(Rayfield.ImportCode) == "function"
+		and type(Rayfield.CopyShareCode) == "function"
+end)
+
+runCheck("Core element Set/Get works", function()
+	elToggle:Set(true)
+	if elToggle:Get() ~= true then
+		return false
+	end
+	elSlider:Set(75)
+	elInput:Set("Rayfield-AIO")
+	elDropdown:Set("Beta")
+	return tostring(elInput.CurrentValue or "") == "Rayfield-AIO"
+		and type(elDropdown.CurrentOption) == "table"
+		and elDropdown.CurrentOption[1] == "Beta"
+end)
+
+runCheck("Loading controls available (if supported)", function()
+	if type(tabAdvanced.CreateLoadingSpinner) ~= "function" or type(tabAdvanced.CreateLoadingBar) ~= "function" then
+		return true
+	end
+	return type(loadingSpinner) == "table"
+		and type(loadingSpinner.Start) == "function"
+		and type(loadingSpinner.Stop) == "function"
+		and type(loadingBar) == "table"
+		and type(loadingBar.SetMode) == "function"
+		and type(loadingBar.SetProgress) == "function"
+end)
+
+runCheck("Loading bar hybrid behavior (if supported)", function()
+	if type(loadingBar) ~= "table" then
+		return true
+	end
+	local okProgress = select(1, loadingBar:SetProgress(0.5))
+	if okProgress ~= true then
+		return false
+	end
+	if loadingBar:GetMode() ~= "determinate" then
+		return false
+	end
+	local okMode = select(1, loadingBar:SetMode("indeterminate"))
+	if okMode ~= true then
+		return false
+	end
+	return select(1, loadingBar:Start()) == true
+end)
+
+runCheck("ExportSettings returns code", function()
+	local code = select(1, Rayfield:ExportSettings())
+	if type(code) ~= "string" or code == "" then
+		return false
+	end
+	settingsState.lastExportCode = code
+	settingsState.importCode = code
+	importCodeInput:Set(code)
+	return true
+end)
+
+runCheck("Feature scope + task tracking works", function()
+	if type(Rayfield.CreateFeatureScope) ~= "function"
+		or type(Rayfield.TrackFeatureTask) ~= "function"
+		or type(Rayfield.CleanupFeatureScope) ~= "function" then
+		return false
+	end
+
+	local scopeId = select(1, Rayfield:CreateFeatureScope("loader-task-scope"))
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false
+	end
+
+	local worker = task.spawn(function()
+		while true do
+			task.wait(1)
+		end
+	end)
+
+	local okTrack = select(1, Rayfield:TrackFeatureTask(scopeId, worker))
+	if okTrack ~= true then
+		return false
+	end
+
+	local okCleanup = select(1, Rayfield:CleanupFeatureScope(scopeId, false))
+	return okCleanup == true
+end)
+
+runCheck("Control registry includes >= 30 controls", function()
+	local controls = Rayfield:ListControls()
+	return type(controls) == "table" and #controls >= 30
+end)
+
+local summary = string.format("Checks: %d pass / %d fail", checkState.pass, checkState.fail)
 Rayfield:Notify({
-    Title = "Ultimate Bundle Active",
-    Content = "4 Tabs / All Elements Loaded.",
-    Duration = 5
+	Title = "AIO Full UI Sample",
+	Content = checkState.fail == 0 and summary or (summary .. " (see console)"),
+	Duration = checkState.fail == 0 and 8 or 10
 })
 
+for _, line in ipairs(checkState.logs) do
+	print(line)
+end
+
 return {
+	UI = UI,
 	Rayfield = Rayfield,
 	Window = window,
-	Tabs = {Main = tabMain, Layout = tabLayout, Settings = tabSettings, Developer = tabDeveloper}
+	Tabs = {
+		Core = tabCore,
+		Advanced = tabAdvanced,
+		Settings = tabSettings,
+		System = tabSystem
+	},
+	Elements = {
+		Core = {
+			Button = elButton,
+			Toggle = elToggle,
+			Slider = elSlider,
+			Input = elInput,
+			Dropdown = elDropdown,
+			Keybind = elKeybind,
+			ColorPicker = elColor
+		},
+		Advanced = {
+			Label = elLabel,
+			Paragraph = elParagraph,
+			Section = elSection,
+			StatusPreview = statusPreview,
+			TrackPreview = trackPreview,
+			Stepper = stepper,
+			ConfirmReset = confirmReset,
+			ToggleBind = wrapperToggle,
+			HotToggle = hotToggle,
+			KeybindToggle = keybindToggle,
+			LoadingSpinner = loadingSpinner,
+			LoadingBar = loadingBar,
+			Image = settingsImage,
+			Gallery = settingsGallery,
+			Chart = settingsChart,
+			LogConsole = sampleLogConsole
+		},
+		System = {
+			ImportCodeInput = importCodeInput
+		}
+	},
+	CheckState = checkState,
+	RuntimeState = runtimeState,
+	SettingsState = settingsState
 }
