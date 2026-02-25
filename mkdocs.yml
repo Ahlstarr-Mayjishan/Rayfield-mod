@@ -1,0 +1,16 @@
+site_name: Rayfield Mod Documentation
+site_description: Rayfield Mod API, architecture, troubleshooting, and release notes.
+site_url: https://ahlstarr-mayjishan.github.io/Rayfield-mod/
+repo_url: https://github.com/Ahlstarr-Mayjishan/Rayfield-mod
+repo_name: Ahlstarr-Mayjishan/Rayfield-mod
+docs_dir: Documentation
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - API: API.md
+  - Changelog: CHANGELOG.md
+  - Troubleshooting: TROUBLESHOOTING.md
+  - Animation Unified: animation-unified.md
+  - Architecture:
+      - Module Boundaries: architecture/module-boundaries.md

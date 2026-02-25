@@ -1,0 +1,148 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lua-syntax:
+    name: Lua Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          lua-version: "5.4"
+
+      - name: Check Lua Syntax
+        run: |
+          find . -name "*.lua" -not -path "./.git/*" -exec sh -c 'echo "Checking: $1" && luac -p "$1" || exit 1' _ {} \;
+
+  verify-scripts:
+    name: Run Verification Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          lua-version: "5.4"
+
+      - name: Run Module Map Verification
+        run: lua scripts/verify-module-map.lua
+
+      - name: Run No Direct HttpGet Check
+        run: lua scripts/verify-no-direct-httpget.lua
+
+      - name: Run No Direct TweenCreate Check
+        run: lua scripts/verify-no-direct-tweencreate.lua
+
+  luacheck:
+    name: Luacheck Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          lua-version: "5.4"
+
+      - name: Setup LuaRocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks
+
+      - name: Install Luacheck
+        run: luarocks install luacheck
+
+      - name: Run Luacheck
+        run: |
+          luacheck --config .luacheckrc src scripts tests "Main loader" feature
+
+  selene:
+    name: Selene Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Selene
+        run: cargo install selene --locked
+
+      - name: Run Selene
+        run: selene src
+
+  format-check:
+    name: StyLua Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install StyLua
+        run: cargo install stylua --locked
+
+      - name: Run StyLua Check
+        run: stylua --check .
+
+  auto-format-on-push:
+    name: Auto Format on Push
+    if: github.event_name == 'push' && vars.AUTO_FORMAT_ON_PUSH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install StyLua
+        run: cargo install stylua --locked
+
+      - name: Apply StyLua
+        run: stylua .
+
+      - name: Commit formatted files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(ci): auto-format lua files with stylua"
+          file_pattern: "**/*.lua"
+
+  bundle-build:
+    name: Build Production Bundle
+    runs-on: ubuntu-latest
+    needs: [lua-syntax, verify-scripts, luacheck, selene, format-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          lua-version: "5.4"
+
+      - name: Build Bundle
+        run: lua scripts/build-bundle.lua
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-bundle
+          path: dist/
+          retention-days: 7

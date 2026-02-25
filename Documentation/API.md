@@ -162,6 +162,8 @@ Tab element factories:
 - `Tab:CreateGallery(settings)`
 - `Tab:CreateChart(settings)`
 - `Tab:CreateLogConsole(settings)`
+- `Tab:CreateLoadingSpinner(settings)`
+- `Tab:CreateLoadingBar(settings)`
 - `Tab:CreateKeybind(settings)`
 - `Tab:CreateToggle(settings)`
 - `Tab:CreateToggleBind(settings)` (wrapper bật keybind cho toggle)
@@ -267,7 +269,7 @@ Dropdown state normalization:
   - receives normalized selection and metadata (`reason`, `fallbackApplied`, `changed`).
 
 Element state sync contract (core stateful elements):
-- `CreateDropdown`, `CreateToggle`, `CreateInput`, `CreateSlider`, `CreateTrackBar`, `CreateStatusBar`
+- `CreateDropdown`, `CreateToggle`, `CreateInput`, `CreateSlider`, `CreateTrackBar`, `CreateStatusBar`, `CreateLoadingSpinner`, `CreateLoadingBar`
   now run internal pipeline:
   - `normalize -> applyVisual -> emitCallback -> persist`
 - auto-normalize/fallback paths emit callback and persist normalized value (unless `Ext`).
@@ -316,6 +318,19 @@ Element state sync contract (core stateful elements):
 - methods: `Log(level,text), Info, Warn, Error, Clear, SetCaptureMode, GetEntries`
 - global mode uses `LogService.MessageOut` (all output)
 - persist: full retained entries (`MaxEntries` cap)
+
+`CreateLoadingSpinner(settings)`:
+- `Name, Flag?, Size, Thickness, Speed, AutoStart, Color, Callback, ParentSection?`
+- methods: `Start, Stop, IsRunning, SetSpeed, GetSpeed, SetColor, SetSize`
+- persist (optional): only when `Flag` is present
+
+`CreateLoadingBar(settings)`:
+- `Name, Flag?, Mode("indeterminate"|"determinate"), AutoStart, Speed, ChunkScale, Progress, ShowLabel, LabelFormatter, Height, Callback, ParentSection?`
+- hybrid behavior:
+  - default mode: `indeterminate`
+  - `SetProgress(number)` auto-switches to `determinate`
+- methods: `Start, Stop, IsRunning, SetMode, GetMode, SetProgress, GetProgress, SetSpeed, SetLabel`
+- persist (optional): only when `Flag` is present
 
 ## Enhanced Wrapper (`rayfield-enhanced.lua`)
 

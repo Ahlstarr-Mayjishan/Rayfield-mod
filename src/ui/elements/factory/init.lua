@@ -184,6 +184,34 @@ function ElementsModule.init(ctx)
 		return numberValue
 	end
 
+	local function packColor3(colorValue)
+		if typeof(colorValue) ~= "Color3" then
+			return nil
+		end
+		return {
+			R = math.floor((colorValue.R * 255) + 0.5),
+			G = math.floor((colorValue.G * 255) + 0.5),
+			B = math.floor((colorValue.B * 255) + 0.5)
+		}
+	end
+
+	local function unpackColor3(colorValue)
+		if type(colorValue) ~= "table" then
+			return nil
+		end
+		local r = tonumber(colorValue.R)
+		local g = tonumber(colorValue.G)
+		local b = tonumber(colorValue.B)
+		if not (r and g and b) then
+			return nil
+		end
+		return Color3.fromRGB(
+			math.clamp(math.floor(r + 0.5), 0, 255),
+			math.clamp(math.floor(g + 0.5), 0, 255),
+			math.clamp(math.floor(b + 0.5), 0, 255)
+		)
+	end
+
 	local function roundToPrecision(value, precision)
 		local digits = math.max(0, math.floor(tonumber(precision) or 0))
 		local scale = 10 ^ digits
@@ -1331,6 +1359,8 @@ function ElementsModule.init(ctx)
 					or controlRecord.Type == "Image"
 					or controlRecord.Type == "Chart"
 					or controlRecord.Type == "LogConsole"
+					or controlRecord.Type == "LoadingSpinner"
+					or controlRecord.Type == "LoadingBar"
 				)
 				if canAttachPinButton then
 					local pinButton = Instance.new("TextButton")
@@ -2191,6 +2221,31 @@ function ElementsModule.init(ctx)
 				self.Rayfield.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 					pcall(handler)
 				end)
+			end
+
+			local function startRenderLoop(loopState, stepFn)
+				if type(loopState) ~= "table" or type(stepFn) ~= "function" then
+					return false, "Invalid render loop setup."
+				end
+				if loopState.Connection then
+					return true, "already_running"
+				end
+				loopState.Connection = self.RunService.RenderStepped:Connect(function(deltaTime)
+					pcall(stepFn, deltaTime)
+				end)
+				return true, "ok"
+			end
+
+			local function stopRenderLoop(loopState)
+				if type(loopState) ~= "table" then
+					return false, "Invalid render loop state."
+				end
+				if loopState.Connection then
+					loopState.Connection:Disconnect()
+					loopState.Connection = nil
+					return true, "ok"
+				end
+				return true, "already_stopped"
 			end
 
 			function Tab:CreateNumberStepper(stepperSettings)
@@ -3646,6 +3701,567 @@ function ElementsModule.init(ctx)
 					self.RayfieldLibrary.Flags[console.Flag] = console
 				end
 				return console
+			end
+
+			function Tab:CreateLoadingSpinner(spinnerSettings)
+				local settingsValue = spinnerSettings or {}
+				local spinner = {}
+				spinner.Name = tostring(settingsValue.Name or "Loading Spinner")
+				spinner.Flag = settingsValue.Flag
+
+				local spinnerSize = math.floor(clampNumber(settingsValue.Size, 14, 64, 26))
+				local spinnerThickness = clampNumber(settingsValue.Thickness, 1, 8, 3)
+				local spinnerSpeed = clampNumber(settingsValue.Speed, 0.1, 8, 1.2)
+				local running = settingsValue.AutoStart ~= false
+				local customColor = typeof(settingsValue.Color) == "Color3" and settingsValue.Color or nil
+				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+				local rotation = 0
+				local loopState = {}
+
+				local root = Instance.new("Frame")
+				root.Name = spinner.Name
+				root.Size = UDim2.new(1, -10, 0, 44)
+				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 6)
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().ElementStroke
+				stroke.Parent = root
+
+				local title = Instance.new("TextLabel")
+				title.BackgroundTransparency = 1
+				title.Position = UDim2.new(0, 10, 0, 0)
+				title.Size = UDim2.new(1, -70, 1, 0)
+				title.TextXAlignment = Enum.TextXAlignment.Left
+				title.Font = Enum.Font.GothamMedium
+				title.TextSize = 13
+				title.TextColor3 = self.getSelectedTheme().TextColor
+				title.Text = spinner.Name
+				title.Parent = root
+
+				local spinnerHost = Instance.new("Frame")
+				spinnerHost.Name = "SpinnerHost"
+				spinnerHost.AnchorPoint = Vector2.new(1, 0.5)
+				spinnerHost.Position = UDim2.new(1, -12, 0.5, 0)
+				spinnerHost.Size = UDim2.new(0, spinnerSize, 0, spinnerSize)
+				spinnerHost.BackgroundTransparency = 1
+				spinnerHost.Parent = root
+
+				local ring = Instance.new("Frame")
+				ring.Name = "Ring"
+				ring.Size = UDim2.new(1, 0, 1, 0)
+				ring.BackgroundTransparency = 1
+				ring.BorderSizePixel = 0
+				ring.Parent = spinnerHost
+
+				local ringCorner = Instance.new("UICorner")
+				ringCorner.CornerRadius = UDim.new(1, 0)
+				ringCorner.Parent = ring
+
+				local ringStroke = Instance.new("UIStroke")
+				ringStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				ringStroke.Thickness = spinnerThickness
+				ringStroke.Transparency = 0.55
+				ringStroke.Parent = ring
+
+				local dot = Instance.new("Frame")
+				dot.Name = "Dot"
+				dot.Size = UDim2.new(0, math.max(4, math.floor(spinnerThickness * 1.9)), 0, math.max(4, math.floor(spinnerThickness * 1.9)))
+				dot.BackgroundColor3 = self.getSelectedTheme().LoadingSpinner or self.getSelectedTheme().SliderProgress
+				dot.BorderSizePixel = 0
+				dot.Parent = spinnerHost
+
+				local dotCorner = Instance.new("UICorner")
+				dotCorner.CornerRadius = UDim.new(1, 0)
+				dotCorner.Parent = dot
+
+				local function resolveSpinnerColor()
+					return customColor or self.getSelectedTheme().LoadingSpinner or self.getSelectedTheme().SliderProgress
+				end
+
+				local function updateSpinnerPosition()
+					local hostWidth = math.max(1, spinnerHost.AbsoluteSize.X)
+					local hostHeight = math.max(1, spinnerHost.AbsoluteSize.Y)
+					local dotSize = math.max(4, math.floor(spinnerThickness * 1.9))
+					dot.Size = UDim2.new(0, dotSize, 0, dotSize)
+					local radius = math.max(3, math.min(hostWidth, hostHeight) * 0.5 - math.max(dotSize * 0.55, spinnerThickness))
+					local centerX = hostWidth * 0.5
+					local centerY = hostHeight * 0.5
+					local x = centerX + math.cos(rotation) * radius - (dotSize * 0.5)
+					local y = centerY + math.sin(rotation) * radius - (dotSize * 0.5)
+					dot.Position = UDim2.new(0, x, 0, y)
+				end
+
+				local function applySpinnerVisual()
+					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+					stroke.Color = self.getSelectedTheme().ElementStroke
+					title.TextColor3 = self.getSelectedTheme().TextColor
+					ringStroke.Color = self.getSelectedTheme().LoadingTrack or self.getSelectedTheme().SliderBackground
+					ringStroke.Thickness = spinnerThickness
+					dot.BackgroundColor3 = resolveSpinnerColor()
+					spinnerHost.Size = UDim2.new(0, spinnerSize, 0, spinnerSize)
+					updateSpinnerPosition()
+				end
+
+				local function getStateSnapshot()
+					return {
+						running = running == true,
+						speed = spinnerSpeed,
+						size = spinnerSize,
+						thickness = spinnerThickness
+					}
+				end
+
+				local function emitStateChanged(persist)
+					local okCallback, callbackErr = pcall(callback, cloneSerializable(getStateSnapshot()))
+					if not okCallback then
+						warn("Rayfield | LoadingSpinner callback failed: " .. tostring(callbackErr))
+					end
+					if persist ~= false and settingsValue.Ext ~= true then
+						self.SaveConfiguration()
+					end
+				end
+
+				local function stepSpinner(deltaTime)
+					if running ~= true then
+						return
+					end
+					rotation += (deltaTime * spinnerSpeed * math.pi * 2)
+					if rotation > (math.pi * 2) then
+						rotation -= (math.pi * 2)
+					end
+					updateSpinnerPosition()
+				end
+
+				function spinner:Start(persist)
+					if running == true then
+						startRenderLoop(loopState, stepSpinner)
+						return true, "already_running"
+					end
+					running = true
+					startRenderLoop(loopState, stepSpinner)
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function spinner:Stop(persist)
+					if running ~= true then
+						stopRenderLoop(loopState)
+						return true, "already_stopped"
+					end
+					running = false
+					stopRenderLoop(loopState)
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function spinner:IsRunning()
+					return running == true and loopState.Connection ~= nil
+				end
+
+				function spinner:SetSpeed(nextSpeed, persist)
+					spinnerSpeed = clampNumber(nextSpeed, 0.1, 8, spinnerSpeed)
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function spinner:GetSpeed()
+					return spinnerSpeed
+				end
+
+				function spinner:SetColor(nextColor, persist)
+					if typeof(nextColor) ~= "Color3" then
+						return false, "SetColor expects Color3."
+					end
+					customColor = nextColor
+					applySpinnerVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function spinner:SetSize(nextSize, persist)
+					spinnerSize = math.floor(clampNumber(nextSize, 14, 64, spinnerSize))
+					applySpinnerVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function spinner:GetPersistValue()
+					local snapshot = getStateSnapshot()
+					local packed = packColor3(customColor)
+					if packed then
+						snapshot.colorPacked = packed
+					end
+					return snapshot
+				end
+
+				function spinner:Set(value)
+					if type(value) ~= "table" then
+						return
+					end
+					if value.size ~= nil then
+						spinnerSize = math.floor(clampNumber(value.size, 14, 64, spinnerSize))
+					end
+					if value.thickness ~= nil then
+						spinnerThickness = clampNumber(value.thickness, 1, 8, spinnerThickness)
+					end
+					if value.speed ~= nil then
+						spinnerSpeed = clampNumber(value.speed, 0.1, 8, spinnerSpeed)
+					end
+					if value.colorPacked ~= nil then
+						customColor = unpackColor3(value.colorPacked) or customColor
+					elseif typeof(value.color) == "Color3" then
+						customColor = value.color
+					end
+					applySpinnerVisual()
+					if value.running == true then
+						spinner:Start(false)
+					elseif value.running == false then
+						spinner:Stop(false)
+					else
+						emitStateChanged(false)
+					end
+				end
+
+				function spinner:Destroy()
+					stopRenderLoop(loopState)
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					applySpinnerVisual()
+				end)
+
+				resolveElementParentFromSettings(spinner, settingsValue)
+				applySpinnerVisual()
+				if running == true then
+					startRenderLoop(loopState, stepSpinner)
+				end
+				addExtendedAPI(spinner, spinner.Name, "LoadingSpinner", root)
+				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and spinner.Flag then
+					self.RayfieldLibrary.Flags[spinner.Flag] = spinner
+				end
+				return spinner
+			end
+
+			function Tab:CreateLoadingBar(barSettings)
+				local settingsValue = barSettings or {}
+				local loadingBar = {}
+				loadingBar.Name = tostring(settingsValue.Name or "Loading Bar")
+				loadingBar.Flag = settingsValue.Flag
+
+				local mode = tostring(settingsValue.Mode or "indeterminate"):lower()
+				if mode ~= "indeterminate" and mode ~= "determinate" then
+					mode = "indeterminate"
+				end
+				local speed = clampNumber(settingsValue.Speed, 0.1, 6, 1.1)
+				local chunkScale = clampNumber(settingsValue.ChunkScale, 0.1, 0.8, 0.35)
+				local progress = clampNumber(settingsValue.Progress, 0, 1, 0)
+				local showLabel = settingsValue.ShowLabel == true
+				local customLabel = nil
+				local labelFormatter = type(settingsValue.LabelFormatter) == "function" and settingsValue.LabelFormatter or nil
+				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+				local running = mode == "indeterminate" and settingsValue.AutoStart ~= false
+				local loopState = {}
+				local animationPhase = 0
+				local barHeight = math.floor(clampNumber(settingsValue.Height, 12, 40, 18))
+
+				local root = Instance.new("Frame")
+				root.Name = loadingBar.Name
+				root.Size = UDim2.new(1, -10, 0, math.max(44, barHeight + 26))
+				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 6)
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().ElementStroke
+				stroke.Parent = root
+
+				local title = Instance.new("TextLabel")
+				title.BackgroundTransparency = 1
+				title.Position = UDim2.new(0, 10, 0, 0)
+				title.Size = UDim2.new(0.65, 0, 0, 20)
+				title.TextXAlignment = Enum.TextXAlignment.Left
+				title.Font = Enum.Font.GothamMedium
+				title.TextSize = 13
+				title.TextColor3 = self.getSelectedTheme().TextColor
+				title.Text = loadingBar.Name
+				title.Parent = root
+
+				local statusLabel = Instance.new("TextLabel")
+				statusLabel.BackgroundTransparency = 1
+				statusLabel.AnchorPoint = Vector2.new(1, 0)
+				statusLabel.Position = UDim2.new(1, -10, 0, 2)
+				statusLabel.Size = UDim2.new(0.35, -4, 0, 18)
+				statusLabel.TextXAlignment = Enum.TextXAlignment.Right
+				statusLabel.Font = Enum.Font.Gotham
+				statusLabel.TextSize = 11
+				statusLabel.TextColor3 = self.getSelectedTheme().LoadingText or self.getSelectedTheme().TextColor
+				statusLabel.Visible = showLabel
+				statusLabel.Parent = root
+
+				local track = Instance.new("Frame")
+				track.Name = "Track"
+				track.Position = UDim2.new(0, 10, 0, 22)
+				track.Size = UDim2.new(1, -20, 0, barHeight)
+				track.BackgroundColor3 = self.getSelectedTheme().LoadingTrack or self.getSelectedTheme().SliderBackground
+				track.BorderSizePixel = 0
+				track.ClipsDescendants = true
+				track.Parent = root
+
+				local trackCorner = Instance.new("UICorner")
+				trackCorner.CornerRadius = UDim.new(0, math.max(4, math.floor(barHeight * 0.5)))
+				trackCorner.Parent = track
+
+				local fill = Instance.new("Frame")
+				fill.Name = "Fill"
+				fill.Size = UDim2.new(progress, 0, 1, 0)
+				fill.BackgroundColor3 = self.getSelectedTheme().LoadingBar or self.getSelectedTheme().SliderProgress
+				fill.BorderSizePixel = 0
+				fill.Parent = track
+
+				local fillCorner = Instance.new("UICorner")
+				fillCorner.CornerRadius = UDim.new(0, math.max(4, math.floor(barHeight * 0.5)))
+				fillCorner.Parent = fill
+
+				local chunk = Instance.new("Frame")
+				chunk.Name = "Chunk"
+				chunk.Size = UDim2.new(chunkScale, 0, 1, 0)
+				chunk.Position = UDim2.new(0, 0, 0, 0)
+				chunk.BackgroundColor3 = self.getSelectedTheme().LoadingBar or self.getSelectedTheme().SliderProgress
+				chunk.BorderSizePixel = 0
+				chunk.Parent = track
+
+				local chunkCorner = Instance.new("UICorner")
+				chunkCorner.CornerRadius = UDim.new(0, math.max(4, math.floor(barHeight * 0.5)))
+				chunkCorner.Parent = chunk
+
+				local function getStateSnapshot()
+					return {
+						mode = mode,
+						running = running == true and mode == "indeterminate",
+						progress = progress,
+						speed = speed,
+						chunkScale = chunkScale,
+						label = customLabel
+					}
+				end
+
+				local function emitStateChanged(persist)
+					local okCallback, callbackErr = pcall(callback, cloneSerializable(getStateSnapshot()))
+					if not okCallback then
+						warn("Rayfield | LoadingBar callback failed: " .. tostring(callbackErr))
+					end
+					if persist ~= false and settingsValue.Ext ~= true then
+						self.SaveConfiguration()
+					end
+				end
+
+				local function formatLabelText()
+					if customLabel and customLabel ~= "" then
+						return customLabel
+					end
+					local percent = math.floor((progress * 100) + 0.5)
+					if labelFormatter then
+						local okFormat, formatted = pcall(labelFormatter, progress, percent, mode)
+						if okFormat and formatted ~= nil then
+							return tostring(formatted)
+						end
+					end
+					if mode == "determinate" then
+						return tostring(percent) .. "%"
+					end
+					return "Loading..."
+				end
+
+				local function updateBarVisual()
+					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+					stroke.Color = self.getSelectedTheme().ElementStroke
+					title.TextColor3 = self.getSelectedTheme().TextColor
+					statusLabel.TextColor3 = self.getSelectedTheme().LoadingText or self.getSelectedTheme().TextColor
+					statusLabel.Visible = showLabel
+					if showLabel then
+						statusLabel.Text = formatLabelText()
+					end
+					track.BackgroundColor3 = self.getSelectedTheme().LoadingTrack or self.getSelectedTheme().SliderBackground
+					fill.BackgroundColor3 = self.getSelectedTheme().LoadingBar or self.getSelectedTheme().SliderProgress
+					chunk.BackgroundColor3 = self.getSelectedTheme().LoadingBar or self.getSelectedTheme().SliderProgress
+					fill.Visible = mode == "determinate"
+					chunk.Visible = mode == "indeterminate" and running == true
+					if mode == "determinate" then
+						fill.Size = UDim2.new(progress, 0, 1, 0)
+					end
+				end
+
+				local function stepBar(deltaTime)
+					if mode ~= "indeterminate" or running ~= true then
+						return
+					end
+					local trackWidth = math.max(1, track.AbsoluteSize.X)
+					local chunkWidth = math.max(8, math.floor(trackWidth * chunkScale))
+					chunk.Size = UDim2.new(0, chunkWidth, 1, 0)
+					animationPhase = (animationPhase + (deltaTime * speed)) % 2
+					local t = animationPhase
+					if t > 1 then
+						t = 2 - t
+					end
+					local usableWidth = math.max(0, trackWidth - chunkWidth)
+					local x = math.floor(usableWidth * t + 0.5)
+					chunk.Position = UDim2.new(0, x, 0, 0)
+				end
+
+				function loadingBar:Start(persist)
+					if mode ~= "indeterminate" then
+						return false, "Start is available only in indeterminate mode."
+					end
+					if running == true then
+						startRenderLoop(loopState, stepBar)
+						return true, "already_running"
+					end
+					running = true
+					startRenderLoop(loopState, stepBar)
+					updateBarVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:Stop(persist)
+					if running ~= true then
+						stopRenderLoop(loopState)
+						return true, "already_stopped"
+					end
+					running = false
+					stopRenderLoop(loopState)
+					updateBarVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:IsRunning()
+					return mode == "indeterminate" and running == true and loopState.Connection ~= nil
+				end
+
+				function loadingBar:SetMode(nextMode, persist)
+					local normalized = tostring(nextMode or ""):lower()
+					if normalized ~= "indeterminate" and normalized ~= "determinate" then
+						return false, "Invalid mode."
+					end
+					mode = normalized
+					if mode ~= "indeterminate" then
+						running = false
+						stopRenderLoop(loopState)
+					end
+					updateBarVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:GetMode()
+					return mode
+				end
+
+				function loadingBar:SetProgress(nextProgress, persist)
+					progress = clampNumber(nextProgress, 0, 1, progress)
+					if mode ~= "determinate" then
+						mode = "determinate"
+						running = false
+						stopRenderLoop(loopState)
+					end
+					updateBarVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:GetProgress()
+					return progress
+				end
+
+				function loadingBar:SetSpeed(nextSpeed, persist)
+					speed = clampNumber(nextSpeed, 0.1, 6, speed)
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:SetLabel(text, persist)
+					if not showLabel then
+						return false, "ShowLabel is disabled."
+					end
+					customLabel = tostring(text or "")
+					updateBarVisual()
+					emitStateChanged(persist ~= false)
+					return true, "ok"
+				end
+
+				function loadingBar:GetPersistValue()
+					return getStateSnapshot()
+				end
+
+				function loadingBar:Set(value)
+					if type(value) ~= "table" then
+						return
+					end
+					if value.mode ~= nil then
+						local normalized = tostring(value.mode):lower()
+						if normalized == "indeterminate" or normalized == "determinate" then
+							mode = normalized
+						end
+					end
+					if value.speed ~= nil then
+						speed = clampNumber(value.speed, 0.1, 6, speed)
+					end
+					if value.chunkScale ~= nil then
+						chunkScale = clampNumber(value.chunkScale, 0.1, 0.8, chunkScale)
+					end
+					if value.progress ~= nil then
+						progress = clampNumber(value.progress, 0, 1, progress)
+					end
+					if value.label ~= nil then
+						customLabel = tostring(value.label or "")
+					end
+					if value.running == true and mode == "indeterminate" then
+						running = true
+					elseif value.running == false or mode ~= "indeterminate" then
+						running = false
+					end
+					updateBarVisual()
+					if mode == "indeterminate" and running == true then
+						startRenderLoop(loopState, stepBar)
+					else
+						stopRenderLoop(loopState)
+					end
+					emitStateChanged(false)
+				end
+
+				function loadingBar:Destroy()
+					stopRenderLoop(loopState)
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					updateBarVisual()
+				end)
+
+				resolveElementParentFromSettings(loadingBar, settingsValue)
+				updateBarVisual()
+				if mode == "indeterminate" and running == true then
+					startRenderLoop(loopState, stepBar)
+				end
+				addExtendedAPI(loadingBar, loadingBar.Name, "LoadingBar", root)
+				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and loadingBar.Flag then
+					self.RayfieldLibrary.Flags[loadingBar.Flag] = loadingBar
+				end
+				return loadingBar
 			end
 
 			-- Divider

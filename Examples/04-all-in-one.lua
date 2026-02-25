@@ -237,3 +237,56 @@ local console = Tab:CreateLogConsole({
 })
 console:Info("Log console ready.")
 console:Warn("This is a warning sample.")
+
+Tab:CreateSection("Element Loading Pack v1")
+
+local spinner = Tab:CreateLoadingSpinner({
+    Name = "Background Sync",
+    Speed = 1.5,
+    AutoStart = true
+})
+
+local loadingBar = Tab:CreateLoadingBar({
+    Name = "Data Import",
+    Mode = "indeterminate",
+    AutoStart = true,
+    ShowLabel = false
+})
+
+local labeledLoadingBar = Tab:CreateLoadingBar({
+    Name = "Patch Download",
+    Mode = "determinate",
+    Progress = 0.1,
+    ShowLabel = true
+})
+
+Tab:CreateButton({
+    Name = "Stop Spinner",
+    Callback = function()
+        spinner:Stop()
+    end
+})
+
+Tab:CreateButton({
+    Name = "Start Spinner",
+    Callback = function()
+        spinner:Start()
+    end
+})
+
+Tab:CreateButton({
+    Name = "Set Progress 42%",
+    Callback = function()
+        local ok, message = loadingBar:SetProgress(0.42)
+        print("LoadingBar:SetProgress:", ok, message, "mode=", loadingBar:GetMode())
+    end
+})
+
+Tab:CreateButton({
+    Name = "Update Labeled Bar 75%",
+    Callback = function()
+        labeledLoadingBar:SetProgress(0.75)
+        labeledLoadingBar:SetLabel("Downloading 75%")
+        print("Labeled loading bar progress:", labeledLoadingBar:GetProgress())
+    end
+})

@@ -49,7 +49,7 @@ local function listSrcFiles()
 	local files = {}
 	for line in p:lines() do
 		if #line > 0 then
-			table.insert(files, line:gsub("\\", "/"))
+			table.insert(files, (line:gsub("\\", "/")))
 		end
 	end
 	p:close()

@@ -9,6 +9,7 @@ function ConfigModule.init(ctx)
 	-- Inject dependencies
 	self.HttpService = ctx.HttpService
 	self.TweenService = ctx.TweenService
+	self.Animation = ctx.Animation
 	self.RayfieldLibrary = ctx.RayfieldLibrary
 	self.callSafely = ctx.callSafely
 	self.ConfigurationFolder = ctx.ConfigurationFolder
@@ -161,9 +162,12 @@ function ConfigModule.init(ctx)
 			return
 		end
 		local okTween, tween = pcall(function()
-			return self.TweenService:Create(instance, tweenInfo, {
-				[propertyName] = toValue
-			})
+			if self.Animation and type(self.Animation.Create) == "function" then
+				return self.Animation:Create(instance, tweenInfo, {
+					[propertyName] = toValue
+				})
+			end
+			return nil
 		end)
 		if okTween and tween then
 			tween:Play()

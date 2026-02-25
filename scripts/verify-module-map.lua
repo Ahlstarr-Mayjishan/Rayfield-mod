@@ -21,7 +21,7 @@ end
 
 local function parseManifestPaths(content)
 	local paths = {}
-	for _, path in content:gmatch('"[%w_%-]+"%s*:%s*"([^"]+)"') do
+	for path in content:gmatch('"[%w_%-]+"%s*:%s*"([^"]+)"') do
 		if path:match("^src/") then
 			paths[path] = true
 		end

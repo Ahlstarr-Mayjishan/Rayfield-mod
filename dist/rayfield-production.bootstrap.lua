@@ -5,25 +5,25 @@ _G.__RAYFIELD_BUNDLE_MODE = "bundle_first"
 
 local compileString = loadstring or load
 if not compileString then
-    error("No Lua compiler function available (loadstring/load)")
+	error("No Lua compiler function available (loadstring/load)")
 end
 
 local function compileChunk(source, label)
-    if type(source) ~= "string" then
-        error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
-    end
-    source = source:gsub("^\239\187\191", "")
-    source = source:gsub("^\0+", "")
-    local chunk, err = compileString(source)
-    if not chunk then
-        error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
-    end
-    return chunk
+	if type(source) ~= "string" then
+		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
+	end
+	source = source:gsub("^\239\187\191", "")
+	source = source:gsub("^\0+", "")
+	local chunk, err = compileString(source)
+	if not chunk then
+		error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
+	end
+	return chunk
 end
 
 local function loadRemoteLua(path)
-    local source = game:HttpGet(ROOT .. path)
-    return compileChunk(source, path)()
+	local source = game:HttpGet(ROOT .. path)
+	return compileChunk(source, path)()
 end
 
 loadRemoteLua("dist/rayfield-runtime-core.bundle.lua")
@@ -32,6 +32,6 @@ loadRemoteLua("dist/rayfield-runtime-ui.bundle.lua")
 local bundle = _G.__RAYFIELD_BUNDLE_SOURCES or {}
 local entrySource = bundle["Main loader/rayfield-modified.lua"]
 if type(entrySource) ~= "string" then
-    entrySource = game:HttpGet(ROOT .. "Main%20loader/rayfield-modified.lua")
+	entrySource = game:HttpGet(ROOT .. "Main%20loader/rayfield-modified.lua")
 end
 return compileChunk(entrySource, "Main loader/rayfield-modified.lua")()

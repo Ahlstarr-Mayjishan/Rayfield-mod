@@ -956,6 +956,7 @@ local SettingsSystem = SettingsModuleLib.init({
 local ConfigSystem = ConfigModuleLib.init({
 	HttpService = HttpService,
 	TweenService = TweenService,
+	Animation = Animation,
 	RayfieldLibrary = RayfieldLibrary,
 	callSafely = callSafely,
 	ConfigurationFolder = ConfigurationFolder,

@@ -1,0 +1,40 @@
+name: Feature Request
+description: Propose a new feature or API improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem clearly and focus on concrete API/runtime impact.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What limitation are you hitting today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Include API shape (settings/methods), defaults, and behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility / Migration Impact
+      description: Note whether the change is additive or breaking.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Suggested Tests
+      description: Smoke/regression scenarios to validate this feature.

@@ -1,0 +1,67 @@
+# Contributing
+
+Thanks for contributing to Rayfield Mod.
+
+## Scope
+- Canonical source lives in `src/`.
+- Loader compatibility layers live in `Main loader/` and `feature/`.
+- Tests and verification live in `tests/` and `scripts/`.
+
+## Prerequisites
+- Git
+- Lua 5.4 CLI (`lua`, `luac`)
+
+## Local Validation
+Run these before opening a PR:
+
+```bash
+lua scripts/verify-module-map.lua
+lua scripts/verify-no-direct-httpget.lua
+lua scripts/verify-no-direct-tweencreate.lua
+lua scripts/build-bundle.lua
+```
+
+Install local pre-push hooks once:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+Optional lint/format checks:
+
+```bash
+luacheck --config .luacheckrc src scripts tests "Main loader" feature
+selene src
+stylua --check .
+```
+
+Optional syntax pass:
+
+```bash
+find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
+```
+
+## Coding Rules
+- Keep behavior additive unless a breaking change is explicitly planned.
+- Do not bypass API client boundaries with direct `HttpGet` in runtime modules.
+- Do not bypass animation wrapper with direct `TweenService:Create` where project rules disallow it.
+- Keep loader/runtime compatibility with executor environments (`loadstring`, `game:HttpGet`).
+- Update docs for public API changes in `Documentation/API.md`.
+- Add or update smoke/regression coverage when adding element contracts.
+
+## Pull Requests
+- Use focused PRs (one feature/fix group per PR).
+- Include:
+  - Problem statement
+  - What changed
+  - Risk / compatibility impact
+  - Test evidence (commands and results)
+- If build outputs are affected, include generated artifacts in the same PR.
+
+## Commit Guidance
+- Prefer short, imperative commit subjects.
+- Keep unrelated refactors out of feature commits.
+
+## Security
+- Do not post exploit details or sensitive bypass chains in public issues.
+- Report vulnerabilities via the process in `SECURITY.md`.

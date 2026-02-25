@@ -63,6 +63,8 @@ assertTrue(type(Tab.CreateConfirmButton) == "function", "CreateConfirmButton mis
 assertTrue(type(Tab.CreateCollapsibleSection) == "function", "CreateCollapsibleSection missing")
 assertTrue(type(Tab.CreateGallery) == "function", "CreateGallery missing")
 assertTrue(type(Tab.CreateImage) == "function", "CreateImage missing")
+assertTrue(type(Tab.CreateLoadingSpinner) == "function", "CreateLoadingSpinner missing")
+assertTrue(type(Tab.CreateLoadingBar) == "function", "CreateLoadingBar missing")
 
 local dropdown = Tab:CreateDropdown({
 	Name = "Search Dropdown",
@@ -157,6 +159,43 @@ assertTrue(type(logConsole.SetCaptureMode) == "function", "LogConsole:SetCapture
 assertTrue(type(logConsole.GetEntries) == "function", "LogConsole:GetEntries missing")
 logConsole:Info("hello")
 logConsole:SetCaptureMode("both")
+
+local spinner = Tab:CreateLoadingSpinner({
+	Name = "Spinner",
+	AutoStart = true,
+	Speed = 1.4,
+	Flag = "spinnerFlag"
+})
+assertTrue(type(spinner.Start) == "function", "LoadingSpinner:Start missing")
+assertTrue(type(spinner.Stop) == "function", "LoadingSpinner:Stop missing")
+assertTrue(type(spinner.IsRunning) == "function", "LoadingSpinner:IsRunning missing")
+assertTrue(type(spinner.SetSpeed) == "function", "LoadingSpinner:SetSpeed missing")
+assertTrue(type(spinner.GetSpeed) == "function", "LoadingSpinner:GetSpeed missing")
+spinner:Stop()
+spinner:Start()
+spinner:SetSpeed(2)
+assertTrue(spinner:GetSpeed() >= 0.1, "LoadingSpinner speed clamp failed")
+
+local loadingBar = Tab:CreateLoadingBar({
+	Name = "Loader",
+	Mode = "indeterminate",
+	AutoStart = true,
+	ShowLabel = false,
+	Flag = "loadingBarFlag"
+})
+assertTrue(type(loadingBar.SetMode) == "function", "LoadingBar:SetMode missing")
+assertTrue(type(loadingBar.GetMode) == "function", "LoadingBar:GetMode missing")
+assertTrue(type(loadingBar.SetProgress) == "function", "LoadingBar:SetProgress missing")
+assertTrue(type(loadingBar.GetProgress) == "function", "LoadingBar:GetProgress missing")
+assertTrue(type(loadingBar.Start) == "function", "LoadingBar:Start missing")
+assertTrue(type(loadingBar.Stop) == "function", "LoadingBar:Stop missing")
+local okProgress = select(1, loadingBar:SetProgress(0.5))
+assertTrue(okProgress == true, "LoadingBar:SetProgress failed")
+assertTrue(loadingBar:GetMode() == "determinate", "LoadingBar did not switch to determinate")
+local okMode = select(1, loadingBar:SetMode("indeterminate"))
+assertTrue(okMode == true, "LoadingBar:SetMode failed")
+local okStart = select(1, loadingBar:Start())
+assertTrue(okStart == true, "LoadingBar:Start failed")
 
 local okTooltip = select(1, stepper:SetTooltip("Tooltip text"))
 assertTrue(okTooltip == true, "Element:SetTooltip failed")

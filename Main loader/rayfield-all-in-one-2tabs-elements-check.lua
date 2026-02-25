@@ -571,6 +571,21 @@ settingsLogConsole = tabSettings:CreateLogConsole({
 	MaxEntries = 120,
 	ShowTimestamp = true
 })
+
+local settingsSpinner = tabSettings:CreateLoadingSpinner({
+	Name = "Settings Spinner",
+	Speed = 1.3,
+	AutoStart = true,
+	Flag = "settingsSpinnerFlag"
+})
+
+local settingsLoadingBar = tabSettings:CreateLoadingBar({
+	Name = "Settings Loading Bar",
+	Mode = "indeterminate",
+	AutoStart = true,
+	ShowLabel = false,
+	Flag = "settingsLoadingBarFlag"
+})
 settingsLog("info", "Settings tab initialized.")
 
 -- Feature + logic checks
@@ -674,6 +689,31 @@ runCheck("Keybind toggle aliases available", function()
 		and type(tabSettings.CreateHotToggle) == "function"
 		and type(tabSettings.CreateKeybindToggle) == "function"
 		and type(keybindToggle.GetKeybind) == "function"
+end)
+
+runCheck("Loading elements API available", function()
+	return type(tabSettings.CreateLoadingSpinner) == "function"
+		and type(tabSettings.CreateLoadingBar) == "function"
+		and type(settingsSpinner.Start) == "function"
+		and type(settingsSpinner.Stop) == "function"
+		and type(settingsLoadingBar.SetMode) == "function"
+		and type(settingsLoadingBar.SetProgress) == "function"
+end)
+
+runCheck("Loading bar hybrid behavior", function()
+	local okProgress, _ = settingsLoadingBar:SetProgress(0.5)
+	if not okProgress then
+		return false
+	end
+	if settingsLoadingBar:GetMode() ~= "determinate" then
+		return false
+	end
+	local okMode, _ = settingsLoadingBar:SetMode("indeterminate")
+	if not okMode then
+		return false
+	end
+	local okStart, _ = settingsLoadingBar:Start()
+	return okStart == true
 end)
 
 runCheck("ExportSettings returns code", function()
@@ -780,7 +820,9 @@ return {
 			Image = settingsImage,
 			Gallery = settingsGallery,
 			Chart = settingsChart,
-			LogConsole = settingsLogConsole
+			LogConsole = settingsLogConsole,
+			Spinner = settingsSpinner,
+			LoadingBar = settingsLoadingBar
 		}
 	},
 	CheckState = checkState,

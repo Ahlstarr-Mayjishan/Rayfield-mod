@@ -28,6 +28,15 @@ local CORE_EXACT = {
 local MODULE_MAP_PATH = "src/entry/module-map.lua"
 local sortUnique
 
+local function decodeUrlPath(value)
+	if type(value) ~= "string" then
+		return value
+	end
+	return (value:gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end))
+end
+
 local function readFile(path)
 	local file, err = io.open(path, "rb")
 	if not file then
@@ -98,7 +107,7 @@ local function listModuleMapPaths()
 		if type(mapping) == "table" then
 			for _, candidate in ipairs(mapping) do
 				if type(candidate) == "string" and candidate:match("%.lua$") then
-					table.insert(paths, candidate:gsub("\\", "/"))
+					table.insert(paths, (decodeUrlPath(candidate):gsub("\\", "/")))
 				end
 			end
 		end

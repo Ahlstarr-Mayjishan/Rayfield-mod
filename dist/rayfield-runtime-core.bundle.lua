@@ -4,20 +4,11 @@ _G.__RAYFIELD_BUNDLE_SOURCES = bundle
 _G.__RAYFIELD_BUNDLE_MODE = "bundle_first"
 
 local function put(path, source)
-    bundle[path] = source
+	bundle[path] = source
 end
 
 local BUNDLE_NAME = "rayfield-runtime-core"
 
-put("feature/rayfield-all-in-one.lua", [[local compileString = loadstring or load
-if not compileString then
-	error("No Lua compiler function available (loadstring/load)")
-end
-
-local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local Forward = compileString(game:HttpGet(root .. "src/legacy/forward.lua"))()
-return Forward.module("allInOne")
-]])
 put("Main loader/rayfield-all-in-one.lua", [[local compileString = loadstring or load
 if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
@@ -50,6 +41,10 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+local function formatBootstrapError(code, message)
+	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_BOOTSTRAP"), tostring(message or "Unknown bootstrap error"))
+end
+
 local function compileChunk(source, label)
 	if type(source) ~= "string" then
 		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
@@ -62,15 +57,48 @@ local function compileChunk(source, label)
 	end
 	return chunk
 end
-	
-local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local forwardSource = game:HttpGet(root .. "src/legacy/forward.lua")
-if type(forwardSource) == "string" then
-	forwardSource = forwardSource:gsub("^\239\187\191", "")
-	forwardSource = forwardSource:gsub("^\0+", "")
+
+local function fetchSource(url, label)
+	local ok, body = pcall(game.HttpGet, game, url)
+	if not ok then
+		error(formatBootstrapError("E_BOOTSTRAP_FETCH", "Failed to fetch " .. tostring(label) .. ": " .. tostring(body)))
+	end
+	if type(body) ~= "string" or #body == 0 then
+		error(formatBootstrapError("E_BOOTSTRAP_EMPTY", "Empty response for " .. tostring(label)))
+	end
+	return body
 end
-local Forward = compileChunk(forwardSource, "src/legacy/forward.lua")()
-return Forward.module("modifiedEntry")
+
+local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+
+local forwardOk, forwardResult = pcall(function()
+	local forwardSource = fetchSource(root .. "src/legacy/forward.lua", "src/legacy/forward.lua")
+	local Forward = compileChunk(forwardSource, "src/legacy/forward.lua")()
+	if type(Forward) ~= "table" or type(Forward.module) ~= "function" then
+		error(formatBootstrapError("E_BOOTSTRAP_FORWARD", "Invalid legacy forward contract"))
+	end
+	return Forward.module("modifiedEntry")
+end)
+
+if forwardOk then
+	return forwardResult
+end
+
+warn(formatBootstrapError("W_BOOTSTRAP_FORWARD_FALLBACK", "Legacy forward failed, trying direct entry fallback."))
+warn(formatBootstrapError("W_BOOTSTRAP_FORWARD_REASON", tostring(forwardResult)))
+
+local fallbackSource = fetchSource(root .. "src/entry/rayfield-modified.entry.lua", "src/entry/rayfield-modified.entry.lua")
+local fallback = compileChunk(fallbackSource, "src/entry/rayfield-modified.entry.lua")()
+return fallback
+]])
+put("feature/rayfield-all-in-one.lua", [[local compileString = loadstring or load
+if not compileString then
+	error("No Lua compiler function available (loadstring/load)")
+end
+
+local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+local Forward = compileString(game:HttpGet(root .. "src/legacy/forward.lua"))()
+return Forward.module("allInOne")
 ]])
 put("src/api/cache.lua", [[local Cache = {}
 
@@ -171,6 +199,9 @@ local function tryGetBundledSource(url, opts)
 	if path and broken and broken[path] then
 		return nil, path
 	end
+	if broken and broken[url] then
+		return nil, path
+	end
 
 	if path then
 		local byPath = bundle[path]
@@ -251,7 +282,11 @@ function Client.compile(code)
 	if not compileString then
 		error("No Lua compiler function available (loadstring/load)")
 	end
-	return compileString(code)
+	local chunk, compileError = compileString(code)
+	if not chunk then
+		error("Client.compile failed: " .. tostring(compileError))
+	end
+	return chunk
 end
 
 function Client.execute(code)
@@ -268,8 +303,11 @@ function Client.fetchAndExecute(url, opts)
 
 	if fromBundle then
 		local broken = getBrokenBundleMap()
-		if broken and bundlePath then
-			broken[bundlePath] = true
+		if broken then
+			if bundlePath then
+				broken[bundlePath] = true
+			end
+			broken[url] = true
 		end
 		local retryOpts = {}
 		for key, value in pairs(opts) do
@@ -291,9 +329,15 @@ return Client
 ]])
 put("src/api/errors.lua", [[local Errors = {}
 
+function Errors.tagged(code, message)
+	local safeCode = tostring(code or "E_UNKNOWN")
+	local safeMessage = tostring(message or "Unknown error")
+	return string.format("Rayfield Mod: [%s] %s", safeCode, safeMessage)
+end
+
 function Errors.moduleLoadError(moduleName, attempts)
 	attempts = attempts or {}
-	local msg = {"Rayfield module load failed: " .. tostring(moduleName)}
+	local msg = {Errors.tagged("E_MODULE_LOAD", "Failed to load module '" .. tostring(moduleName) .. "'")}
 	for _, attempt in ipairs(attempts) do
 		table.insert(msg, " - " .. tostring(attempt))
 	end
@@ -302,7 +346,43 @@ end
 
 return Errors
 ]])
-put("src/api/loader.lua", [[local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+put("src/api/loader.lua", [[local DEFAULT_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+
+local function normalizeRootUrl(rootUrl)
+	if type(rootUrl) ~= "string" or rootUrl == "" then
+		return DEFAULT_ROOT
+	end
+	if rootUrl:sub(-1) ~= "/" then
+		return rootUrl .. "/"
+	end
+	return rootUrl
+end
+
+local function compileChunk(source, label)
+	local compileString = loadstring or load
+	if not compileString then
+		error("No Lua compiler function available (loadstring/load)")
+	end
+	if type(source) == "string" then
+		source = source:gsub("^\239\187\191", "")
+		source = source:gsub("^\0+", "")
+	end
+	local chunk, err = compileString(source)
+	if not chunk then
+		error("Failed to compile " .. tostring(label or "chunk") .. ": " .. tostring(err))
+	end
+	return chunk
+end
+
+local function fetchAndCompile(url, label)
+	local source = game:HttpGet(url)
+	return compileChunk(source, label or url)()
+end
+
+local bootstrapRoot = normalizeRootUrl((_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or DEFAULT_ROOT)
+local Resolver = fetchAndCompile(bootstrapRoot .. "src/api/resolver.lua", "src/api/resolver.lua")
+local resolveRoot = (Resolver and Resolver.normalizeRuntimeRoot) or normalizeRootUrl
+local root = resolveRoot((Resolver and Resolver.getRuntimeRoot and Resolver.getRuntimeRoot()) or bootstrapRoot)
 
 if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
 	_G.__RAYFIELD_BUNDLE_MODE = _G.__RAYFIELD_BUNDLE_MODE or "bundle_first"
@@ -310,11 +390,7 @@ end
 
 local Client = (_G and _G.__RayfieldApiClient)
 if not Client then
-	local compileString = loadstring or load
-	if not compileString then
-		error("No Lua compiler function available (loadstring/load)")
-	end
-	Client = compileString(game:HttpGet(root .. "src/api/client.lua"))()
+	Client = fetchAndCompile(root .. "src/api/client.lua", "src/api/client.lua")
 	if _G then
 		_G.__RayfieldApiClient = Client
 	end
@@ -325,7 +401,6 @@ local function loadApiModule(relativePath)
 end
 
 local Cache = loadApiModule("src/api/cache.lua")
-local Resolver = loadApiModule("src/api/resolver.lua")
 local Registry = loadApiModule("src/api/registry.lua")
 local Errors = loadApiModule("src/api/errors.lua")
 
@@ -370,7 +445,24 @@ function Loader.load(moduleName, opts)
 	end
 	table.insert(attempts, tostring(canonicalPath) .. ": " .. tostring(result))
 
+	local legacyPath = mapping.legacy
+	if opts.allowLegacyFallback ~= false and type(legacyPath) == "string" and legacyPath ~= "" and legacyPath ~= canonicalPath then
+		local legacyOk, legacyResult = pcall(loadByPath, legacyPath)
+		if legacyOk then
+			return legacyResult
+		end
+		table.insert(attempts, tostring(legacyPath) .. ": " .. tostring(legacyResult))
+	end
+
 	error(Errors.moduleLoadError(moduleName, attempts))
+end
+
+function Loader.tryLoad(moduleName, opts)
+	local ok, result = pcall(Loader.load, moduleName, opts)
+	if ok then
+		return true, result
+	end
+	return false, tostring(result)
 end
 
 function Loader.loadPath(path)
@@ -383,42 +475,64 @@ end
 
 return Loader
 ]])
-put("src/api/registry.lua", [[return {
-	theme = { canonical = "src/services/theme.lua", legacy = "feature/rayfield-theme.lua", studio = "rayfield-theme" },
-	settings = { canonical = "src/services/settings.lua", legacy = "feature/rayfield-settings.lua", studio = "rayfield-settings" },
-	elementSync = { canonical = "src/services/element-sync.lua", legacy = "src/services/element-sync.lua", studio = "element-sync" },
-	keybindSequence = { canonical = "src/services/keybind-sequence.lua", legacy = "src/services/keybind-sequence.lua", studio = "keybind-sequence" },
-	drag = { canonical = "src/feature/drag/init.lua", legacy = "feature/rayfield-drag.lua", studio = "rayfield-drag" },
-	uiState = { canonical = "src/core/ui-state.lua", legacy = "feature/rayfield-ui-state.lua", studio = "rayfield-ui-state" },
-	elements = { canonical = "src/ui/elements/factory/init.lua", legacy = "feature/rayfield-elements.lua", studio = "rayfield-elements" },
-	elementsExtracted = { canonical = "src/ui/elements/widgets/index.lua", legacy = "feature/rayfield-elements-extracted.lua", studio = "rayfield-elements-extracted" },
-	widgetsBootstrap = { canonical = "src/ui/elements/widgets/bootstrap.lua", legacy = "src/ui/elements/widgets/bootstrap.lua", studio = "widgets-bootstrap" },
-	config = { canonical = "src/services/config.lua", legacy = "feature/rayfield-config.lua", studio = "rayfield-config" },
-	utilities = { canonical = "src/services/utilities.lua", legacy = "feature/rayfield-utilities.lua", studio = "rayfield-utilities" },
-	tabSplit = { canonical = "src/feature/tabsplit/init.lua", legacy = "feature/rayfield-tab-split.lua", studio = "rayfield-tab-split" },
-	miniWindow = { canonical = "src/feature/mini-window/init.lua", legacy = "feature/mini-window-system.lua", studio = "mini-window-system" },
-	enhanced = { canonical = "src/feature/enhanced/init.lua", legacy = "feature/rayfield-enhanced.lua", studio = "rayfield-enhanced" },
-	advanced = { canonical = "src/feature/enhanced/advanced.lua", legacy = "feature/rayfield-advanced-features.lua", studio = "rayfield-advanced-features" },
-	animationEngine = { canonical = "src/core/animation/engine.lua", legacy = "src/core/animation/engine.lua", studio = "animation-engine" },
-	animationPublic = { canonical = "src/core/animation/public.lua", legacy = "src/core/animation/public.lua", studio = "animation-public" },
-	animationSequence = { canonical = "src/core/animation/sequence.lua", legacy = "src/core/animation/sequence.lua", studio = "animation-sequence" },
-	animationUI = { canonical = "src/core/animation/ui.lua", legacy = "src/core/animation/ui.lua", studio = "animation-ui" },
-	animationText = { canonical = "src/core/animation/text.lua", legacy = "src/core/animation/text.lua", studio = "animation-text" },
-	animationEasing = { canonical = "src/core/animation/easing.lua", legacy = "src/core/animation/easing.lua", studio = "animation-easing" },
-	animationCleanup = { canonical = "src/core/animation/cleanup.lua", legacy = "src/core/animation/cleanup.lua", studio = "animation-cleanup" },
-	allInOne = { canonical = "src/entry/rayfield-all-in-one.entry.lua", legacy = "Main%20loader/rayfield-all-in-one.lua", studio = "rayfield-all-in-one" },
-	modifiedEntry = { canonical = "src/entry/rayfield-modified.entry.lua", legacy = "Main%20loader/rayfield-modified.lua", studio = "rayfield-modified" }
+put("src/api/registry.lua", [[local function entry(canonical, legacy, studio)
+	return {
+		canonical = canonical,
+		legacy = legacy or canonical,
+		studio = studio
+	}
+end
+
+return {
+	theme = entry("src/services/theme.lua", "feature/rayfield-theme.lua", "rayfield-theme"),
+	settings = entry("src/services/settings.lua", "feature/rayfield-settings.lua", "rayfield-settings"),
+	compatibility = entry("src/services/compatibility.lua", nil, "compatibility"),
+	ownershipTracker = entry("src/services/ownership-tracker.lua", nil, "ownership-tracker"),
+	elementSync = entry("src/services/element-sync.lua", nil, "element-sync"),
+	keybindSequence = entry("src/services/keybind-sequence.lua", nil, "keybind-sequence"),
+	layoutPersistence = entry("src/services/layout-persistence.lua", nil, "layout-persistence"),
+	viewportVirtualization = entry("src/services/viewport-virtualization.lua", nil, "viewport-virtualization"),
+	drag = entry("src/feature/drag/init.lua", "feature/rayfield-drag.lua", "rayfield-drag"),
+	uiState = entry("src/core/ui-state.lua", "feature/rayfield-ui-state.lua", "rayfield-ui-state"),
+	elements = entry("src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua", "rayfield-elements"),
+	elementsExtracted = entry("src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua", "rayfield-elements-extracted"),
+	widgetsBootstrap = entry("src/ui/elements/widgets/bootstrap.lua", nil, "widgets-bootstrap"),
+	config = entry("src/services/config.lua", "feature/rayfield-config.lua", "rayfield-config"),
+	utilities = entry("src/services/utilities.lua", "feature/rayfield-utilities.lua", "rayfield-utilities"),
+	tabSplit = entry("src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua", "rayfield-tab-split"),
+	miniWindow = entry("src/feature/mini-window/init.lua", "feature/mini-window-system.lua", "mini-window-system"),
+	enhanced = entry("src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua", "rayfield-enhanced"),
+	advanced = entry("src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua", "rayfield-advanced-features"),
+	animationEngine = entry("src/core/animation/engine.lua", nil, "animation-engine"),
+	animationPublic = entry("src/core/animation/public.lua", nil, "animation-public"),
+	animationSequence = entry("src/core/animation/sequence.lua", nil, "animation-sequence"),
+	animationUI = entry("src/core/animation/ui.lua", nil, "animation-ui"),
+	animationText = entry("src/core/animation/text.lua", nil, "animation-text"),
+	animationEasing = entry("src/core/animation/easing.lua", nil, "animation-easing"),
+	animationCleanup = entry("src/core/animation/cleanup.lua", nil, "animation-cleanup"),
+	allInOne = entry("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "rayfield-all-in-one"),
+	modifiedEntry = entry("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua", "rayfield-modified")
 }
 ]])
 put("src/api/resolver.lua", [[local Resolver = {}
 
 local DEFAULT_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 
+function Resolver.normalizeRuntimeRoot(rootUrl)
+	if type(rootUrl) ~= "string" or rootUrl == "" then
+		return DEFAULT_ROOT
+	end
+	if rootUrl:sub(-1) ~= "/" then
+		return rootUrl .. "/"
+	end
+	return rootUrl
+end
+
 function Resolver.getRuntimeRoot()
 	if _G and type(_G.__RAYFIELD_RUNTIME_ROOT_URL) == "string" and #_G.__RAYFIELD_RUNTIME_ROOT_URL > 0 then
-		return _G.__RAYFIELD_RUNTIME_ROOT_URL
+		return Resolver.normalizeRuntimeRoot(_G.__RAYFIELD_RUNTIME_ROOT_URL)
 	end
-	return DEFAULT_ROOT
+	return Resolver.normalizeRuntimeRoot(DEFAULT_ROOT)
 end
 
 function Resolver.isStudio()
@@ -457,6 +571,182 @@ end
 
 return Resolver
 ]])
+put("src/api/security-adapter.lua", [=[--[[
+	Rayfield Security Adapter
+	Handles multi-provider key authentication and session token generation.
+]]
+
+local SecurityAdapter = {}
+local HttpService = game:GetService("HttpService")
+
+local SESSION_TOKEN = nil
+local IS_TAMPERED = false
+
+local function trim(value)
+	if type(value) ~= "string" then
+		return ""
+	end
+	local out = value:gsub("^%s+", "")
+	out = out:gsub("%s+$", "")
+	return out
+end
+
+local function normalizeKeyList(rawKeys)
+	local out = {}
+	local seen = {}
+
+	local function push(entry)
+		local key = trim(tostring(entry or ""))
+		if key == "" or seen[key] then
+			return
+		end
+		seen[key] = true
+		table.insert(out, key)
+	end
+
+	if type(rawKeys) == "table" then
+		if #rawKeys > 0 then
+			for _, entry in ipairs(rawKeys) do
+				push(entry)
+			end
+		else
+			for _, entry in pairs(rawKeys) do
+				push(entry)
+			end
+		end
+	else
+		push(rawKeys)
+	end
+
+	return out
+end
+
+local function readProvidedKey(keySettings)
+	if type(keySettings) ~= "table" then
+		return ""
+	end
+	return trim(tostring(
+		keySettings.ProvidedKey
+		or keySettings.InputKey
+		or keySettings.EnteredKey
+		or keySettings.CurrentInput
+		or ""
+	))
+end
+
+local function getClientIdSafe()
+	local okService, analyticsService = pcall(function()
+		return game:GetService("RbxAnalyticsService")
+	end)
+	if not okService or not analyticsService then
+		return "unknown_client"
+	end
+
+	local okClientId, clientId = pcall(function()
+		return analyticsService:GetClientId()
+	end)
+	if not okClientId or type(clientId) ~= "string" or clientId == "" then
+		return "unknown_client"
+	end
+	return clientId
+end
+
+local function isBypassTamperDetected()
+	if type(_G) ~= "table" then
+		return false
+	end
+	return _G.Rayfield_Bypass == true or _G.IsPremiumUser == true
+end
+
+function SecurityAdapter.init(ctx)
+	local self = {}
+	
+	-- Session token is intentionally non-secret and runtime-local only.
+	-- Real security should be performed by a remote validator.
+	local function generateSessionToken(key, hwid)
+		local raw = string.format("%s:%s", tostring(key or ""), tostring(hwid or ""))
+		local nonce = HttpService:GenerateGUID(false):gsub("%-", ""):sub(1, 8)
+		return "RBX-" .. nonce .. "-" .. tostring(#raw)
+	end
+
+	local function runCustomValidator(validator, providedKey, settings, hwid)
+		local okValidate, isValid, tokenOrErr = pcall(validator, providedKey, settings, hwid)
+		if not okValidate then
+			return false, "E_VALIDATOR_ERROR:" .. tostring(isValid)
+		end
+		if isValid ~= true then
+			return false, tostring(tokenOrErr or "E_INVALID_KEY")
+		end
+
+		if type(tokenOrErr) == "string" and tokenOrErr ~= "" then
+			SESSION_TOKEN = tokenOrErr
+			return true, SESSION_TOKEN
+		end
+
+		SESSION_TOKEN = generateSessionToken(providedKey, hwid)
+		return true, SESSION_TOKEN
+	end
+
+	local function runAllowlistValidator(allowedKeys, providedKey, hwid)
+		for _, allowedKey in ipairs(allowedKeys) do
+			if providedKey == allowedKey then
+				SESSION_TOKEN = generateSessionToken(providedKey, hwid)
+				return true, SESSION_TOKEN
+			end
+		end
+		return false, "E_INVALID_KEY"
+	end
+
+	function self.validateKey(settings)
+		if not settings or not settings.KeySettings then 
+			return false, "E_NO_SETTINGS"
+		end
+		
+		local keySettings = settings.KeySettings
+		local hwid = getClientIdSafe()
+		local providedKey = readProvidedKey(keySettings)
+		if providedKey == "" then
+			return false, "E_NO_PROVIDED_KEY"
+		end
+		
+		-- Honey pot check
+		if isBypassTamperDetected() then
+			IS_TAMPERED = true
+			warn("Rayfield | Honey Pot Triggered: Unauthorized Bypass Attempt Detected.")
+			return false, "E_TAMPERED_BYPASS"
+		end
+
+		local validator = keySettings.Validator
+		if type(validator) == "function" then
+			return runCustomValidator(validator, providedKey, settings, hwid)
+		end
+
+		-- Local allowlist fallback for offline/manual validation.
+		local allowedKeys = normalizeKeyList(
+			keySettings.AllowedKeys
+			or keySettings.ValidKeys
+			or keySettings.Keys
+			or keySettings.Key
+		)
+		if #allowedKeys == 0 then
+			return false, "E_UNCONFIGURED_VALIDATION"
+		end
+		return runAllowlistValidator(allowedKeys, providedKey, hwid)
+	end
+
+	function self.getSessionToken()
+		return SESSION_TOKEN
+	end
+
+	function self.isTampered()
+		return IS_TAMPERED
+	end
+
+	return self
+end
+
+return SecurityAdapter
+]=])
 put("src/core/animation/cleanup.lua", [[local Cleanup = {}
 
 local function safeGet(instance, key)
@@ -573,6 +863,24 @@ put("src/core/animation/engine.lua", [[local Engine = {}
 Engine.__index = Engine
 
 local DefaultCleanup = {}
+local TRANSITION_PROFILES = {
+	Smooth = {
+		durationScale = 1.0,
+		suppressTextEffects = false
+	},
+	Snappy = {
+		durationScale = 0.75,
+		suppressTextEffects = false
+	},
+	Minimal = {
+		durationScale = 0.55,
+		suppressTextEffects = false
+	},
+	Off = {
+		durationScale = 0.01,
+		suppressTextEffects = true
+	}
+}
 
 function DefaultCleanup.safeDisconnect(connection)
 	if not connection then
@@ -650,6 +958,16 @@ local function countEntries(t)
 	return count
 end
 
+local function countTextHandles(handleBuckets)
+	local total = 0
+	for _, handles in pairs(handleBuckets) do
+		if type(handles) == "table" then
+			total = total + #handles
+		end
+	end
+	return total
+end
+
 local function getGoalKey(goals)
 	local keys = {}
 	for key in pairs(goals or {}) do
@@ -679,7 +997,70 @@ function Engine.new(opts)
 	self._cleanupHooks = setmetatable({}, { __mode = "k" })
 	self._textHandles = setmetatable({}, { __mode = "k" })
 	self._textHeartbeat = nil
+	self._transitionProfileName = "Smooth"
+	self._transitionProfile = {
+		durationScale = TRANSITION_PROFILES.Smooth.durationScale,
+		suppressTextEffects = TRANSITION_PROFILES.Smooth.suppressTextEffects
+	}
 	return self
+end
+
+local function cloneProfileSpec(spec)
+	return {
+		durationScale = tonumber(spec and spec.durationScale) or 1,
+		suppressTextEffects = spec and spec.suppressTextEffects == true or false
+	}
+end
+
+local function resolveProfileName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "smooth" then
+		return "Smooth"
+	elseif normalized == "snappy" then
+		return "Snappy"
+	elseif normalized == "minimal" then
+		return "Minimal"
+	elseif normalized == "off" then
+		return "Off"
+	end
+	return nil
+end
+
+function Engine:SetTransitionProfile(profileName, profileSpec)
+	local canonicalName = resolveProfileName(profileName)
+	if not canonicalName then
+		return false, "Invalid transition profile."
+	end
+
+	local defaultSpec = TRANSITION_PROFILES[canonicalName]
+	local nextSpec = cloneProfileSpec(defaultSpec)
+	if type(profileSpec) == "table" then
+		if profileSpec.durationScale ~= nil then
+			local parsedScale = tonumber(profileSpec.durationScale)
+			if parsedScale and parsedScale > 0 then
+				nextSpec.durationScale = parsedScale
+			end
+		end
+		if profileSpec.suppressTextEffects ~= nil then
+			nextSpec.suppressTextEffects = profileSpec.suppressTextEffects == true
+		end
+	end
+
+	self._transitionProfileName = canonicalName
+	self._transitionProfile = nextSpec
+	if nextSpec.suppressTextEffects then
+		self:StopAllText()
+	end
+
+	return true, canonicalName
+end
+
+function Engine:GetTransitionProfile()
+	local profile = cloneProfileSpec(self._transitionProfile)
+	return self._transitionProfileName, profile
 end
 
 function Engine:SetUiSuppressionProvider(provider)
@@ -776,7 +1157,23 @@ function Engine:Create(instance, tweenInfo, goals, opts)
 		return nil
 	end
 
-	local tween = self.TweenService:Create(instance, tweenInfo, goals)
+	local scale = tonumber(self._transitionProfile and self._transitionProfile.durationScale) or 1
+	if scale <= 0 then
+		scale = 1
+	end
+	local adjustedTweenInfo = tweenInfo
+	if scale ~= 1 then
+		adjustedTweenInfo = TweenInfo.new(
+			math.max(0.01, tweenInfo.Time * scale),
+			tweenInfo.EasingStyle,
+			tweenInfo.EasingDirection,
+			tweenInfo.RepeatCount,
+			tweenInfo.Reverses,
+			tweenInfo.DelayTime
+		)
+	end
+
+	local tween = self.TweenService:Create(instance, adjustedTweenInfo, goals)
 
 	if opts.track then
 		local key = opts.key
@@ -823,6 +1220,18 @@ function Engine:GetActiveAnimationCount()
 		count = count + countEntries(bucket)
 	end
 	return count
+end
+
+function Engine:GetTextHandleCount()
+	return countTextHandles(self._textHandles)
+end
+
+function Engine:GetRuntimeStats()
+	return {
+		activeTweens = self:GetActiveAnimationCount(),
+		activeTextHandles = self:GetTextHandleCount(),
+		heartbeatConnected = self._textHeartbeat ~= nil
+	}
 end
 
 function Engine:CancelObject(instance)
@@ -873,7 +1282,8 @@ function Engine:_maybeReleaseTextHeartbeat()
 end
 
 function Engine:_tickTextHandles()
-	local suppressed = self:IsUiSuppressed()
+	local transitionSuppressed = self._transitionProfile and self._transitionProfile.suppressTextEffects == true
+	local suppressed = self:IsUiSuppressed() or transitionSuppressed
 	for instance, handles in pairs(self._textHandles) do
 		if type(handles) == "table" then
 			for i = #handles, 1, -1 do
@@ -901,6 +1311,14 @@ end
 
 function Engine:RegisterTextHandle(instance, handle)
 	if typeof(instance) ~= "Instance" or not handle then
+		return
+	end
+	if self._transitionProfile and self._transitionProfile.suppressTextEffects == true then
+		if handle and handle.Stop then
+			pcall(function()
+				handle:Stop()
+			end)
+		end
 		return
 	end
 	local handles = self._textHandles[instance]
@@ -1664,12 +2082,6 @@ local function fallbackGetService(name)
 		return game:GetService(name)
 	end)
 	if ok and service then
-		if type(cloneref) == "function" then
-			local okRef, ref = pcall(cloneref, service)
-			if okRef and ref then
-				return ref
-			end
-		end
 		return service
 	end
 	return nil
@@ -1745,6 +2157,86 @@ function UIStateModule.init(ctx)
 	local Debounce = false
 	local Minimised = false
 	local Hidden = false
+	local expandedSize = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)
+
+	local function clampExpandedOffsets(width, height)
+		local clampedWidth = math.max(math.floor(width), 320)
+		local clampedHeight = math.max(math.floor(height), self.useMobileSizing and 170 or 220)
+
+		local parentGui = self.Main and self.Main.Parent
+		if parentGui and parentGui.AbsoluteSize then
+			local viewport = parentGui.AbsoluteSize
+			if viewport.X > 0 then
+				clampedWidth = math.min(clampedWidth, math.max(320, viewport.X - 24))
+			end
+			if viewport.Y > 0 then
+				local minHeight = self.useMobileSizing and 170 or 220
+				clampedHeight = math.min(clampedHeight, math.max(minHeight, viewport.Y - 24))
+			end
+		end
+
+		return clampedWidth, clampedHeight
+	end
+
+	local function normalizeExpandedSize(value)
+		if typeof(value) == "UDim2" then
+			return value.X.Offset, value.Y.Offset
+		end
+		if type(value) == "table" then
+			local width = tonumber(value.width or value.x or value.X or value.xOffset)
+			local height = tonumber(value.height or value.y or value.Y or value.yOffset)
+			if width and height then
+				return width, height
+			end
+		end
+		return nil, nil
+	end
+
+	local function getExpandedSize()
+		return expandedSize
+	end
+
+	local function setExpandedSize(nextSize)
+		local width, height = normalizeExpandedSize(nextSize)
+		if not width or not height then
+			return false
+		end
+		width, height = clampExpandedOffsets(width, height)
+		expandedSize = UDim2.fromOffset(width, height)
+		return true
+	end
+
+	local function applyExpandedSizeToFrames()
+		local targetSize = getExpandedSize()
+		if self.Main then
+			self.Main.Size = targetSize
+		end
+		if self.Topbar then
+			self.Topbar.Size = UDim2.fromOffset(targetSize.X.Offset, 45)
+		end
+	end
+
+	local function clampMainToViewport()
+		if not (self.Main and self.Main.Parent and self.Main.Parent.AbsoluteSize) then
+			return
+		end
+		local parentSize = self.Main.Parent.AbsoluteSize
+		local mainPosition = self.Main.AbsolutePosition
+		local mainSize = self.Main.AbsoluteSize
+
+		local clampedX = math.clamp(mainPosition.X, 0, math.max(0, parentSize.X - mainSize.X))
+		local clampedY = math.clamp(mainPosition.Y, 0, math.max(0, parentSize.Y - mainSize.Y))
+		local deltaX = clampedX - mainPosition.X
+		local deltaY = clampedY - mainPosition.Y
+		if deltaX ~= 0 or deltaY ~= 0 then
+			self.Main.Position = UDim2.new(
+				self.Main.Position.X.Scale,
+				self.Main.Position.X.Offset + deltaX,
+				self.Main.Position.Y.Scale,
+				self.Main.Position.Y.Offset + deltaY
+			)
+		end
+	end
 
 	-- Forward declare functions
 	local closeSearch
@@ -1753,6 +2245,110 @@ function UIStateModule.init(ctx)
 		if instance then
 			self.Animation:Create(instance, tweenInfo, properties):Play()
 		end
+	end
+
+	local TAB_BUTTON_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Exponential)
+	local TAB_VISUAL_PRESETS = {
+		hidden = { background = 1, image = 1, text = 1, stroke = 1 },
+		selected = { background = 0, image = 0, text = 0, stroke = 1 },
+		idle = { background = 0.7, image = 0.2, text = 0.2, stroke = 0.5 }
+	}
+
+	local function forEachTabButton(callback)
+		if not self.TabList then
+			return
+		end
+		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
+			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
+				callback(tabbtn)
+			end
+		end
+	end
+
+	local function applyTabButtonVisual(tabbtn, visual)
+		if not (tabbtn and visual) then
+			return
+		end
+		playTween(tabbtn, TAB_BUTTON_TWEEN, {BackgroundTransparency = visual.background})
+		playTween(tabbtn:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = visual.text})
+		playTween(tabbtn:FindFirstChild("Image"), TAB_BUTTON_TWEEN, {ImageTransparency = visual.image})
+		playTween(tabbtn:FindFirstChild("UIStroke"), TAB_BUTTON_TWEEN, {Transparency = visual.stroke})
+	end
+
+	local function isCurrentTabButton(tabbtn)
+		return tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text
+	end
+
+	local function animateTabButtonsHidden(interactVisible)
+		forEachTabButton(function(tabbtn)
+			local interact = tabbtn:FindFirstChild("Interact")
+			if interact and interactVisible ~= nil then
+				interact.Visible = interactVisible
+			end
+			applyTabButtonVisual(tabbtn, TAB_VISUAL_PRESETS.hidden)
+		end)
+	end
+
+	local function animateTabButtonsByCurrentPage(interactVisible)
+		forEachTabButton(function(tabbtn)
+			local interact = tabbtn:FindFirstChild("Interact")
+			if interact and interactVisible ~= nil then
+				interact.Visible = interactVisible
+			end
+			applyTabButtonVisual(tabbtn, isCurrentTabButton(tabbtn) and TAB_VISUAL_PRESETS.selected or TAB_VISUAL_PRESETS.idle)
+		end)
+	end
+
+	local function forEachElementFrame(callback)
+		if not self.Elements then
+			return
+		end
+		for _, tab in ipairs(self.Elements:GetChildren()) do
+			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
+				for _, element in ipairs(tab:GetChildren()) do
+					if element.ClassName == "Frame" and element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
+						callback(element)
+					end
+				end
+			end
+		end
+	end
+
+	local function setElementChildrenVisible(element, visible)
+		for _, child in ipairs(element:GetChildren()) do
+			if child.ClassName == "Frame"
+				or child.ClassName == "TextLabel"
+				or child.ClassName == "TextBox"
+				or child.ClassName == "ImageButton"
+				or child.ClassName == "ImageLabel" then
+				child.Visible = visible
+			end
+		end
+	end
+
+	local function applyElementFrameState(element, collapsed)
+		local targetTitleTransparency = collapsed and 1 or 0.4
+		local targetDividerTransparency = collapsed and 1 or 0.85
+		local targetBackgroundTransparency = collapsed and 1 or 0
+		local targetStrokeTransparency = collapsed and 1 or 0
+
+		if element.Name == "SectionTitle" or element.Name == "SearchTitle-fsefsefesfsefesfesfThanks" then
+			playTween(element:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = targetTitleTransparency})
+		elseif element.Name == "Divider" then
+			playTween(element:FindFirstChild("Divider"), TAB_BUTTON_TWEEN, {BackgroundTransparency = targetDividerTransparency})
+		else
+			playTween(element, TAB_BUTTON_TWEEN, {BackgroundTransparency = targetBackgroundTransparency})
+			playTween(element:FindFirstChild("UIStroke"), TAB_BUTTON_TWEEN, {Transparency = targetStrokeTransparency})
+			playTween(element:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = targetBackgroundTransparency})
+		end
+
+		setElementChildrenVisible(element, not collapsed)
+	end
+
+	local function animateElementFramesCollapsed(collapsed)
+		forEachElementFrame(function(element)
+			applyElementFrameState(element, collapsed == true)
+		end)
 	end
 
 	-- Extract code starts here
@@ -1914,15 +2510,7 @@ function UIStateModule.init(ctx)
 	
 		self.Main.Search.Visible = true
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				tabbtn.Interact.Visible = false
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(false)
 	
 		self.Main.Search.Input:CaptureFocus()
 		self.Animation:Create(self.Main.Search.Shadow, TweenInfo.new(0.05, Enum.EasingStyle.Quint), {ImageTransparency = 0.95}):Play()
@@ -1942,22 +2530,7 @@ function UIStateModule.init(ctx)
 		self.Animation:Create(self.Main.Search.UIStroke, TweenInfo.new(0.15, Enum.EasingStyle.Quint), {Transparency = 1}):Play()
 		self.Animation:Create(self.Main.Search.Input, TweenInfo.new(0.15, Enum.EasingStyle.Quint), {TextTransparency = 1}):Play()
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				tabbtn.Interact.Visible = true
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-			end
-		end
+		animateTabButtonsByCurrentPage(true)
 	
 		self.Main.Search.Input.Text = ''
 		self.Main.Search.Input.Interactable = false
@@ -2008,43 +2581,13 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(nil)
 	
 		if self.dragInteract then
 			self.dragInteract.Visible = false
 		end
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = false
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(true)
 	
 		task.wait(0.5)
 		self.Main.Visible = false
@@ -2062,8 +2605,8 @@ function UIStateModule.init(ctx)
 		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.7})
-		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
-		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = getExpandedSize()})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.fromOffset(getExpandedSize().X.Offset, 45)})
 		if self.TabList then
 			self.TabList.Visible = true
 		end
@@ -2073,49 +2616,11 @@ function UIStateModule.init(ctx)
 			self.Elements.Visible = true
 		end
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.4}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = true
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(false)
 	
 		task.wait(0.1)
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-	
-			end
-		end
+		animateTabButtonsByCurrentPage(nil)
 	
 		task.wait(0.5)
 		Debounce = false
@@ -2126,8 +2631,8 @@ function UIStateModule.init(ctx)
 		Debounce = true
 		self.Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 		self.Main.Visible = true
-		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
-		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = getExpandedSize()})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.fromOffset(getExpandedSize().X.Offset, 45)})
 		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6})
 		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
@@ -2171,46 +2676,9 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-			end
-		end
+		animateTabButtonsByCurrentPage(nil)
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.4}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = true
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(false)
 	
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.5})
 	
@@ -2231,39 +2699,9 @@ function UIStateModule.init(ctx)
 	
 		task.spawn(closeSearch)
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(nil)
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = false
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(true)
 	
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 		playTween(self.Topbar and self.Topbar:FindFirstChild("UIStroke"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 0})
@@ -2286,6 +2724,89 @@ function UIStateModule.init(ctx)
 		Debounce = false
 	end
 
+	local function getLayoutSnapshot()
+		local currentExpanded = getExpandedSize()
+		return {
+			position = {
+				xScale = self.Main.Position.X.Scale,
+				xOffset = self.Main.Position.X.Offset,
+				yScale = self.Main.Position.Y.Scale,
+				yOffset = self.Main.Position.Y.Offset
+			},
+			expandedSize = {
+				xOffset = currentExpanded.X.Offset,
+				yOffset = currentExpanded.Y.Offset
+			},
+			minimized = Minimised == true,
+			hidden = Hidden == true
+		}
+	end
+
+	local function applyLayoutSnapshot(layout)
+		if type(layout) ~= "table" then
+			return false
+		end
+
+		local expanded = layout.expandedSize
+		if type(expanded) == "table" then
+			setExpandedSize({
+				xOffset = tonumber(expanded.xOffset) or tonumber(expanded.width),
+				yOffset = tonumber(expanded.yOffset) or tonumber(expanded.height)
+			})
+		end
+
+		applyExpandedSizeToFrames()
+
+		local position = layout.position
+		if type(position) == "table" then
+			local xScale = tonumber(position.xScale) or self.Main.Position.X.Scale
+			local xOffset = tonumber(position.xOffset) or self.Main.Position.X.Offset
+			local yScale = tonumber(position.yScale) or self.Main.Position.Y.Scale
+			local yOffset = tonumber(position.yOffset) or self.Main.Position.Y.Offset
+			self.Main.Position = UDim2.new(xScale, xOffset, yScale, yOffset)
+			clampMainToViewport()
+		end
+
+		local targetHidden = layout.hidden == true
+		local targetMinimized = layout.minimized == true
+		if targetHidden then
+			Hidden = true
+			Minimised = false
+			self.Main.Visible = false
+			if self.Elements then
+				self.Elements.Visible = false
+			end
+			if self.TabList then
+				self.TabList.Visible = false
+			end
+		elseif targetMinimized then
+			Hidden = false
+			Minimised = true
+			self.Main.Visible = true
+			self.Main.Size = UDim2.fromOffset(495, 45)
+			self.Topbar.Size = UDim2.fromOffset(495, 45)
+			if self.Elements then
+				self.Elements.Visible = false
+			end
+			if self.TabList then
+				self.TabList.Visible = false
+			end
+		else
+			Hidden = false
+			Minimised = false
+			self.Main.Visible = true
+			if self.Elements then
+				self.Elements.Visible = true
+			end
+			if self.TabList then
+				self.TabList.Visible = true
+			end
+			applyExpandedSizeToFrames()
+		end
+
+		return true
+	end
+
 	-- Export functions
 	self.Notify = Notify
 	self.openSearch = openSearch
@@ -2301,6 +2822,10 @@ function UIStateModule.init(ctx)
 	self.setMinimised = function(value) Minimised = value end
 	self.getHidden = function() return Hidden end
 	self.setHidden = function(value) Hidden = value end
+	self.getExpandedSize = getExpandedSize
+	self.setExpandedSize = setExpandedSize
+	self.getLayoutSnapshot = getLayoutSnapshot
+	self.applyLayoutSnapshot = applyLayoutSnapshot
 	
 	return self
 end
@@ -2324,31 +2849,46 @@ end
 
 return WindowController
 ]])
-put("src/entry/module-map.lua", [[return {
-	theme = {"src/services/theme.lua", "feature/rayfield-theme.lua"},
-	settings = {"src/services/settings.lua", "feature/rayfield-settings.lua"},
-	elementSync = {"src/services/element-sync.lua", "src/services/element-sync.lua"},
-	keybindSequence = {"src/services/keybind-sequence.lua", "src/services/keybind-sequence.lua"},
-	config = {"src/services/config.lua", "feature/rayfield-config.lua"},
-	utilities = {"src/services/utilities.lua", "feature/rayfield-utilities.lua"},
-	uiState = {"src/core/ui-state.lua", "feature/rayfield-ui-state.lua"},
-	elements = {"src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua"},
-	elementsExtracted = {"src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua"},
-	widgetsBootstrap = {"src/ui/elements/widgets/bootstrap.lua", "src/ui/elements/widgets/bootstrap.lua"},
-	drag = {"src/feature/drag/init.lua", "feature/rayfield-drag.lua"},
-	tabSplit = {"src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua"},
-	miniWindow = {"src/feature/mini-window/init.lua", "feature/mini-window-system.lua"},
-	enhanced = {"src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua"},
-	advanced = {"src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua"},
-	animationEngine = {"src/core/animation/engine.lua", "src/core/animation/engine.lua"},
-	animationPublic = {"src/core/animation/public.lua", "src/core/animation/public.lua"},
-	animationSequence = {"src/core/animation/sequence.lua", "src/core/animation/sequence.lua"},
-	animationUI = {"src/core/animation/ui.lua", "src/core/animation/ui.lua"},
-	animationText = {"src/core/animation/text.lua", "src/core/animation/text.lua"},
-	animationEasing = {"src/core/animation/easing.lua", "src/core/animation/easing.lua"},
-	animationCleanup = {"src/core/animation/cleanup.lua", "src/core/animation/cleanup.lua"},
-	allInOne = {"src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"},
-	modifiedEntry = {"src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua"}
+put("src/entry/module-map.lua", [[local function row(canonical, legacy, extraLegacy)
+	local output = {
+		canonical,
+		legacy or canonical
+	}
+	if extraLegacy and extraLegacy ~= "" then
+		table.insert(output, extraLegacy)
+	end
+	return output
+end
+
+return {
+	theme = row("src/services/theme.lua", "feature/rayfield-theme.lua"),
+	settings = row("src/services/settings.lua", "feature/rayfield-settings.lua"),
+	compatibility = row("src/services/compatibility.lua"),
+	ownershipTracker = row("src/services/ownership-tracker.lua"),
+	elementSync = row("src/services/element-sync.lua"),
+	keybindSequence = row("src/services/keybind-sequence.lua"),
+	layoutPersistence = row("src/services/layout-persistence.lua"),
+	viewportVirtualization = row("src/services/viewport-virtualization.lua"),
+	config = row("src/services/config.lua", "feature/rayfield-config.lua"),
+	utilities = row("src/services/utilities.lua", "feature/rayfield-utilities.lua"),
+	uiState = row("src/core/ui-state.lua", "feature/rayfield-ui-state.lua"),
+	elements = row("src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua"),
+	elementsExtracted = row("src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua"),
+	widgetsBootstrap = row("src/ui/elements/widgets/bootstrap.lua"),
+	drag = row("src/feature/drag/init.lua", "feature/rayfield-drag.lua"),
+	tabSplit = row("src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua"),
+	miniWindow = row("src/feature/mini-window/init.lua", "feature/mini-window-system.lua"),
+	enhanced = row("src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua"),
+	advanced = row("src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua"),
+	animationEngine = row("src/core/animation/engine.lua"),
+	animationPublic = row("src/core/animation/public.lua"),
+	animationSequence = row("src/core/animation/sequence.lua"),
+	animationUI = row("src/core/animation/ui.lua"),
+	animationText = row("src/core/animation/text.lua"),
+	animationEasing = row("src/core/animation/easing.lua"),
+	animationCleanup = row("src/core/animation/cleanup.lua"),
+	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
+	modifiedEntry = row("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua")
 }
 ]])
 put("src/entry/rayfield-all-in-one.entry.lua", [=[--[[
@@ -2774,6 +3314,15 @@ local function startAutoReloadWatcher()
 	return true
 end
 
+local function startAutoReloadWatcherAsync(errorPrefix)
+	task.spawn(function()
+		local okStart, errStart = startAutoReloadWatcher()
+		if not okStart and errStart then
+			warn((errorPrefix or "⚠️ [Rayfield] Auto reload start failed: ") .. tostring(errStart))
+		end
+	end)
+end
+
 -- ============================================
 -- LOAD FUNCTIONS
 -- ============================================
@@ -2889,10 +3438,7 @@ function AllInOne.quickSetup(config)
 	AllInOne.currentUI = UI
 
 	if CONFIG.AUTO_RELOAD_ENABLED and not AutoReloadState.running then
-		local okStart, errStart = startAutoReloadWatcher()
-		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload is enabled but failed to start: " .. tostring(errStart))
-		end
+		startAutoReloadWatcherAsync("⚠️ [Rayfield] Auto reload is enabled but failed to start: ")
 	end
 	
 	return UI
@@ -3107,13 +3653,6 @@ if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	print("Access via: _G.Rayfield or _G.RayfieldUI")
 	print("Return mode:", CONFIG.AUTO_EXECUTE_RETURN, "\n")
 
-	if CONFIG.AUTO_RELOAD_ENABLED then
-		local okStart, errStart = startAutoReloadWatcher()
-		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload start failed: " .. tostring(errStart))
-		end
-	end
-
 	-- Return lightweight loader by default to avoid executor freeze on large return objects
 	if CONFIG.AUTO_EXECUTE_RETURN == "ui" then
 		return UI
@@ -3226,14 +3765,7 @@ end
 
 local Compatibility = nil
 local function getService(name)
-	local service = game:GetService(name)
-	if type(cloneref) == "function" then
-		local okRef, ref = pcall(cloneref, service)
-		if okRef and ref then
-			return ref
-		end
-	end
-	return service
+	return game:GetService(name)
 end
 
 -- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
@@ -3449,384 +3981,7 @@ end
 
 local RayfieldLibrary = {
 	Flags = {},
-	Theme = {
-		Default = {
-			TextColor = Color3.fromRGB(240, 240, 240),
-
-			Background = Color3.fromRGB(25, 25, 25),
-			Topbar = Color3.fromRGB(34, 34, 34),
-			Shadow = Color3.fromRGB(20, 20, 20),
-
-			NotificationBackground = Color3.fromRGB(20, 20, 20),
-			NotificationActionsBackground = Color3.fromRGB(230, 230, 230),
-
-			TabBackground = Color3.fromRGB(80, 80, 80),
-			TabStroke = Color3.fromRGB(85, 85, 85),
-			TabBackgroundSelected = Color3.fromRGB(210, 210, 210),
-			TabTextColor = Color3.fromRGB(240, 240, 240),
-			SelectedTabTextColor = Color3.fromRGB(50, 50, 50),
-
-			ElementBackground = Color3.fromRGB(35, 35, 35),
-			ElementBackgroundHover = Color3.fromRGB(40, 40, 40),
-			SecondaryElementBackground = Color3.fromRGB(25, 25, 25),
-			ElementStroke = Color3.fromRGB(50, 50, 50),
-			SecondaryElementStroke = Color3.fromRGB(40, 40, 40),
-
-			SliderBackground = Color3.fromRGB(50, 138, 220),
-			SliderProgress = Color3.fromRGB(50, 138, 220),
-			SliderStroke = Color3.fromRGB(58, 163, 255),
-
-			ToggleBackground = Color3.fromRGB(30, 30, 30),
-			ToggleEnabled = Color3.fromRGB(0, 146, 214),
-			ToggleDisabled = Color3.fromRGB(100, 100, 100),
-			ToggleEnabledStroke = Color3.fromRGB(0, 170, 255),
-			ToggleDisabledStroke = Color3.fromRGB(125, 125, 125),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(65, 65, 65),
-
-			DropdownSelected = Color3.fromRGB(40, 40, 40),
-			DropdownUnselected = Color3.fromRGB(30, 30, 30),
-
-			InputBackground = Color3.fromRGB(30, 30, 30),
-			InputStroke = Color3.fromRGB(65, 65, 65),
-			PlaceholderColor = Color3.fromRGB(178, 178, 178)
-		},
-
-		Ocean = {
-			TextColor = Color3.fromRGB(230, 240, 240),
-
-			Background = Color3.fromRGB(20, 30, 30),
-			Topbar = Color3.fromRGB(25, 40, 40),
-			Shadow = Color3.fromRGB(15, 20, 20),
-
-			NotificationBackground = Color3.fromRGB(25, 35, 35),
-			NotificationActionsBackground = Color3.fromRGB(230, 240, 240),
-
-			TabBackground = Color3.fromRGB(40, 60, 60),
-			TabStroke = Color3.fromRGB(50, 70, 70),
-			TabBackgroundSelected = Color3.fromRGB(100, 180, 180),
-			TabTextColor = Color3.fromRGB(210, 230, 230),
-			SelectedTabTextColor = Color3.fromRGB(20, 50, 50),
-
-			ElementBackground = Color3.fromRGB(30, 50, 50),
-			ElementBackgroundHover = Color3.fromRGB(40, 60, 60),
-			SecondaryElementBackground = Color3.fromRGB(30, 45, 45),
-			ElementStroke = Color3.fromRGB(45, 70, 70),
-			SecondaryElementStroke = Color3.fromRGB(40, 65, 65),
-
-			SliderBackground = Color3.fromRGB(0, 110, 110),
-			SliderProgress = Color3.fromRGB(0, 140, 140),
-			SliderStroke = Color3.fromRGB(0, 160, 160),
-
-			ToggleBackground = Color3.fromRGB(30, 50, 50),
-			ToggleEnabled = Color3.fromRGB(0, 130, 130),
-			ToggleDisabled = Color3.fromRGB(70, 90, 90),
-			ToggleEnabledStroke = Color3.fromRGB(0, 160, 160),
-			ToggleDisabledStroke = Color3.fromRGB(85, 105, 105),
-			ToggleEnabledOuterStroke = Color3.fromRGB(50, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(45, 65, 65),
-
-			DropdownSelected = Color3.fromRGB(30, 60, 60),
-			DropdownUnselected = Color3.fromRGB(25, 40, 40),
-
-			InputBackground = Color3.fromRGB(30, 50, 50),
-			InputStroke = Color3.fromRGB(50, 70, 70),
-			PlaceholderColor = Color3.fromRGB(140, 160, 160)
-		},
-
-		AmberGlow = {
-			TextColor = Color3.fromRGB(255, 245, 230),
-
-			Background = Color3.fromRGB(45, 30, 20),
-			Topbar = Color3.fromRGB(55, 40, 25),
-			Shadow = Color3.fromRGB(35, 25, 15),
-
-			NotificationBackground = Color3.fromRGB(50, 35, 25),
-			NotificationActionsBackground = Color3.fromRGB(245, 230, 215),
-
-			TabBackground = Color3.fromRGB(75, 50, 35),
-			TabStroke = Color3.fromRGB(90, 60, 45),
-			TabBackgroundSelected = Color3.fromRGB(230, 180, 100),
-			TabTextColor = Color3.fromRGB(250, 220, 200),
-			SelectedTabTextColor = Color3.fromRGB(50, 30, 10),
-
-			ElementBackground = Color3.fromRGB(60, 45, 35),
-			ElementBackgroundHover = Color3.fromRGB(70, 50, 40),
-			SecondaryElementBackground = Color3.fromRGB(55, 40, 30),
-			ElementStroke = Color3.fromRGB(85, 60, 45),
-			SecondaryElementStroke = Color3.fromRGB(75, 50, 35),
-
-			SliderBackground = Color3.fromRGB(220, 130, 60),
-			SliderProgress = Color3.fromRGB(250, 150, 75),
-			SliderStroke = Color3.fromRGB(255, 170, 85),
-
-			ToggleBackground = Color3.fromRGB(55, 40, 30),
-			ToggleEnabled = Color3.fromRGB(240, 130, 30),
-			ToggleDisabled = Color3.fromRGB(90, 70, 60),
-			ToggleEnabledStroke = Color3.fromRGB(255, 160, 50),
-			ToggleDisabledStroke = Color3.fromRGB(110, 85, 75),
-			ToggleEnabledOuterStroke = Color3.fromRGB(200, 100, 50),
-			ToggleDisabledOuterStroke = Color3.fromRGB(75, 60, 55),
-
-			DropdownSelected = Color3.fromRGB(70, 50, 40),
-			DropdownUnselected = Color3.fromRGB(55, 40, 30),
-
-			InputBackground = Color3.fromRGB(60, 45, 35),
-			InputStroke = Color3.fromRGB(90, 65, 50),
-			PlaceholderColor = Color3.fromRGB(190, 150, 130)
-		},
-
-		Light = {
-			TextColor = Color3.fromRGB(40, 40, 40),
-
-			Background = Color3.fromRGB(245, 245, 245),
-			Topbar = Color3.fromRGB(230, 230, 230),
-			Shadow = Color3.fromRGB(200, 200, 200),
-
-			NotificationBackground = Color3.fromRGB(250, 250, 250),
-			NotificationActionsBackground = Color3.fromRGB(240, 240, 240),
-
-			TabBackground = Color3.fromRGB(235, 235, 235),
-			TabStroke = Color3.fromRGB(215, 215, 215),
-			TabBackgroundSelected = Color3.fromRGB(255, 255, 255),
-			TabTextColor = Color3.fromRGB(80, 80, 80),
-			SelectedTabTextColor = Color3.fromRGB(0, 0, 0),
-
-			ElementBackground = Color3.fromRGB(240, 240, 240),
-			ElementBackgroundHover = Color3.fromRGB(225, 225, 225),
-			SecondaryElementBackground = Color3.fromRGB(235, 235, 235),
-			ElementStroke = Color3.fromRGB(210, 210, 210),
-			SecondaryElementStroke = Color3.fromRGB(210, 210, 210),
-
-			SliderBackground = Color3.fromRGB(150, 180, 220),
-			SliderProgress = Color3.fromRGB(100, 150, 200), 
-			SliderStroke = Color3.fromRGB(120, 170, 220),
-
-			ToggleBackground = Color3.fromRGB(220, 220, 220),
-			ToggleEnabled = Color3.fromRGB(0, 146, 214),
-			ToggleDisabled = Color3.fromRGB(150, 150, 150),
-			ToggleEnabledStroke = Color3.fromRGB(0, 170, 255),
-			ToggleDisabledStroke = Color3.fromRGB(170, 170, 170),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(180, 180, 180),
-
-			DropdownSelected = Color3.fromRGB(230, 230, 230),
-			DropdownUnselected = Color3.fromRGB(220, 220, 220),
-
-			InputBackground = Color3.fromRGB(240, 240, 240),
-			InputStroke = Color3.fromRGB(180, 180, 180),
-			PlaceholderColor = Color3.fromRGB(140, 140, 140)
-		},
-
-		Amethyst = {
-			TextColor = Color3.fromRGB(240, 240, 240),
-
-			Background = Color3.fromRGB(30, 20, 40),
-			Topbar = Color3.fromRGB(40, 25, 50),
-			Shadow = Color3.fromRGB(20, 15, 30),
-
-			NotificationBackground = Color3.fromRGB(35, 20, 40),
-			NotificationActionsBackground = Color3.fromRGB(240, 240, 250),
-
-			TabBackground = Color3.fromRGB(60, 40, 80),
-			TabStroke = Color3.fromRGB(70, 45, 90),
-			TabBackgroundSelected = Color3.fromRGB(180, 140, 200),
-			TabTextColor = Color3.fromRGB(230, 230, 240),
-			SelectedTabTextColor = Color3.fromRGB(50, 20, 50),
-
-			ElementBackground = Color3.fromRGB(45, 30, 60),
-			ElementBackgroundHover = Color3.fromRGB(50, 35, 70),
-			SecondaryElementBackground = Color3.fromRGB(40, 30, 55),
-			ElementStroke = Color3.fromRGB(70, 50, 85),
-			SecondaryElementStroke = Color3.fromRGB(65, 45, 80),
-
-			SliderBackground = Color3.fromRGB(100, 60, 150),
-			SliderProgress = Color3.fromRGB(130, 80, 180),
-			SliderStroke = Color3.fromRGB(150, 100, 200),
-
-			ToggleBackground = Color3.fromRGB(45, 30, 55),
-			ToggleEnabled = Color3.fromRGB(120, 60, 150),
-			ToggleDisabled = Color3.fromRGB(94, 47, 117),
-			ToggleEnabledStroke = Color3.fromRGB(140, 80, 170),
-			ToggleDisabledStroke = Color3.fromRGB(124, 71, 150),
-			ToggleEnabledOuterStroke = Color3.fromRGB(90, 40, 120),
-			ToggleDisabledOuterStroke = Color3.fromRGB(80, 50, 110),
-
-			DropdownSelected = Color3.fromRGB(50, 35, 70),
-			DropdownUnselected = Color3.fromRGB(35, 25, 50),
-
-			InputBackground = Color3.fromRGB(45, 30, 60),
-			InputStroke = Color3.fromRGB(80, 50, 110),
-			PlaceholderColor = Color3.fromRGB(178, 150, 200)
-		},
-
-		Green = {
-			TextColor = Color3.fromRGB(30, 60, 30),
-
-			Background = Color3.fromRGB(235, 245, 235),
-			Topbar = Color3.fromRGB(210, 230, 210),
-			Shadow = Color3.fromRGB(200, 220, 200),
-
-			NotificationBackground = Color3.fromRGB(240, 250, 240),
-			NotificationActionsBackground = Color3.fromRGB(220, 235, 220),
-
-			TabBackground = Color3.fromRGB(215, 235, 215),
-			TabStroke = Color3.fromRGB(190, 210, 190),
-			TabBackgroundSelected = Color3.fromRGB(245, 255, 245),
-			TabTextColor = Color3.fromRGB(50, 80, 50),
-			SelectedTabTextColor = Color3.fromRGB(20, 60, 20),
-
-			ElementBackground = Color3.fromRGB(225, 240, 225),
-			ElementBackgroundHover = Color3.fromRGB(210, 225, 210),
-			SecondaryElementBackground = Color3.fromRGB(235, 245, 235), 
-			ElementStroke = Color3.fromRGB(180, 200, 180),
-			SecondaryElementStroke = Color3.fromRGB(180, 200, 180),
-
-			SliderBackground = Color3.fromRGB(90, 160, 90),
-			SliderProgress = Color3.fromRGB(70, 130, 70),
-			SliderStroke = Color3.fromRGB(100, 180, 100),
-
-			ToggleBackground = Color3.fromRGB(215, 235, 215),
-			ToggleEnabled = Color3.fromRGB(60, 130, 60),
-			ToggleDisabled = Color3.fromRGB(150, 175, 150),
-			ToggleEnabledStroke = Color3.fromRGB(80, 150, 80),
-			ToggleDisabledStroke = Color3.fromRGB(130, 150, 130),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 160, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(160, 180, 160),
-
-			DropdownSelected = Color3.fromRGB(225, 240, 225),
-			DropdownUnselected = Color3.fromRGB(210, 225, 210),
-
-			InputBackground = Color3.fromRGB(235, 245, 235),
-			InputStroke = Color3.fromRGB(180, 200, 180),
-			PlaceholderColor = Color3.fromRGB(120, 140, 120)
-		},
-
-		Bloom = {
-			TextColor = Color3.fromRGB(60, 40, 50),
-
-			Background = Color3.fromRGB(255, 240, 245),
-			Topbar = Color3.fromRGB(250, 220, 225),
-			Shadow = Color3.fromRGB(230, 190, 195),
-
-			NotificationBackground = Color3.fromRGB(255, 235, 240),
-			NotificationActionsBackground = Color3.fromRGB(245, 215, 225),
-
-			TabBackground = Color3.fromRGB(240, 210, 220),
-			TabStroke = Color3.fromRGB(230, 200, 210),
-			TabBackgroundSelected = Color3.fromRGB(255, 225, 235),
-			TabTextColor = Color3.fromRGB(80, 40, 60),
-			SelectedTabTextColor = Color3.fromRGB(50, 30, 50),
-
-			ElementBackground = Color3.fromRGB(255, 235, 240),
-			ElementBackgroundHover = Color3.fromRGB(245, 220, 230),
-			SecondaryElementBackground = Color3.fromRGB(255, 235, 240), 
-			ElementStroke = Color3.fromRGB(230, 200, 210),
-			SecondaryElementStroke = Color3.fromRGB(230, 200, 210),
-
-			SliderBackground = Color3.fromRGB(240, 130, 160),
-			SliderProgress = Color3.fromRGB(250, 160, 180),
-			SliderStroke = Color3.fromRGB(255, 180, 200),
-
-			ToggleBackground = Color3.fromRGB(240, 210, 220),
-			ToggleEnabled = Color3.fromRGB(255, 140, 170),
-			ToggleDisabled = Color3.fromRGB(200, 180, 185),
-			ToggleEnabledStroke = Color3.fromRGB(250, 160, 190),
-			ToggleDisabledStroke = Color3.fromRGB(210, 180, 190),
-			ToggleEnabledOuterStroke = Color3.fromRGB(220, 160, 180),
-			ToggleDisabledOuterStroke = Color3.fromRGB(190, 170, 180),
-
-			DropdownSelected = Color3.fromRGB(250, 220, 225),
-			DropdownUnselected = Color3.fromRGB(240, 210, 220),
-
-			InputBackground = Color3.fromRGB(255, 235, 240),
-			InputStroke = Color3.fromRGB(220, 190, 200),
-			PlaceholderColor = Color3.fromRGB(170, 130, 140)
-		},
-
-		DarkBlue = {
-			TextColor = Color3.fromRGB(230, 230, 230),
-
-			Background = Color3.fromRGB(20, 25, 30),
-			Topbar = Color3.fromRGB(30, 35, 40),
-			Shadow = Color3.fromRGB(15, 20, 25),
-
-			NotificationBackground = Color3.fromRGB(25, 30, 35),
-			NotificationActionsBackground = Color3.fromRGB(45, 50, 55),
-
-			TabBackground = Color3.fromRGB(35, 40, 45),
-			TabStroke = Color3.fromRGB(45, 50, 60),
-			TabBackgroundSelected = Color3.fromRGB(40, 70, 100),
-			TabTextColor = Color3.fromRGB(200, 200, 200),
-			SelectedTabTextColor = Color3.fromRGB(255, 255, 255),
-
-			ElementBackground = Color3.fromRGB(30, 35, 40),
-			ElementBackgroundHover = Color3.fromRGB(40, 45, 50),
-			SecondaryElementBackground = Color3.fromRGB(35, 40, 45), 
-			ElementStroke = Color3.fromRGB(45, 50, 60),
-			SecondaryElementStroke = Color3.fromRGB(40, 45, 55),
-
-			SliderBackground = Color3.fromRGB(0, 90, 180),
-			SliderProgress = Color3.fromRGB(0, 120, 210),
-			SliderStroke = Color3.fromRGB(0, 150, 240),
-
-			ToggleBackground = Color3.fromRGB(35, 40, 45),
-			ToggleEnabled = Color3.fromRGB(0, 120, 210),
-			ToggleDisabled = Color3.fromRGB(70, 70, 80),
-			ToggleEnabledStroke = Color3.fromRGB(0, 150, 240),
-			ToggleDisabledStroke = Color3.fromRGB(75, 75, 85),
-			ToggleEnabledOuterStroke = Color3.fromRGB(20, 100, 180), 
-			ToggleDisabledOuterStroke = Color3.fromRGB(55, 55, 65),
-
-			DropdownSelected = Color3.fromRGB(30, 70, 90),
-			DropdownUnselected = Color3.fromRGB(25, 30, 35),
-
-			InputBackground = Color3.fromRGB(25, 30, 35),
-			InputStroke = Color3.fromRGB(45, 50, 60), 
-			PlaceholderColor = Color3.fromRGB(150, 150, 160)
-		},
-
-		Serenity = {
-			TextColor = Color3.fromRGB(50, 55, 60),
-			Background = Color3.fromRGB(240, 245, 250),
-			Topbar = Color3.fromRGB(215, 225, 235),
-			Shadow = Color3.fromRGB(200, 210, 220),
-
-			NotificationBackground = Color3.fromRGB(210, 220, 230),
-			NotificationActionsBackground = Color3.fromRGB(225, 230, 240),
-
-			TabBackground = Color3.fromRGB(200, 210, 220),
-			TabStroke = Color3.fromRGB(180, 190, 200),
-			TabBackgroundSelected = Color3.fromRGB(175, 185, 200),
-			TabTextColor = Color3.fromRGB(50, 55, 60),
-			SelectedTabTextColor = Color3.fromRGB(30, 35, 40),
-
-			ElementBackground = Color3.fromRGB(210, 220, 230),
-			ElementBackgroundHover = Color3.fromRGB(220, 230, 240),
-			SecondaryElementBackground = Color3.fromRGB(200, 210, 220),
-			ElementStroke = Color3.fromRGB(190, 200, 210),
-			SecondaryElementStroke = Color3.fromRGB(180, 190, 200),
-
-			SliderBackground = Color3.fromRGB(200, 220, 235),  -- Lighter shade
-			SliderProgress = Color3.fromRGB(70, 130, 180),
-			SliderStroke = Color3.fromRGB(150, 180, 220),
-
-			ToggleBackground = Color3.fromRGB(210, 220, 230),
-			ToggleEnabled = Color3.fromRGB(70, 160, 210),
-			ToggleDisabled = Color3.fromRGB(180, 180, 180),
-			ToggleEnabledStroke = Color3.fromRGB(60, 150, 200),
-			ToggleDisabledStroke = Color3.fromRGB(140, 140, 140),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 120, 140),
-			ToggleDisabledOuterStroke = Color3.fromRGB(120, 120, 130),
-
-			DropdownSelected = Color3.fromRGB(220, 230, 240),
-			DropdownUnselected = Color3.fromRGB(200, 210, 220),
-
-			InputBackground = Color3.fromRGB(220, 230, 240),
-			InputStroke = Color3.fromRGB(180, 190, 200),
-			PlaceholderColor = Color3.fromRGB(150, 150, 150)
-		},
-	}
+	Theme = {}
 }
 
 -- Compatibility wrapper for loadstring (some executors use different names)
@@ -3840,9 +3995,47 @@ local MODULE_ROOT_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Ra
 _G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
 
 local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
-Compatibility = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. "src/services/compatibility.lua")
-if type(Compatibility) ~= "table" then
-	error("Invalid compatibility module: expected table")
+local function fetchExecuteSafely(path)
+	local ok, result = pcall(ApiClient.fetchAndExecute, MODULE_ROOT_URL .. path)
+	if ok then
+		return true, result
+	end
+	return false, tostring(result)
+end
+
+local okCompatibility, compatibilityResult = fetchExecuteSafely("src/services/compatibility.lua")
+if okCompatibility and type(compatibilityResult) == "table" then
+	Compatibility = compatibilityResult
+else
+	warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT] Failed to load compatibility service; using fallback compatibility.")
+	if not okCompatibility then
+		warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT_REASON] " .. tostring(compatibilityResult))
+	end
+	Compatibility = {
+		getService = function(name)
+			return game:GetService(name)
+		end,
+		getCompileString = function()
+			return compileString
+		end,
+		protectAndParent = function(gui, preferredContainer, opts)
+			local inStudio = opts and opts.useStudio
+			if inStudio then
+				return nil
+			end
+			local okCore, core = pcall(function()
+				return game:GetService("CoreGui")
+			end)
+			if okCore and core then
+				gui.Parent = core
+				return core
+			end
+			return nil
+		end,
+		dedupeGuiByName = function()
+			return
+		end
+	}
 end
 if _G then
 	_G.__RayfieldCompatibility = Compatibility
@@ -3850,15 +4043,41 @@ end
 if type(Compatibility.getService) == "function" then
 	getService = Compatibility.getService
 end
+if type(Compatibility.getCompileString) == "function" then
+	compileString = Compatibility.getCompileString()
+end
 
-local WidgetBootstrap = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. "src/ui/elements/widgets/bootstrap.lua")
+local okWidgetBootstrap, widgetBootstrapResult = fetchExecuteSafely("src/ui/elements/widgets/bootstrap.lua")
+local WidgetBootstrap = okWidgetBootstrap and widgetBootstrapResult or nil
 if type(WidgetBootstrap) ~= "table" or type(WidgetBootstrap.bootstrapWidget) ~= "function" then
-	error("Invalid widget bootstrap module: missing bootstrapWidget")
+	warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS] Failed to load widget bootstrap; using fallback widget loader.")
+	if not okWidgetBootstrap then
+		warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS_REASON] " .. tostring(widgetBootstrapResult))
+	end
+	WidgetBootstrap = {
+		bootstrapWidget = function(widgetName, targetPath, exportAdapter, opts)
+			local moduleValue = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. tostring(targetPath))
+			if opts and opts.expectedType and type(moduleValue) ~= opts.expectedType then
+				error("Rayfield Mod: [E_WIDGET_BOOTSTRAP] " .. tostring(widgetName) .. " expected " .. tostring(opts.expectedType) .. ", got " .. type(moduleValue))
+			end
+			if type(exportAdapter) == "function" then
+				return exportAdapter(moduleValue)
+			end
+			return moduleValue
+		end
+	}
 end
 if _G then
 	_G.__RayfieldWidgetBootstrap = WidgetBootstrap
 end
-local ApiLoader = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. "src/api/loader.lua")
+local okApiLoader, apiLoaderResult = fetchExecuteSafely("src/api/loader.lua")
+if not okApiLoader then
+	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Failed to load API loader: " .. tostring(apiLoaderResult))
+end
+local ApiLoader = apiLoaderResult
+if type(ApiLoader) ~= "table" or type(ApiLoader.load) ~= "function" then
+	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Invalid API loader contract")
+end
 
 local function getScriptRef()
 	local scriptRef = nil
@@ -3869,28 +4088,231 @@ local function getScriptRef()
 end
 
 local function loadModule(moduleName)
-	return ApiLoader.load(moduleName, {
+	local opts = {
 		tryStudioRequire = useStudio,
-		scriptRef = getScriptRef()
-	})
+		scriptRef = getScriptRef(),
+		allowLegacyFallback = true
+	}
+	if type(ApiLoader.tryLoad) == "function" then
+		return ApiLoader.tryLoad(moduleName, opts)
+	end
+	local ok, result = pcall(ApiLoader.load, moduleName, opts)
+	if ok then
+		return true, result
+	end
+	return false, tostring(result)
 end
 
-local ThemeModule = loadModule("theme")
-local SettingsModuleLib = loadModule("settings")
-local ElementSyncModuleLib = loadModule("elementSync")
-local KeybindSequenceLib = loadModule("keybindSequence")
-local DragModuleLib = loadModule("drag")
-local UIStateModuleLib = loadModule("uiState")
-local ElementsModuleLib = loadModule("elements")
-local ConfigModuleLib = loadModule("config")
-local UtilitiesModuleLib = loadModule("utilities")
-local TabSplitModuleLib = loadModule("tabSplit")
-local AnimationEngineLib = loadModule("animationEngine")
-local AnimationPublicLib = loadModule("animationPublic")
-local AnimationSequenceLib = loadModule("animationSequence")
-local AnimationUILib = loadModule("animationUI")
-local AnimationTextLib = loadModule("animationText")
-local AnimationCleanupLib = loadModule("animationCleanup")
+local function formatLoaderError(code, message)
+	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
+end
+
+local function requireModule(moduleName, hint)
+	local ok, result = loadModule(moduleName)
+	if ok then
+		return result
+	end
+	local reason = tostring(result)
+	if hint then
+		reason = tostring(hint) .. "\n" .. reason
+	end
+	error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
+end
+
+local loaderDiagnostics = {
+	optionalFailed = {},
+	notified = false,
+	performanceProfile = nil
+}
+if _G then
+	_G.__RAYFIELD_LOADER_DIAGNOSTICS = loaderDiagnostics
+end
+
+local function optionalModule(moduleName, fallbackModule, hint)
+	local ok, result = loadModule(moduleName)
+	if ok then
+		return result
+	end
+	table.insert(loaderDiagnostics.optionalFailed, {
+		module = moduleName,
+		error = tostring(result)
+	})
+	local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
+	if hint then
+		message = message .. " " .. tostring(hint)
+	end
+	warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
+	return fallbackModule
+end
+
+local function maybeNotifyLoaderFallback()
+	if loaderDiagnostics.notified or #loaderDiagnostics.optionalFailed == 0 then
+		return
+	end
+	loaderDiagnostics.notified = true
+	local moduleNames = {}
+	for _, item in ipairs(loaderDiagnostics.optionalFailed) do
+		table.insert(moduleNames, tostring(item.module))
+	end
+	local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
+	if type(RayfieldLibrary.Notify) == "function" then
+		pcall(function()
+			RayfieldLibrary:Notify({
+				Title = "Rayfield Loader",
+				Content = message,
+				Duration = 8
+			})
+		end)
+	else
+		warn(formatLoaderError("W_OPTIONAL_MODULE", message))
+	end
+end
+
+local FallbackElementSyncModule = {
+	init = function()
+		return nil
+	end
+}
+
+local FallbackOwnershipTrackerModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			createScope = function(scopeId)
+				return tostring(scopeId or "")
+			end,
+			makeScopeId = function(kind, id)
+				return tostring(kind or "scope") .. ":" .. tostring(id or "")
+			end,
+			claimInstance = noopReturnFalse,
+			trackConnection = noopReturnFalse,
+			trackTask = noopReturnFalse,
+			trackCleanup = noopReturnFalse,
+			cleanupScope = noopReturnFalse,
+			cleanupByInstance = noopReturnFalse,
+			cleanupSession = noopReturnFalse,
+			getStats = function()
+				return {
+					scopes = 0,
+					instances = 0,
+					connections = 0,
+					tasks = 0,
+					cleanups = 0
+				}
+			end,
+			getSignature = noopReturnNil
+		}
+	end
+}
+
+local FallbackDragModule = {
+	init = function()
+		local function noop() end
+		return {
+			makeElementDetachable = function()
+				return nil
+			end,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function()
+				return {}
+			end,
+			applyLayoutSnapshot = function()
+				return false
+			end
+		}
+	end
+}
+
+local FallbackTabSplitModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerTab = noop,
+			unregisterTab = noop,
+			splitTab = function() return false end,
+			dockTab = function() return false end,
+			layoutPanels = noop,
+			syncHidden = noop,
+			syncMinimized = noop,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function() return {} end,
+			applyLayoutSnapshot = function() return false end,
+			destroy = noop
+		}
+	end
+}
+
+local FallbackLayoutPersistenceModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerProvider = noop,
+			unregisterProvider = noop,
+			getLayoutSnapshot = function() return nil end,
+			applyLayoutSnapshot = function() return false end,
+			markDirty = noop,
+			flush = noop,
+			isApplying = function() return false end,
+			isDirty = function() return false end
+		}
+	end
+}
+
+local FallbackViewportVirtualizationModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			registerHost = noopReturnFalse,
+			unregisterHost = noopReturnFalse,
+			refreshHost = noopReturnFalse,
+			setHostSuppressed = noopReturnFalse,
+			registerElement = noopReturnNil,
+			unregisterElement = noopReturnFalse,
+			moveElementToHost = noopReturnFalse,
+			setElementBusy = noopReturnFalse,
+			notifyElementHostChanged = noopReturnFalse,
+			getStats = function()
+				return {
+					hosts = 0,
+					elements = 0,
+					sleeping = 0
+				}
+			end,
+			destroy = function() end
+		}
+	end
+}
+
+local ThemeModule = requireModule("theme")
+-- Load utilities early so shared helpers are registered globally before other services initialize.
+local UtilitiesModuleLib = requireModule("utilities")
+local SettingsModuleLib = requireModule("settings")
+local OwnershipTrackerModuleLib = optionalModule("ownershipTracker", FallbackOwnershipTrackerModule, "Scoped ownership cleanup will run in compatibility mode.")
+local ElementSyncModuleLib = optionalModule("elementSync", FallbackElementSyncModule, "Element state sync will run in compatibility mode.")
+local KeybindSequenceLib = requireModule("keybindSequence")
+local DragModuleLib = optionalModule("drag", FallbackDragModule, "Detach/reorder advanced drag features are disabled for this session.")
+local UIStateModuleLib = requireModule("uiState")
+local ElementsModuleLib = requireModule("elements")
+local ConfigModuleLib = requireModule("config")
+local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
+local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
+local TabSplitModuleLib = optionalModule("tabSplit", FallbackTabSplitModule, "Tab split features are disabled for this session.")
+local AnimationEngineLib = requireModule("animationEngine")
+local AnimationPublicLib = requireModule("animationPublic")
+local AnimationSequenceLib = requireModule("animationSequence")
+local AnimationUILib = requireModule("animationUI")
+local AnimationTextLib = requireModule("animationText")
+local AnimationCleanupLib = requireModule("animationCleanup")
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -4008,6 +4430,7 @@ end
 
 local minSize = Vector2.new(1024, 768)
 local useMobileSizing
+local useMobilePrompt = false
 
 if Rayfield.AbsoluteSize.X < minSize.X and Rayfield.AbsoluteSize.Y < minSize.Y then
 	useMobileSizing = true
@@ -4063,14 +4486,95 @@ local Hidden = false
 local Debounce = false
 local searchOpen = false
 local Notifications = Rayfield.Notifications
+local ElementsSystem = nil
 local ElementSyncSystem = nil
+local OwnershipSystem = nil
 local keybindConnections = {} -- For storing keybind connections to disconnect when Rayfield is destroyed
+local layoutConnections = {}
+local LayoutPersistenceSystem = nil
+local ViewportVirtualizationSystem = nil
+local layoutSavingEnabled = false
+local layoutDebounceMs = 300
+local detachPathEnabled = true
+local activePerformanceProfile = {
+	enabled = false,
+	requestedMode = "normal",
+	resolvedMode = "normal",
+	aggressive = false,
+	disableDetach = false,
+	disableTabSplit = false,
+	disableAnimations = false,
+	appliedFields = {}
+}
+local ExperienceState = {
+	uiPreset = "Comfort",
+	transitionProfile = "Smooth",
+	onboardingSuppressed = false,
+	favoritesTab = nil,
+	favoritesTabWindow = nil,
+	onboardingOverlay = nil,
+	onboardingRendered = false,
+	themeStudioState = {
+		baseTheme = "Default",
+		useCustom = false,
+		customThemePacked = {}
+	}
+}
+local experienceSuppressPromoPrompts = false
+local favoritesRegistryUnsubscribe = nil
 local uiToggleKeybindMatcher = KeybindSequenceLib.newMatcher({
 	maxSteps = 4,
 	stepTimeoutMs = 800
 })
 local cachedUiToggleKeybindRaw = nil
 local cachedUiToggleKeybindSpec = nil
+
+local function initializeOwnershipTracking()
+	local okInit, trackerOrErr = pcall(OwnershipTrackerModuleLib.init, {
+		owner = "rayfield-mod",
+		scopePrefix = "rayfield",
+		HttpService = HttpService,
+		getRootGui = function()
+			return Rayfield
+		end
+	})
+	if not okInit or type(trackerOrErr) ~= "table" then
+		warn("Rayfield Mod: [W_OWNERSHIP_INIT] Failed to initialize ownership tracker: " .. tostring(trackerOrErr))
+		return nil
+	end
+
+	local tracker = trackerOrErr
+	local runtimeScope = "runtime:root"
+	local hotkeyScope = "runtime:hotkeys"
+	local layoutScope = "runtime:layout"
+
+	if type(tracker.createScope) == "function" then
+		pcall(tracker.createScope, runtimeScope, {
+			kind = "runtime"
+		})
+		pcall(tracker.createScope, hotkeyScope, {
+			kind = "runtime_hotkeys"
+		})
+		pcall(tracker.createScope, layoutScope, {
+			kind = "runtime_layout"
+		})
+	end
+	if type(tracker.claimInstance) == "function" then
+		pcall(tracker.claimInstance, Rayfield, runtimeScope, { node = "RayfieldRoot" })
+		pcall(tracker.claimInstance, Main, runtimeScope, { node = "Main" })
+		pcall(tracker.claimInstance, Topbar, runtimeScope, { node = "Topbar" })
+		pcall(tracker.claimInstance, Elements, runtimeScope, { node = "Elements" })
+		pcall(tracker.claimInstance, TabList, runtimeScope, { node = "TabList" })
+		pcall(tracker.claimInstance, Notifications, runtimeScope, { node = "Notifications" })
+	end
+
+	if _G then
+		_G.__RayfieldOwnership = tracker
+	end
+	return tracker
+end
+
+OwnershipSystem = initializeOwnershipTracking()
 
 local function resolveUiToggleKeybindSpec(rawBinding)
 	if rawBinding == cachedUiToggleKeybindRaw and cachedUiToggleKeybindSpec then
@@ -4092,6 +4596,21 @@ local function resolveUiToggleKeybindSpec(rawBinding)
 		steps = steps
 	}
 	return cachedUiToggleKeybindSpec
+end
+
+local function cleanupLayoutConnections()
+	for _, connection in ipairs(layoutConnections) do
+		if connection then
+			connection:Disconnect()
+		end
+	end
+	table.clear(layoutConnections)
+end
+
+local function markLayoutDirty(scope, reason)
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.markDirty) == "function" then
+		LayoutPersistenceSystem.markDirty((scope or "layout") .. ":" .. (reason or "update"))
+	end
 end
 
 AnimationEngine:SetUiSuppressionProvider(function()
@@ -4174,6 +4693,8 @@ local SettingsSystem = SettingsModuleLib.init({
 -- Initialize Configuration Module
 local ConfigSystem = ConfigModuleLib.init({
 	HttpService = HttpService,
+	TweenService = TweenService,
+	Animation = Animation,
 	RayfieldLibrary = RayfieldLibrary,
 	callSafely = callSafely,
 	ConfigurationFolder = ConfigurationFolder,
@@ -4181,6 +4702,22 @@ local ConfigSystem = ConfigModuleLib.init({
 	getCFileName = function() return CFileName end,
 	getCEnabled = function() return CEnabled end,
 	getGlobalLoaded = function() return globalLoaded end,
+	getLayoutSnapshot = function()
+		if LayoutPersistenceSystem and type(LayoutPersistenceSystem.getLayoutSnapshot) == "function" then
+			return LayoutPersistenceSystem.getLayoutSnapshot()
+		end
+		return nil
+	end,
+	applyLayoutSnapshot = function(layoutData)
+		if LayoutPersistenceSystem and type(LayoutPersistenceSystem.applyLayoutSnapshot) == "function" then
+			return LayoutPersistenceSystem.applyLayoutSnapshot(layoutData)
+		end
+		return false
+	end,
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	layoutKey = "__rayfield_layout",
 	useStudio = useStudio,
 	debugX = debugX
 })
@@ -4221,6 +4758,13 @@ local function updateSetting(category, setting, value)
 	return SettingsSystem.updateSetting(category, setting, value)
 end
 
+local function setSettingValue(category, setting, value, persist)
+	if SettingsSystem and type(SettingsSystem.setSettingValue) == "function" then
+		return SettingsSystem.setSettingValue(category, setting, value, persist)
+	end
+	return false, "Settings system unavailable."
+end
+
 local function loadSettings()
 	return SettingsSystem.loadSettings()
 end
@@ -4259,7 +4803,18 @@ local DragSystem = DragModuleLib.init({
 	getIcon = getIcon,
 	getAssetUri = getAssetUri,
 	getSelectedTheme = function() return SelectedTheme end,
+	getSetting = getSetting,
+	useMobileSizing = useMobileSizing,
+	getDetachEnabled = function()
+		return detachPathEnabled
+	end,
 	rayfieldDestroyed = function() return rayfieldDestroyed end,
+	onLayoutDirty = function(scope, reason)
+		markLayoutDirty(scope, reason)
+	end,
+	getViewportVirtualization = function()
+		return ViewportVirtualizationSystem
+	end,
 	ElementSync = {
 		resync = function(token, reason)
 			if ElementSyncSystem and type(ElementSyncSystem.resync) == "function" then
@@ -4272,6 +4827,9 @@ local DragSystem = DragModuleLib.init({
 
 -- Detach helper wrapper
 local function makeElementDetachable(guiObject, elementName, elementType)
+	if detachPathEnabled == false then
+		return nil
+	end
 	return DragSystem.makeElementDetachable(guiObject, elementName, elementType)
 end
 
@@ -4321,6 +4879,7 @@ local function Hide(notify)
 		TabSplitSystem.syncHidden(Hidden)
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "hide")
 end
 
 local function Unhide()
@@ -4333,6 +4892,7 @@ local function Unhide()
 		TabSplitSystem.syncHidden(Hidden)
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "unhide")
 end
 
 local function Maximise()
@@ -4343,6 +4903,7 @@ local function Maximise()
 	if TabSplitSystem then
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "maximise")
 end
 
 local function Minimise()
@@ -4353,6 +4914,7 @@ local function Minimise()
 	if TabSplitSystem then
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "minimise")
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
@@ -4389,6 +4951,1231 @@ local function SaveConfiguration()
 	return ConfigSystem.SaveConfiguration()
 end
 
+local SHARE_CODE_PREFIX = "RFSC1:"
+local SHARE_PAYLOAD_VERSION = 1
+local SHARE_PAYLOAD_TYPE = "rayfield_share"
+local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local activeShareCode = ""
+local activeSharePayload = nil
+
+local function trimString(value)
+	value = tostring(value or "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
+end
+
+local function fallbackBase64Encode(input)
+	local source = tostring(input or "")
+	local bits = source:gsub(".", function(character)
+		local byteValue = string.byte(character)
+		local chunk = ""
+		for index = 8, 1, -1 do
+			if byteValue % (2 ^ index) - byteValue % (2 ^ (index - 1)) > 0 then
+				chunk = chunk .. "1"
+			else
+				chunk = chunk .. "0"
+			end
+		end
+		return chunk
+	end)
+
+	local paddedBits = bits .. "0000"
+	local encoded = paddedBits:gsub("%d%d%d?%d?%d?%d?", function(chunk)
+		if #chunk < 6 then
+			return ""
+		end
+		local value = 0
+		for index = 1, 6 do
+			if chunk:sub(index, index) == "1" then
+				value += 2 ^ (6 - index)
+			end
+		end
+		return BASE64_ALPHABET:sub(value + 1, value + 1)
+	end)
+
+	return encoded .. ({ "", "==", "=" })[#source % 3 + 1]
+end
+
+local function fallbackBase64Decode(input)
+	local source = tostring(input or "")
+	source = source:gsub("%s+", "")
+	source = source:gsub("[^" .. BASE64_ALPHABET .. "=]", "")
+
+	local bits = source:gsub(".", function(character)
+		if character == "=" then
+			return ""
+		end
+		local index = BASE64_ALPHABET:find(character, 1, true)
+		if not index then
+			return ""
+		end
+		local value = index - 1
+		local chunk = ""
+		for bit = 6, 1, -1 do
+			if value % (2 ^ bit) - value % (2 ^ (bit - 1)) > 0 then
+				chunk = chunk .. "1"
+			else
+				chunk = chunk .. "0"
+			end
+		end
+		return chunk
+	end)
+
+	return bits:gsub("%d%d%d?%d?%d?%d?%d?%d?", function(chunk)
+		if #chunk ~= 8 then
+			return ""
+		end
+		local value = 0
+		for index = 1, 8 do
+			if chunk:sub(index, index) == "1" then
+				value += 2 ^ (8 - index)
+			end
+		end
+		return string.char(value)
+	end)
+end
+
+local function encodeBase64(input)
+	if HttpService and type(HttpService.Base64Encode) == "function" then
+		local okEncoded, encoded = pcall(HttpService.Base64Encode, HttpService, input)
+		if okEncoded and type(encoded) == "string" then
+			return true, encoded
+		end
+	end
+
+	local okFallback, encoded = pcall(fallbackBase64Encode, input)
+	if not okFallback then
+		return false, tostring(encoded)
+	end
+	return true, encoded
+end
+
+local function decodeBase64(input)
+	if HttpService and type(HttpService.Base64Decode) == "function" then
+		local okDecoded, decoded = pcall(HttpService.Base64Decode, HttpService, input)
+		if okDecoded and type(decoded) == "string" then
+			return true, decoded
+		end
+	end
+
+	local okFallback, decoded = pcall(fallbackBase64Decode, input)
+	if not okFallback then
+		return false, tostring(decoded)
+	end
+	return true, decoded
+end
+
+local function buildGeneratedAtStamp()
+	local okDate, value = pcall(function()
+		return os.date("!%Y-%m-%dT%H:%M:%SZ")
+	end)
+	if okDate and type(value) == "string" then
+		return value
+	end
+	local okTick, tickValue = pcall(function()
+		return tostring(math.floor((tick and tick() or 0) * 1000))
+	end)
+	if okTick and type(tickValue) == "string" then
+		return tickValue
+	end
+	return "unknown"
+end
+
+local function validateSharePayload(payload)
+	if type(payload) ~= "table" then
+		return false, "Share code payload is invalid."
+	end
+	if payload.type ~= SHARE_PAYLOAD_TYPE then
+		return false, "Share code payload type is invalid."
+	end
+	if tonumber(payload.version) ~= SHARE_PAYLOAD_VERSION then
+		return false, "Share code version is unsupported."
+	end
+	if type(payload.configuration) ~= "table" then
+		return false, "Share code is missing configuration data."
+	end
+	if type(payload.internalSettings) ~= "table" then
+		return false, "Share code is missing internal settings data."
+	end
+	return true
+end
+
+local function setActiveSharePayload(code, payload)
+	activeShareCode = tostring(code or "")
+	activeSharePayload = payload
+	if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+		pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+	end
+end
+
+local function encodeSharePayload(payload)
+	local okJson, jsonOrErr = pcall(function()
+		return HttpService:JSONEncode(payload)
+	end)
+	if not okJson or type(jsonOrErr) ~= "string" then
+		return nil, "Failed to encode share payload."
+	end
+
+	local okBase64, encodedOrErr = encodeBase64(jsonOrErr)
+	if not okBase64 then
+		return nil, "Failed to encode share payload as Base64."
+	end
+
+	return SHARE_CODE_PREFIX .. encodedOrErr
+end
+
+local function decodeShareCode(code)
+	local normalized = trimString(code)
+	if normalized == "" then
+		return false, "Share code cannot be empty."
+	end
+	if normalized:sub(1, #SHARE_CODE_PREFIX) ~= SHARE_CODE_PREFIX then
+		return false, "Share code prefix is invalid."
+	end
+
+	local encodedBody = normalized:sub(#SHARE_CODE_PREFIX + 1):gsub("%s+", "")
+	if encodedBody == "" then
+		return false, "Share code payload is empty."
+	end
+
+	local okDecode, decodedOrErr = decodeBase64(encodedBody)
+	if not okDecode or type(decodedOrErr) ~= "string" then
+		return false, "Share code Base64 payload is invalid."
+	end
+
+	local okJson, payloadOrErr = pcall(function()
+		return HttpService:JSONDecode(decodedOrErr)
+	end)
+	if not okJson or type(payloadOrErr) ~= "table" then
+		return false, "Share code JSON payload is invalid."
+	end
+
+	return true, SHARE_CODE_PREFIX .. encodedBody, payloadOrErr
+end
+
+local function notifyShareCodeStatus(success, message)
+	if not UIStateSystem or type(UIStateSystem.Notify) ~= "function" then
+		return
+	end
+	local content = tostring(message or "")
+	if content == "" then
+		if success then
+			content = "Share code operation completed."
+		else
+			content = "Share code operation failed."
+		end
+	end
+	pcall(UIStateSystem.Notify, {
+		Title = "Rayfield Share Code",
+		Content = content,
+		Image = success and 4483362458 or 4384402990
+	})
+end
+
+function RayfieldLibrary:ImportCode(code)
+	local okDecode, canonicalOrMessage, payload = decodeShareCode(code)
+	if not okDecode then
+		return false, tostring(canonicalOrMessage)
+	end
+
+	local validPayload, payloadMessage = validateSharePayload(payload)
+	if not validPayload then
+		return false, tostring(payloadMessage)
+	end
+
+	setActiveSharePayload(canonicalOrMessage, payload)
+	return true, "Share code imported."
+end
+
+function RayfieldLibrary:ImportSettings()
+	if type(activeSharePayload) ~= "table" then
+		return false, "No active share code. Import code first."
+	end
+
+	local validPayload, payloadMessage = validateSharePayload(activeSharePayload)
+	if not validPayload then
+		return false, tostring(payloadMessage)
+	end
+
+	if not ConfigSystem or type(ConfigSystem.ImportConfigurationData) ~= "function" then
+		return false, "Configuration import is unavailable."
+	end
+	if not SettingsSystem or type(SettingsSystem.ImportInternalSettingsData) ~= "function" then
+		return false, "Internal settings import is unavailable."
+	end
+
+	local okConfig, configSuccess, configDetail = pcall(ConfigSystem.ImportConfigurationData, activeSharePayload.configuration)
+	if not okConfig then
+		return false, "Failed to apply configuration data: " .. tostring(configSuccess)
+	end
+	if configSuccess ~= true then
+		return false, tostring(configDetail or "Failed to apply configuration data.")
+	end
+
+	local okInternal, internalSuccess, internalDetail = pcall(SettingsSystem.ImportInternalSettingsData, activeSharePayload.internalSettings)
+	if not okInternal then
+		return false, "Failed to apply internal settings: " .. tostring(internalSuccess)
+	end
+	if internalSuccess ~= true then
+		return false, tostring(internalDetail or "Failed to apply internal settings.")
+	end
+
+	local persistenceWarnings = {}
+	if ConfigSystem and type(ConfigSystem.SaveConfigurationForced) == "function" then
+		local okPersistConfig, persistedConfig = pcall(ConfigSystem.SaveConfigurationForced)
+		if not okPersistConfig or persistedConfig == false then
+			table.insert(persistenceWarnings, "configuration")
+		end
+	end
+
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		local okPersistSettings, persistedSettings = pcall(SettingsSystem.saveSettings)
+		if not okPersistSettings or persistedSettings == false then
+			table.insert(persistenceWarnings, "internal settings")
+		end
+	end
+
+	if #persistenceWarnings > 0 then
+		return true, "Share settings applied, but persistence failed for: " .. table.concat(persistenceWarnings, ", ") .. "."
+	end
+
+	local changedConfiguration = configDetail == true
+	local appliedInternalCount = tonumber(internalDetail) or 0
+	if changedConfiguration or appliedInternalCount > 0 then
+		return true, "Share settings applied."
+	end
+
+	return true, "Share settings were already up to date."
+end
+
+function RayfieldLibrary:ExportSettings()
+	if not ConfigSystem or type(ConfigSystem.ExportConfigurationData) ~= "function" then
+		return nil, "Configuration export is unavailable."
+	end
+	if not SettingsSystem or type(SettingsSystem.ExportInternalSettingsData) ~= "function" then
+		return nil, "Internal settings export is unavailable."
+	end
+
+	local okConfig, configurationData = pcall(ConfigSystem.ExportConfigurationData)
+	if not okConfig or type(configurationData) ~= "table" then
+		return nil, "Failed to collect configuration data."
+	end
+
+	local okSettings, internalSettingsData = pcall(SettingsSystem.ExportInternalSettingsData)
+	if not okSettings or type(internalSettingsData) ~= "table" then
+		return nil, "Failed to collect internal settings data."
+	end
+
+	local payload = {
+		type = SHARE_PAYLOAD_TYPE,
+		version = SHARE_PAYLOAD_VERSION,
+		configuration = configurationData,
+		internalSettings = internalSettingsData,
+		meta = {
+			generatedAt = buildGeneratedAtStamp(),
+			interfaceBuild = InterfaceBuild,
+			release = Release
+		}
+	}
+
+	local encodedCode, encodedErr = encodeSharePayload(payload)
+	if type(encodedCode) ~= "string" then
+		return nil, tostring(encodedErr or "Failed to export share code.")
+	end
+
+	setActiveSharePayload(encodedCode, payload)
+	return encodedCode, "ok"
+end
+
+function RayfieldLibrary:CopyShareCode(suppressNotify)
+	local shouldNotify = suppressNotify ~= true
+
+	if type(activeShareCode) ~= "string" or activeShareCode == "" then
+		local message = "No active share code. Export or import a code first."
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local clipboardWriter = nil
+	if type(setclipboard) == "function" then
+		clipboardWriter = setclipboard
+	elseif type(toclipboard) == "function" then
+		clipboardWriter = toclipboard
+	end
+
+	if type(clipboardWriter) ~= "function" then
+		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+		end
+		local message = "Clipboard is unavailable. Share code was placed in the Share Code input."
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local okCopy, copyErr = pcall(clipboardWriter, activeShareCode)
+	if not okCopy then
+		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+		end
+		local message = "Failed to copy share code: " .. tostring(copyErr)
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local message = "Share code copied to clipboard."
+	if shouldNotify then
+		notifyShareCodeStatus(true, message)
+	end
+	return true, message
+end
+
+if SettingsSystem and type(SettingsSystem.setShareCodeHandlers) == "function" then
+	SettingsSystem.setShareCodeHandlers({
+		importCode = function(code)
+			local ok, message = RayfieldLibrary:ImportCode(code)
+			return ok, message
+		end,
+		importSettings = function()
+			local ok, message = RayfieldLibrary:ImportSettings()
+			return ok, message
+		end,
+		exportSettings = function()
+			local code, message = RayfieldLibrary:ExportSettings()
+			return code, message
+		end,
+		copyShareCode = function()
+			local ok, message = RayfieldLibrary:CopyShareCode(true)
+			return ok, message
+		end,
+		getActiveShareCode = function()
+			return activeShareCode
+		end,
+		notify = function(success, message)
+			notifyShareCodeStatus(success == true, message)
+		end
+	})
+end
+
+local UI_PRESET_NAMES = {
+	Compact = true,
+	Comfort = true,
+	Focus = true
+}
+local TRANSITION_PROFILE_NAMES = {
+	Minimal = true,
+	Smooth = true,
+	Snappy = true,
+	Off = true
+}
+local THEME_STUDIO_KEYS = {}
+for themeKey in pairs(ThemeModule.Themes.Default or {}) do
+	table.insert(THEME_STUDIO_KEYS, themeKey)
+end
+table.sort(THEME_STUDIO_KEYS)
+
+local function cloneValue(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, nested in pairs(value) do
+		out[cloneValue(key)] = cloneValue(nested)
+	end
+	return out
+end
+
+local function cloneArray(values)
+	local out = {}
+	if type(values) ~= "table" then
+		return out
+	end
+	for index, value in ipairs(values) do
+		out[index] = value
+	end
+	return out
+end
+
+local function normalizePresetName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "compact" then
+		return "Compact"
+	elseif normalized == "comfort" then
+		return "Comfort"
+	elseif normalized == "focus" then
+		return "Focus"
+	end
+	return nil
+end
+
+local function normalizeTransitionProfileName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "minimal" then
+		return "Minimal"
+	elseif normalized == "smooth" then
+		return "Smooth"
+	elseif normalized == "snappy" then
+		return "Snappy"
+	elseif normalized == "off" then
+		return "Off"
+	end
+	return nil
+end
+
+local function color3ToPacked(color)
+	if typeof(color) ~= "Color3" then
+		return nil
+	end
+	return {
+		R = math.floor(color.R * 255 + 0.5),
+		G = math.floor(color.G * 255 + 0.5),
+		B = math.floor(color.B * 255 + 0.5)
+	}
+end
+
+local function packedToColor3(packed)
+	if type(packed) ~= "table" then
+		return nil
+	end
+	local r = tonumber(packed.R)
+	local g = tonumber(packed.G)
+	local b = tonumber(packed.B)
+	if not (r and g and b) then
+		return nil
+	end
+	return Color3.fromRGB(math.clamp(math.floor(r + 0.5), 0, 255), math.clamp(math.floor(g + 0.5), 0, 255), math.clamp(math.floor(b + 0.5), 0, 255))
+end
+
+local function listThemeNames()
+	local names = {}
+	for themeName in pairs(ThemeModule.Themes or {}) do
+		table.insert(names, themeName)
+	end
+	table.sort(names)
+	return names
+end
+
+local function getMainScale()
+	if not Main then
+		return nil
+	end
+	local existing = Main:FindFirstChild("RayfieldMainScale")
+	if existing and existing:IsA("UIScale") then
+		return existing
+	end
+	local scale = Instance.new("UIScale")
+	scale.Name = "RayfieldMainScale"
+	scale.Scale = 1
+	scale.Parent = Main
+	return scale
+end
+
+local function setTransitionProfileInternal(name, persist)
+	local canonical = normalizeTransitionProfileName(name)
+	if not canonical then
+		return false, "Invalid transition profile."
+	end
+	if not TRANSITION_PROFILE_NAMES[canonical] then
+		return false, "Invalid transition profile."
+	end
+	if not AnimationEngine or type(AnimationEngine.SetTransitionProfile) ~= "function" then
+		return false, "Animation engine unavailable."
+	end
+
+	local okSet, resultOrErr = AnimationEngine:SetTransitionProfile(canonical)
+	if not okSet then
+		return false, tostring(resultOrErr or "Failed to apply transition profile.")
+	end
+
+	ExperienceState.transitionProfile = canonical
+	if persist ~= false then
+		setSettingValue("Appearance", "transitionProfile", canonical, true)
+	end
+	return true, "Transition profile set to " .. canonical .. "."
+end
+
+local function setUIPresetInternal(name, persist)
+	local canonical = normalizePresetName(name)
+	if not canonical then
+		return false, "Invalid UI preset."
+	end
+	if not UI_PRESET_NAMES[canonical] then
+		return false, "Invalid UI preset."
+	end
+
+	local uiScale = getMainScale()
+	if uiScale then
+		if canonical == "Compact" then
+			uiScale.Scale = 0.93
+		else
+			uiScale.Scale = 1.0
+		end
+	end
+
+	local topbarSearch = Topbar and Topbar:FindFirstChild("Search")
+	if topbarSearch then
+		topbarSearch.Visible = canonical ~= "Focus"
+		if canonical == "Focus" and searchOpen then
+			pcall(closeSearch)
+		end
+	end
+
+	experienceSuppressPromoPrompts = canonical == "Focus"
+	ExperienceState.uiPreset = canonical
+
+	local defaultTransitionByPreset = {
+		Compact = "Snappy",
+		Comfort = "Smooth",
+		Focus = "Minimal"
+	}
+	local transitionName = defaultTransitionByPreset[canonical] or "Smooth"
+	setTransitionProfileInternal(transitionName, persist ~= false)
+
+	if persist ~= false then
+		setSettingValue("Appearance", "uiPreset", canonical, true)
+	end
+
+	return true, "UI preset set to " .. canonical .. "."
+end
+
+local function buildThemeStudioTheme(baseThemeName, packedOverrides)
+	local baseTheme = ThemeModule.Themes[baseThemeName] or ThemeModule.Themes.Default or {}
+	local out = {}
+	for themeKey, value in pairs(baseTheme) do
+		out[themeKey] = value
+	end
+
+	if type(packedOverrides) == "table" then
+		for themeKey, packedColor in pairs(packedOverrides) do
+			local color = packedToColor3(packedColor)
+			if color and out[themeKey] ~= nil then
+				out[themeKey] = color
+			end
+		end
+	end
+	return out
+end
+
+local function getThemeStudioColor(themeKey)
+	if type(themeKey) ~= "string" or themeKey == "" then
+		return nil
+	end
+	local packed = ExperienceState.themeStudioState.customThemePacked[themeKey]
+	if packed then
+		local unpacked = packedToColor3(packed)
+		if unpacked then
+			return unpacked
+		end
+	end
+	local baseThemeName = ExperienceState.themeStudioState.baseTheme
+	local baseTheme = ThemeModule.Themes[baseThemeName] or ThemeModule.Themes.Default
+	return baseTheme and baseTheme[themeKey] or nil
+end
+
+local function applyThemeStudioState(persist)
+	local baseThemeName = ExperienceState.themeStudioState.baseTheme
+	local useCustom = ExperienceState.themeStudioState.useCustom == true
+	if not ThemeModule.Themes[baseThemeName] then
+		baseThemeName = "Default"
+		ExperienceState.themeStudioState.baseTheme = baseThemeName
+	end
+
+	if useCustom then
+		local customTheme = buildThemeStudioTheme(baseThemeName, ExperienceState.themeStudioState.customThemePacked)
+		ChangeTheme(customTheme)
+	else
+		ChangeTheme(baseThemeName)
+	end
+
+	if persist ~= false then
+		setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
+		setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, false)
+		setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), true)
+	end
+
+	return true, "Theme studio state applied."
+end
+
+local function setThemeStudioBaseTheme(name, persist)
+	local themeName = tostring(name or "")
+	if not ThemeModule.Themes[themeName] then
+		return false, "Theme not found."
+	end
+	ExperienceState.themeStudioState.baseTheme = themeName
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function setThemeStudioUseCustom(value, persist)
+	ExperienceState.themeStudioState.useCustom = value == true
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function setThemeStudioColor(themeKey, color)
+	if type(themeKey) ~= "string" or themeKey == "" then
+		return false, "Theme key is invalid."
+	end
+	if typeof(color) ~= "Color3" then
+		return false, "Color must be Color3."
+	end
+	if (ThemeModule.Themes.Default or {})[themeKey] == nil then
+		return false, "Unknown theme key."
+	end
+	ExperienceState.themeStudioState.customThemePacked[themeKey] = color3ToPacked(color)
+	ExperienceState.themeStudioState.useCustom = true
+	return applyThemeStudioState(false)
+end
+
+local function resetThemeStudioState(persist)
+	ExperienceState.themeStudioState.useCustom = false
+	ExperienceState.themeStudioState.customThemePacked = {}
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function refreshFavoritesSettingsPersistence()
+	if ElementsSystem and type(ElementsSystem.getPinnedIds) == "function" then
+		local pinnedIds = ElementsSystem.getPinnedIds(true)
+		setSettingValue("Favorites", "pinnedIds", cloneArray(pinnedIds), true)
+	end
+end
+
+local function highlightFavoriteControl(record)
+	if not record or not record.GuiObject or not record.GuiObject.Parent then
+		return
+	end
+	local guiObject = record.GuiObject
+	local okColor, originalColor = pcall(function()
+		return guiObject.BackgroundColor3
+	end)
+	if not okColor then
+		return
+	end
+	local targetColor = (SelectedTheme and SelectedTheme.SliderProgress) or originalColor
+	Animation:Create(guiObject, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = targetColor}):Play()
+	task.delay(0.22, function()
+		if guiObject and guiObject.Parent then
+			Animation:Create(guiObject, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = originalColor}):Play()
+		end
+	end)
+end
+
+local function renderFavoritesTab()
+	local favoritesTab = ExperienceState.favoritesTab
+	if not favoritesTab or type(favoritesTab.Clear) ~= "function" then
+		return false
+	end
+
+	favoritesTab:Clear()
+	favoritesTab:CreateSection("Pinned Controls")
+
+	if not ElementsSystem or type(ElementsSystem.listControlsForFavorites) ~= "function" then
+		favoritesTab:CreateLabel("Control registry unavailable.")
+		return false
+	end
+
+	local controls = ElementsSystem.listControlsForFavorites(true)
+	local pinnedControls = {}
+	for _, control in ipairs(controls) do
+		if control.pinned == true then
+			table.insert(pinnedControls, control)
+		end
+	end
+
+	if #pinnedControls <= 0 then
+		favoritesTab:CreateLabel("No pinned controls yet.")
+		return true
+	end
+
+	for _, control in ipairs(pinnedControls) do
+		favoritesTab:CreateButton({
+			Name = string.format("[%s] %s", tostring(control.type or "Element"), tostring(control.name or control.id)),
+			Callback = function()
+				if ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+					ElementsSystem.activateTabByPersistenceId(control.tabId, true)
+				end
+				if ElementsSystem and type(ElementsSystem.getControlRecordById) == "function" then
+					local record = ElementsSystem.getControlRecordById(control.id)
+					highlightFavoriteControl(record)
+				end
+			end
+		})
+	end
+
+	return true
+end
+
+local function ensureFavoritesTab(windowRef)
+	if not windowRef then
+		return nil, "Window unavailable."
+	end
+	if ExperienceState.favoritesTab and ExperienceState.favoritesTabWindow == windowRef then
+		return ExperienceState.favoritesTab
+	end
+	ExperienceState.favoritesTabWindow = windowRef
+	ExperienceState.favoritesTab = windowRef:CreateTab("Favorites", 0)
+	renderFavoritesTab()
+	return ExperienceState.favoritesTab
+end
+
+local function openFavoritesTab(windowRef)
+	local favoritesTab, err = ensureFavoritesTab(windowRef or ExperienceState.favoritesTabWindow)
+	if not favoritesTab then
+		return false, tostring(err or "Unable to create Favorites tab.")
+	end
+	if type(favoritesTab.GetInternalRecord) == "function" and ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+		local okRecord, record = pcall(favoritesTab.GetInternalRecord, favoritesTab)
+		if okRecord and record and record.PersistenceId then
+			ElementsSystem.activateTabByPersistenceId(record.PersistenceId, true)
+		end
+	end
+	return true, "Favorites tab opened."
+end
+
+local function ensureOnboardingOverlay()
+	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
+		return ExperienceState.onboardingOverlay
+	end
+	if not Main then
+		return nil
+	end
+
+	local overlay = Instance.new("Frame")
+	overlay.Name = "ExperienceOnboardingOverlay"
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	overlay.BackgroundTransparency = 0.28
+	overlay.Visible = false
+	overlay.ZIndex = 80
+	overlay.Parent = Main
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	panel.Size = UDim2.new(0, 360, 0, 220)
+	panel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	panel.BackgroundTransparency = 0.08
+	panel.ZIndex = 81
+	panel.Parent = overlay
+
+	local panelCorner = Instance.new("UICorner")
+	panelCorner.CornerRadius = UDim.new(0, 12)
+	panelCorner.Parent = panel
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, -24, 0, 28)
+	title.Position = UDim2.new(0, 12, 0, 10)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 18
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = Color3.fromRGB(245, 245, 245)
+	title.ZIndex = 82
+	title.Parent = panel
+
+	local body = Instance.new("TextLabel")
+	body.Name = "Body"
+	body.BackgroundTransparency = 1
+	body.Size = UDim2.new(1, -24, 0, 90)
+	body.Position = UDim2.new(0, 12, 0, 46)
+	body.Font = Enum.Font.Gotham
+	body.TextSize = 14
+	body.TextWrapped = true
+	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.TextYAlignment = Enum.TextYAlignment.Top
+	body.TextColor3 = Color3.fromRGB(220, 220, 220)
+	body.ZIndex = 82
+	body.Parent = panel
+
+	local stepLabel = Instance.new("TextLabel")
+	stepLabel.Name = "Step"
+	stepLabel.BackgroundTransparency = 1
+	stepLabel.Size = UDim2.new(1, -24, 0, 20)
+	stepLabel.Position = UDim2.new(0, 12, 1, -86)
+	stepLabel.Font = Enum.Font.Gotham
+	stepLabel.TextSize = 12
+	stepLabel.TextXAlignment = Enum.TextXAlignment.Left
+	stepLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+	stepLabel.ZIndex = 82
+	stepLabel.Parent = panel
+
+	local checkbox = Instance.new("TextButton")
+	checkbox.Name = "DontShowAgain"
+	checkbox.BackgroundTransparency = 1
+	checkbox.Size = UDim2.new(1, -24, 0, 22)
+	checkbox.Position = UDim2.new(0, 12, 1, -62)
+	checkbox.Font = Enum.Font.Gotham
+	checkbox.TextSize = 13
+	checkbox.TextXAlignment = Enum.TextXAlignment.Left
+	checkbox.TextColor3 = Color3.fromRGB(220, 220, 220)
+	checkbox.ZIndex = 82
+	checkbox.AutoButtonColor = false
+	checkbox.Parent = panel
+
+	local nextButton = Instance.new("TextButton")
+	nextButton.Name = "Next"
+	nextButton.AnchorPoint = Vector2.new(1, 1)
+	nextButton.Position = UDim2.new(1, -12, 1, -12)
+	nextButton.Size = UDim2.new(0, 88, 0, 30)
+	nextButton.Font = Enum.Font.GothamBold
+	nextButton.TextSize = 13
+	nextButton.TextColor3 = Color3.fromRGB(245, 245, 245)
+	nextButton.BackgroundColor3 = Color3.fromRGB(60, 120, 210)
+	nextButton.ZIndex = 82
+	nextButton.Parent = panel
+
+	local nextCorner = Instance.new("UICorner")
+	nextCorner.CornerRadius = UDim.new(0, 8)
+	nextCorner.Parent = nextButton
+
+	local closeButton = Instance.new("TextButton")
+	closeButton.Name = "Close"
+	closeButton.AnchorPoint = Vector2.new(0, 1)
+	closeButton.Position = UDim2.new(0, 12, 1, -12)
+	closeButton.Size = UDim2.new(0, 88, 0, 30)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 13
+	closeButton.Text = "Close"
+	closeButton.TextColor3 = Color3.fromRGB(235, 235, 235)
+	closeButton.BackgroundColor3 = Color3.fromRGB(58, 58, 58)
+	closeButton.ZIndex = 82
+	closeButton.Parent = panel
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 8)
+	closeCorner.Parent = closeButton
+
+	local steps = {
+		{
+			title = "Welcome to Rayfield",
+			body = "Use the topbar to search controls, open settings, and manage window state."
+		},
+		{
+			title = "Favorites and Presets",
+			body = "Pin your frequently used controls and switch presets to quickly change UI behavior."
+		},
+		{
+			title = "Share and Theme Studio",
+			body = "Export/import share codes and use Theme Studio for live visual customization."
+		}
+	}
+	local state = {
+		step = 1,
+		dontShowAgain = false
+	}
+
+	local function render()
+		local active = steps[state.step] or steps[1]
+		title.Text = tostring(active.title or "Welcome")
+		body.Text = tostring(active.body or "")
+		stepLabel.Text = string.format("Step %d/%d", state.step, #steps)
+		checkbox.Text = string.format("%s Don't show this again", state.dontShowAgain and "[x]" or "[ ]")
+		nextButton.Text = state.step >= #steps and "Done" or "Next"
+	end
+
+	checkbox.MouseButton1Click:Connect(function()
+		state.dontShowAgain = not state.dontShowAgain
+		render()
+	end)
+	closeButton.MouseButton1Click:Connect(function()
+		overlay.Visible = false
+		if state.dontShowAgain then
+			RayfieldLibrary:SetOnboardingSuppressed(true)
+		end
+	end)
+	nextButton.MouseButton1Click:Connect(function()
+		if state.step >= #steps then
+			overlay.Visible = false
+			if state.dontShowAgain then
+				RayfieldLibrary:SetOnboardingSuppressed(true)
+			end
+			return
+		end
+		state.step += 1
+		render()
+	end)
+
+	ExperienceState.onboardingOverlay = {
+		Root = overlay,
+		State = state,
+		Render = render
+	}
+	render()
+	return ExperienceState.onboardingOverlay
+end
+
+local function restoreExperienceStateFromSettings(windowRef)
+	local transition = getSetting("Appearance", "transitionProfile") or ExperienceState.transitionProfile
+	setTransitionProfileInternal(transition, false)
+
+	local preset = getSetting("Appearance", "uiPreset") or ExperienceState.uiPreset
+	setUIPresetInternal(preset, false)
+
+	local baseTheme = getSetting("ThemeStudio", "baseTheme")
+	if type(baseTheme) == "string" and ThemeModule.Themes[baseTheme] then
+		ExperienceState.themeStudioState.baseTheme = baseTheme
+	end
+	ExperienceState.themeStudioState.useCustom = getSetting("ThemeStudio", "useCustom") == true
+
+	local packedTheme = getSetting("ThemeStudio", "customThemePacked")
+	if type(packedTheme) == "table" then
+		ExperienceState.themeStudioState.customThemePacked = cloneValue(packedTheme)
+	end
+	applyThemeStudioState(false)
+
+	if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
+		local showBadges = getSetting("Favorites", "showPinBadges")
+		ElementsSystem.setPinBadgesVisible(showBadges ~= false)
+	end
+	if ElementsSystem and type(ElementsSystem.setPinnedIds) == "function" then
+		local pinnedIds = getSetting("Favorites", "pinnedIds")
+		if type(pinnedIds) == "table" then
+			ElementsSystem.setPinnedIds(cloneArray(pinnedIds))
+		end
+	end
+
+	local pinnedControls = ElementsSystem and ElementsSystem.getPinnedIds and ElementsSystem.getPinnedIds(true) or {}
+	if type(pinnedControls) == "table" and #pinnedControls > 0 then
+		ensureFavoritesTab(windowRef)
+		renderFavoritesTab()
+	end
+
+	ExperienceState.onboardingSuppressed = getSetting("Onboarding", "suppressed") == true
+end
+
+function RayfieldLibrary:SetTransitionProfile(name)
+	return setTransitionProfileInternal(name, true)
+end
+
+function RayfieldLibrary:GetTransitionProfile()
+	return ExperienceState.transitionProfile
+end
+
+function RayfieldLibrary:SetUIPreset(name)
+	return setUIPresetInternal(name, true)
+end
+
+function RayfieldLibrary:GetUIPreset()
+	return ExperienceState.uiPreset
+end
+
+function RayfieldLibrary:ListControls()
+	if not ElementsSystem or type(ElementsSystem.listControlsForFavorites) ~= "function" then
+		return {}
+	end
+	return ElementsSystem.listControlsForFavorites(true)
+end
+
+function RayfieldLibrary:PinControl(idOrFlag)
+	if not ElementsSystem or type(ElementsSystem.pinControl) ~= "function" then
+		return false, "Control registry unavailable."
+	end
+	local ok, message = ElementsSystem.pinControl(tostring(idOrFlag or ""))
+	if ok then
+		refreshFavoritesSettingsPersistence()
+		if ExperienceState.favoritesTabWindow then
+			ensureFavoritesTab(ExperienceState.favoritesTabWindow)
+		end
+		renderFavoritesTab()
+	end
+	return ok, message
+end
+
+function RayfieldLibrary:UnpinControl(idOrFlag)
+	if not ElementsSystem or type(ElementsSystem.unpinControl) ~= "function" then
+		return false, "Control registry unavailable."
+	end
+	local ok, message = ElementsSystem.unpinControl(tostring(idOrFlag or ""))
+	if ok then
+		refreshFavoritesSettingsPersistence()
+		renderFavoritesTab()
+	end
+	return ok, message
+end
+
+function RayfieldLibrary:GetPinnedControls()
+	if not ElementsSystem or type(ElementsSystem.getPinnedIds) ~= "function" then
+		return {}
+	end
+	return ElementsSystem.getPinnedIds(true)
+end
+
+function RayfieldLibrary:SetOnboardingSuppressed(value)
+	ExperienceState.onboardingSuppressed = value == true
+	setSettingValue("Onboarding", "suppressed", ExperienceState.onboardingSuppressed, true)
+	return true, ExperienceState.onboardingSuppressed and "Onboarding suppressed." or "Onboarding enabled."
+end
+
+function RayfieldLibrary:IsOnboardingSuppressed()
+	return ExperienceState.onboardingSuppressed == true
+end
+
+function RayfieldLibrary:ShowOnboarding(force)
+	if ExperienceState.onboardingSuppressed and force ~= true then
+		return false, "Onboarding is suppressed."
+	end
+	local overlayRef = ensureOnboardingOverlay()
+	if not overlayRef or not overlayRef.Root then
+		return false, "Onboarding UI unavailable."
+	end
+	overlayRef.State.step = 1
+	overlayRef.State.dontShowAgain = false
+	overlayRef.Render()
+	overlayRef.Root.Visible = true
+	ExperienceState.onboardingRendered = true
+	return true, "Onboarding shown."
+end
+
+function RayfieldLibrary:GetThemeStudioState()
+	return {
+		baseTheme = ExperienceState.themeStudioState.baseTheme,
+		useCustom = ExperienceState.themeStudioState.useCustom == true,
+		customThemePacked = cloneValue(ExperienceState.themeStudioState.customThemePacked)
+	}
+end
+
+function RayfieldLibrary:ApplyThemeStudioTheme(themeOrName)
+	if type(themeOrName) == "string" then
+		return setThemeStudioBaseTheme(themeOrName, true)
+	end
+	if type(themeOrName) ~= "table" then
+		return false, "Theme input must be a theme name or table."
+	end
+
+	local nextPacked = {}
+	for _, key in ipairs(THEME_STUDIO_KEYS) do
+		local value = themeOrName[key]
+		if typeof(value) == "Color3" then
+			nextPacked[key] = color3ToPacked(value)
+		elseif type(value) == "table" then
+			local packed = packedToColor3(value)
+			if packed then
+				nextPacked[key] = color3ToPacked(packed)
+			end
+		end
+	end
+	ExperienceState.themeStudioState.customThemePacked = nextPacked
+	ExperienceState.themeStudioState.useCustom = true
+	return applyThemeStudioState(true)
+end
+
+function RayfieldLibrary:ResetThemeStudio()
+	return resetThemeStudioState(true)
+end
+
+local function notifyExperienceStatus(success, message)
+	if UIStateSystem and type(UIStateSystem.Notify) == "function" then
+		pcall(UIStateSystem.Notify, {
+			Title = "Rayfield Experience",
+			Content = tostring(message or ""),
+			Image = success and 4483362458 or 4384402990
+		})
+	elseif success ~= true then
+		warn("Rayfield | " .. tostring(message or "UI experience operation failed."))
+	end
+end
+
+if SettingsSystem and type(SettingsSystem.setExperienceHandlers) == "function" then
+	SettingsSystem.setExperienceHandlers({
+		setUIPreset = function(name)
+			return RayfieldLibrary:SetUIPreset(name)
+		end,
+		setTransitionProfile = function(name)
+			return RayfieldLibrary:SetTransitionProfile(name)
+		end,
+		listControls = function(pruneMissing)
+			if ElementsSystem and type(ElementsSystem.listControlsForFavorites) == "function" then
+				return ElementsSystem.listControlsForFavorites(pruneMissing == true)
+			end
+			return {}
+		end,
+		pinControl = function(id)
+			return RayfieldLibrary:PinControl(id)
+		end,
+		unpinControl = function(id)
+			return RayfieldLibrary:UnpinControl(id)
+		end,
+		setPinBadgesVisible = function(visible)
+			if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
+				ElementsSystem.setPinBadgesVisible(visible ~= false)
+				setSettingValue("Favorites", "showPinBadges", visible ~= false, true)
+				return true, "Pin badge visibility updated."
+			end
+			return false, "Pin badge controller unavailable."
+		end,
+		openFavoritesTab = function()
+			return openFavoritesTab(ExperienceState.favoritesTabWindow)
+		end,
+		showOnboarding = function(force)
+			return RayfieldLibrary:ShowOnboarding(force == true)
+		end,
+		getThemeNames = function()
+			return listThemeNames()
+		end,
+		getThemeStudioKeys = function()
+			return cloneArray(THEME_STUDIO_KEYS)
+		end,
+		getThemeStudioColor = function(themeKey)
+			return getThemeStudioColor(themeKey)
+		end,
+		setThemeStudioBaseTheme = function(themeName)
+			local ok, message = setThemeStudioBaseTheme(themeName, true)
+			if ok then
+				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, true)
+			end
+			return ok, message
+		end,
+		setThemeStudioUseCustom = function(value)
+			local ok, message = setThemeStudioUseCustom(value == true, true)
+			if ok then
+				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, true)
+			end
+			return ok, message
+		end,
+		setThemeStudioColor = function(themeKey, color)
+			local ok, message = setThemeStudioColor(themeKey, color)
+			if ok then
+				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), false)
+				setSettingValue("ThemeStudio", "useCustom", true, true)
+			end
+			return ok, message
+		end,
+		applyThemeStudioDraft = function()
+			local ok, message = applyThemeStudioState(true)
+			if ok then
+				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
+				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, false)
+				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), true)
+			end
+			return ok, message
+		end,
+		resetThemeStudio = function()
+			local ok, message = resetThemeStudioState(true)
+			if ok then
+				setSettingValue("ThemeStudio", "useCustom", false, false)
+				setSettingValue("ThemeStudio", "customThemePacked", {}, true)
+			end
+			return ok, message
+		end,
+		notify = function(success, message)
+			notifyExperienceStatus(success == true, message)
+		end
+	})
+end
+
 -- Note: UI State Management (Notify, Search, Hide/Minimize) moved to rayfield-ui-state.lua module
 
 -- Wrapper for RayfieldLibrary:Notify
@@ -4396,15 +6183,533 @@ function RayfieldLibrary:Notify(data)
 	return UIStateSystem.Notify(data)
 end
 
+local function ensureOwnershipSystem()
+	if not OwnershipSystem then
+		return false, "Ownership tracker is unavailable."
+	end
+	return true
+end
+
+local function sanitizeScopeName(rawName)
+	local value = tostring(rawName or "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	value = value:gsub("[%s/\\]+", "_")
+	value = value:gsub("[^%w_%-:]", "")
+	if value == "" then
+		local okGuid, guid = pcall(function()
+			return HttpService:GenerateGUID(false)
+		end)
+		if okGuid and type(guid) == "string" and guid ~= "" then
+			value = guid
+		else
+			value = tostring(math.floor(os.clock() * 100000))
+		end
+	end
+	return value
+end
+
+function RayfieldLibrary:CreateFeatureScope(name)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return nil, ownershipErr
+	end
+
+	local normalizedName = sanitizeScopeName(name or "feature")
+	local scopeId = "feature:" .. normalizedName
+	if type(OwnershipSystem.createScope) == "function" then
+		pcall(OwnershipSystem.createScope, scopeId, {
+			kind = "feature",
+			name = normalizedName
+		})
+	end
+	return scopeId, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureConnection(scopeId, connection)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if not connection then
+		return false, "Invalid connection."
+	end
+	if type(OwnershipSystem.trackConnection) ~= "function" then
+		return false, "Ownership tracker does not support connection tracking."
+	end
+	local okTrack, tracked = pcall(OwnershipSystem.trackConnection, connection, scopeId)
+	if not okTrack then
+		return false, tostring(tracked)
+	end
+	if tracked ~= true then
+		return false, "Failed to track connection."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureTask(scopeId, taskHandle)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if taskHandle == nil then
+		return false, "Invalid task handle."
+	end
+	if type(OwnershipSystem.trackTask) ~= "function" then
+		return false, "Ownership tracker does not support task tracking."
+	end
+	local okTrack, tracked = pcall(OwnershipSystem.trackTask, taskHandle, scopeId)
+	if not okTrack then
+		return false, tostring(tracked)
+	end
+	if tracked ~= true then
+		return false, "Failed to track task."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureInstance(scopeId, instance, metadata)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if typeof(instance) ~= "Instance" then
+		return false, "Invalid instance."
+	end
+	if type(OwnershipSystem.claimInstance) ~= "function" then
+		return false, "Ownership tracker does not support instance tracking."
+	end
+	local okClaim, claimResult = pcall(OwnershipSystem.claimInstance, instance, scopeId, metadata)
+	if not okClaim then
+		return false, tostring(claimResult)
+	end
+	if claimResult ~= true then
+		return false, "Failed to track instance."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureCleanup(scopeId, cleanupFn)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if type(cleanupFn) ~= "function" then
+		return false, "cleanupFn must be a function."
+	end
+	if type(OwnershipSystem.trackCleanup) ~= "function" then
+		return false, "Ownership tracker does not support cleanup callbacks."
+	end
+	local okTrack, trackResult = pcall(OwnershipSystem.trackCleanup, cleanupFn, scopeId)
+	if not okTrack then
+		return false, tostring(trackResult)
+	end
+	if trackResult ~= true then
+		return false, "Failed to track cleanup callback."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:CleanupFeatureScope(scopeId, destroyInstances)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if type(OwnershipSystem.cleanupScope) ~= "function" then
+		return false, "Ownership tracker does not support scope cleanup."
+	end
+	local okCleanup, cleanupResult = pcall(OwnershipSystem.cleanupScope, scopeId, {
+		destroyInstances = destroyInstances == true,
+		clearAttributes = true
+	})
+	if not okCleanup then
+		return false, tostring(cleanupResult)
+	end
+	if cleanupResult ~= true then
+		return false, "Scope was not found."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:GetFeatureCleanupStats()
+	local okOwnership, _ = ensureOwnershipSystem()
+	if not okOwnership then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	if type(OwnershipSystem.getStats) ~= "function" then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	local okStats, stats = pcall(OwnershipSystem.getStats)
+	if not okStats or type(stats) ~= "table" then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	return stats
+end
+
+function RayfieldLibrary:GetRuntimeDiagnostics()
+	local animationStats = {}
+	if AnimationEngine and type(AnimationEngine.GetRuntimeStats) == "function" then
+		local ok, stats = pcall(function()
+			return AnimationEngine:GetRuntimeStats()
+		end)
+		if ok and type(stats) == "table" then
+			animationStats = stats
+		end
+	end
+
+	local activeTweens = animationStats.activeTweens
+	if type(activeTweens) ~= "number" and AnimationEngine and type(AnimationEngine.GetActiveAnimationCount) == "function" then
+		local ok, value = pcall(function()
+			return AnimationEngine:GetActiveAnimationCount()
+		end)
+		activeTweens = ok and value or 0
+	end
+
+	local activeTextHandles = animationStats.activeTextHandles
+	if type(activeTextHandles) ~= "number" and AnimationEngine and type(AnimationEngine.GetTextHandleCount) == "function" then
+		local ok, value = pcall(function()
+			return AnimationEngine:GetTextHandleCount()
+		end)
+		activeTextHandles = ok and value or 0
+	end
+
+	local themeBindings = { objectsBound = 0, propertiesBound = 0 }
+	if ThemeSystem and type(ThemeSystem.GetBindingStats) == "function" then
+		local ok, stats = pcall(function()
+			return ThemeSystem.GetBindingStats()
+		end)
+		if ok and type(stats) == "table" then
+			themeBindings = {
+				objectsBound = tonumber(stats.objectsBound) or 0,
+				propertiesBound = tonumber(stats.propertiesBound) or 0
+			}
+		end
+	end
+
+	local ownershipStats = {
+		scopes = 0,
+		instances = 0,
+		connections = 0,
+		tasks = 0,
+		cleanups = 0
+	}
+	if OwnershipSystem and type(OwnershipSystem.getStats) == "function" then
+		local okOwnershipStats, stats = pcall(OwnershipSystem.getStats)
+		if okOwnershipStats and type(stats) == "table" then
+			ownershipStats = {
+				scopes = tonumber(stats.scopes) or 0,
+				instances = tonumber(stats.instances) or 0,
+				connections = tonumber(stats.connections) or 0,
+				tasks = tonumber(stats.tasks) or 0,
+				cleanups = tonumber(stats.cleanups) or 0
+			}
+		end
+	end
+
+	return {
+		activeTweens = tonumber(activeTweens) or 0,
+		activeTextHandles = tonumber(activeTextHandles) or 0,
+		themeBindings = themeBindings,
+		ownership = ownershipStats,
+		rayfieldVisible = not Hidden,
+		rayfieldMinimized = Minimised == true,
+		rayfieldDestroyed = rayfieldDestroyed == true,
+		performanceProfile = {
+			enabled = activePerformanceProfile.enabled == true,
+			requestedMode = activePerformanceProfile.requestedMode,
+			resolvedMode = activePerformanceProfile.resolvedMode,
+			aggressive = activePerformanceProfile.aggressive == true,
+			disableDetach = activePerformanceProfile.disableDetach == true,
+			disableTabSplit = activePerformanceProfile.disableTabSplit == true,
+			disableAnimations = activePerformanceProfile.disableAnimations == true
+		}
+	}
+end
+
+local function shallowArrayCopy(input)
+	local out = {}
+	if type(input) ~= "table" then
+		return out
+	end
+	for index, value in ipairs(input) do
+		out[index] = value
+	end
+	return out
+end
+
+local function normalizeProfileMode(mode)
+	if type(mode) ~= "string" then
+		return "auto"
+	end
+	local normalized = string.lower(mode)
+	if normalized == "auto" or normalized == "potato" or normalized == "mobile" or normalized == "normal" then
+		return normalized
+	end
+	return "auto"
+end
+
+local function mergeTable(target, source)
+	if type(source) ~= "table" then
+		return
+	end
+	if type(target) ~= "table" then
+		return
+	end
+	for key, value in pairs(source) do
+		if type(value) == "table" then
+			if type(target[key]) ~= "table" then
+				target[key] = {}
+			end
+			mergeTable(target[key], value)
+		else
+			target[key] = value
+		end
+	end
+end
+
+local function applyPresetFillNil(target, preset, appliedFields, pathPrefix)
+	if type(target) ~= "table" or type(preset) ~= "table" then
+		return
+	end
+	for key, value in pairs(preset) do
+		local path = pathPrefix and (pathPrefix .. "." .. tostring(key)) or tostring(key)
+		if type(value) == "table" then
+			local existing = target[key]
+			if existing == nil then
+				target[key] = {}
+				existing = target[key]
+			end
+			if type(existing) == "table" then
+				applyPresetFillNil(existing, value, appliedFields, path)
+			end
+		else
+			if target[key] == nil then
+				target[key] = value
+				table.insert(appliedFields, path)
+			end
+		end
+	end
+end
+
+local function buildLowSpecPreset(resolvedMode, aggressive, profileSettings)
+	local isLowSpecMode = resolvedMode == "potato" or resolvedMode == "mobile"
+	local disableDetach = profileSettings.DisableDetach
+	if disableDetach == nil then
+		disableDetach = aggressive and isLowSpecMode
+	end
+	local disableTabSplit = profileSettings.DisableTabSplit
+	if disableTabSplit == nil then
+		disableTabSplit = aggressive and isLowSpecMode
+	end
+	local disableAnimations = profileSettings.DisableAnimations
+	if disableAnimations == nil then
+		disableAnimations = aggressive and isLowSpecMode
+	end
+
+	local preset = {}
+	if isLowSpecMode then
+		preset.DisableRayfieldPrompts = true
+		preset.DisableBuildWarnings = true
+		preset.ViewportVirtualization = {
+			Enabled = true,
+			AlwaysOn = true,
+			FullSuspend = true,
+			FadeOnScroll = false,
+			DisableFadeDuringResize = true
+		}
+
+		if resolvedMode == "potato" then
+			preset.ViewportVirtualization.OverscanPx = 80
+			preset.ViewportVirtualization.UpdateHz = 20
+			preset.ViewportVirtualization.ResizeDebounceMs = 120
+		elseif resolvedMode == "mobile" then
+			preset.ViewportVirtualization.OverscanPx = 100
+			preset.ViewportVirtualization.UpdateHz = 24
+			preset.ViewportVirtualization.ResizeDebounceMs = 100
+		end
+	end
+
+	if disableAnimations then
+		preset.ViewportVirtualization = preset.ViewportVirtualization or {}
+		preset.ViewportVirtualization.FadeOnScroll = false
+		preset.ViewportVirtualization.DisableFadeDuringResize = true
+	end
+
+	if disableTabSplit then
+		preset.EnableTabSplit = false
+	end
+
+	if type(profileSettings.ViewportVirtualization) == "table" then
+		preset.ViewportVirtualization = preset.ViewportVirtualization or {}
+		mergeTable(preset.ViewportVirtualization, profileSettings.ViewportVirtualization)
+	end
+
+	return preset, {
+		disableDetach = disableDetach == true,
+		disableTabSplit = disableTabSplit == true,
+		disableAnimations = disableAnimations == true,
+		aggressive = aggressive == true
+	}
+end
+
+local function resolvePerformanceProfile(Settings, runtimeCtx)
+	local resolved = {
+		enabled = false,
+		requestedMode = "normal",
+		resolvedMode = "normal",
+		aggressive = false,
+		disableDetach = false,
+		disableTabSplit = false,
+		disableAnimations = false,
+		appliedFields = {}
+	}
+	local profile = Settings and Settings.PerformanceProfile
+	if type(profile) ~= "table" or profile.Enabled ~= true then
+		return resolved
+	end
+
+	resolved.enabled = true
+	local requestedMode = normalizeProfileMode(profile.Mode or "auto")
+	resolved.requestedMode = requestedMode
+
+	local resolvedMode = requestedMode
+	if requestedMode == "auto" then
+		if runtimeCtx and runtimeCtx.touchEnabled == true then
+			resolvedMode = "mobile"
+		else
+			resolvedMode = "potato"
+		end
+	end
+	resolved.resolvedMode = resolvedMode
+
+	local aggressive = profile.Aggressive ~= false
+	local preset, flags = buildLowSpecPreset(resolvedMode, aggressive, profile)
+	applyPresetFillNil(Settings, preset, resolved.appliedFields)
+
+	resolved.aggressive = flags.aggressive
+	resolved.disableDetach = flags.disableDetach
+	resolved.disableTabSplit = flags.disableTabSplit
+	resolved.disableAnimations = flags.disableAnimations
+	if type(Settings.EnableTabSplit) == "boolean" then
+		resolved.disableTabSplit = Settings.EnableTabSplit == false
+	end
+
+	return resolved
+end
+
+local function applySystemOverridesForProfile(profile)
+	local lowSpecActive = type(profile) == "table" and profile.enabled == true and profile.resolvedMode ~= "normal"
+	local disableAnimations = type(profile) == "table" and profile.disableAnimations == true
+	if lowSpecActive or disableAnimations then
+		overrideSetting("System", "reducedEffects", true)
+		overrideSetting("System", "performanceMode", true)
+	else
+		overrideSetting("System", "reducedEffects", nil)
+		overrideSetting("System", "performanceMode", nil)
+	end
+
+	if lowSpecActive then
+		overrideSetting("System", "usageAnalytics", false)
+	elseif not requestsDisabled then
+		overrideSetting("System", "usageAnalytics", nil)
+	end
+end
+
 -- Note: saveSettings, updateSetting, and createSettings are now handled by SettingsModule
 
 function RayfieldLibrary:CreateWindow(Settings)
+	Settings = type(Settings) == "table" and Settings or {}
+	local runtimeCtx = {
+		touchEnabled = UserInputService and UserInputService.TouchEnabled == true
+	}
+	local resolvedPerformanceProfile = resolvePerformanceProfile(Settings, runtimeCtx)
+	activePerformanceProfile = resolvedPerformanceProfile
+	detachPathEnabled = resolvedPerformanceProfile.disableDetach ~= true
+	applySystemOverridesForProfile(resolvedPerformanceProfile)
+	ExperienceState.onboardingRendered = false
+	local fastLoadEnabled = Settings.FastLoad ~= false
+	if resolvedPerformanceProfile.disableAnimations == true then
+		fastLoadEnabled = true
+	end
+	local startupTimeScale = fastLoadEnabled and 0.2 or 1
+	if resolvedPerformanceProfile.disableAnimations == true then
+		startupTimeScale = 0.08
+	end
+
+	local function waitForStartup(seconds)
+		local duration = tonumber(seconds) or 0
+		if duration <= 0 then
+			return
+		end
+		local scaled = duration * startupTimeScale
+		if scaled > 0 then
+			task.wait(scaled)
+		end
+	end
+
+	local function startupTweenDuration(seconds)
+		local duration = tonumber(seconds) or 0
+		if duration <= 0 then
+			return 0
+		end
+		if startupTimeScale >= 1 then
+			return duration
+		end
+		return math.max(0.04, duration * startupTimeScale)
+	end
+
+	if type(loaderDiagnostics) == "table" then
+		loaderDiagnostics.performanceProfile = {
+			enabled = resolvedPerformanceProfile.enabled == true,
+			requestedMode = resolvedPerformanceProfile.requestedMode,
+			resolvedMode = resolvedPerformanceProfile.resolvedMode,
+			aggressive = resolvedPerformanceProfile.aggressive == true,
+			disableDetach = resolvedPerformanceProfile.disableDetach == true,
+			disableTabSplit = resolvedPerformanceProfile.disableTabSplit == true,
+			disableAnimations = resolvedPerformanceProfile.disableAnimations == true,
+			appliedFields = shallowArrayCopy(resolvedPerformanceProfile.appliedFields)
+		}
+	end
+
 	if Rayfield:FindFirstChild('Loading') then
 		if getgenv and not getgenv().rayfieldCached then
 			Rayfield.Enabled = true
 			Rayfield.Loading.Visible = true
 
-			task.wait(1.4)
+			waitForStartup(1.4)
 			Rayfield.Loading.Visible = false
 		end
 	end
@@ -4527,10 +6832,45 @@ function RayfieldLibrary:CreateWindow(Settings)
 		end
 	end
 
+	if type(Settings.ViewportVirtualization) ~= "table" then
+		Settings.ViewportVirtualization = {}
+	end
+	local viewportSettings = Settings.ViewportVirtualization
+	if viewportSettings.Enabled == nil then
+		viewportSettings.Enabled = true
+	end
+	if viewportSettings.AlwaysOn == nil then
+		viewportSettings.AlwaysOn = true
+	end
+	if viewportSettings.FullSuspend == nil then
+		viewportSettings.FullSuspend = true
+	end
+	if viewportSettings.OverscanPx == nil then
+		viewportSettings.OverscanPx = 120
+	end
+	if viewportSettings.UpdateHz == nil then
+		viewportSettings.UpdateHz = 30
+	end
+	if viewportSettings.FadeOnScroll == nil then
+		viewportSettings.FadeOnScroll = true
+	end
+	if viewportSettings.DisableFadeDuringResize == nil then
+		viewportSettings.DisableFadeDuringResize = true
+	end
+	if viewportSettings.ResizeDebounceMs == nil then
+		viewportSettings.ResizeDebounceMs = 100
+	end
+	if viewportSettings.MinElementsToActivate == nil then
+		viewportSettings.MinElementsToActivate = 0
+	end
+
 	if not Settings.DisableRayfieldPrompts then
 		task.spawn(function()
 			while true do
 				task.wait(math.random(180, 600))
+				if experienceSuppressPromoPrompts then
+					continue
+				end
 				RayfieldLibrary:Notify({
 					Title = "Rayfield Interface",
 					Content = "Enjoying this UI library? Find it at sirius.menu/discord",
@@ -4542,6 +6882,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 	end
 
 	pcall(function()
+		if type(Settings.ConfigurationSaving) ~= "table" then
+			Settings.ConfigurationSaving = {}
+		end
 		if not Settings.ConfigurationSaving.FileName then
 			Settings.ConfigurationSaving.FileName = tostring(game.PlaceId)
 		end
@@ -4553,6 +6896,23 @@ function RayfieldLibrary:CreateWindow(Settings)
 		CFileName = Settings.ConfigurationSaving.FileName
 		ConfigurationFolder = Settings.ConfigurationSaving.FolderName or ConfigurationFolder
 		CEnabled = Settings.ConfigurationSaving.Enabled
+		if type(Settings.ConfigurationSaving.Layout) ~= "table" then
+			Settings.ConfigurationSaving.Layout = {}
+		end
+		local layoutConfig = Settings.ConfigurationSaving.Layout
+		if layoutConfig.Enabled == nil then
+			layoutSavingEnabled = CEnabled == true
+		else
+			layoutSavingEnabled = layoutConfig.Enabled == true and CEnabled == true
+		end
+		local configuredDebounce = tonumber(layoutConfig.DebounceMs)
+		if configuredDebounce and configuredDebounce >= 50 then
+			layoutDebounceMs = math.floor(configuredDebounce)
+		else
+			layoutDebounceMs = 300
+		end
+		layoutConfig.Enabled = layoutSavingEnabled
+		layoutConfig.DebounceMs = layoutDebounceMs
 
 		if Settings.ConfigurationSaving.Enabled then
 			ensureFolder(ConfigurationFolder)
@@ -4815,15 +7175,15 @@ function RayfieldLibrary:CreateWindow(Settings)
 	Notifications.Visible = true
 	Rayfield.Enabled = true
 
-	task.wait(0.5)
-	Animation:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-	Animation:Create(Main.Shadow.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
-	task.wait(0.1)
-	Animation:Create(LoadingFrame.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	task.wait(0.05)
-	Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	task.wait(0.05)
-	Animation:Create(LoadingFrame.Version, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.5)
+	Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+	Animation:Create(Main.Shadow.Image, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
+	waitForStartup(0.1)
+	Animation:Create(LoadingFrame.Title, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.05)
+	Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.05)
+	Animation:Create(LoadingFrame.Version, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
 
 
 	Elements.Template.LayoutOrder = 100000
@@ -4835,11 +7195,31 @@ function RayfieldLibrary:CreateWindow(Settings)
 	-- Tab
 	local FirstTab = false
 	local Window = {}
+	ExperienceState.favoritesTabWindow = Window
+	ExperienceState.favoritesTab = nil
 
 	-- Recreate tab split system per-window setup to keep references fresh
 	if TabSplitSystem and TabSplitSystem.destroy then
 		TabSplitSystem.destroy()
 		TabSplitSystem = nil
+	end
+
+	if ViewportVirtualizationSystem and type(ViewportVirtualizationSystem.destroy) == "function" then
+		pcall(ViewportVirtualizationSystem.destroy)
+	end
+	ViewportVirtualizationSystem = ViewportVirtualizationModuleLib.init({
+		Settings = Settings.ViewportVirtualization,
+		RunService = RunService,
+		TweenService = TweenService,
+		UserInputService = UserInputService,
+		AnimationEngine = AnimationEngine,
+		RootGui = Rayfield,
+		warn = function(message)
+			warn("Rayfield | ViewportVirtualization " .. tostring(message))
+		end
+	})
+	if _G then
+		_G.__RayfieldViewportVirtualization = ViewportVirtualizationSystem
 	end
 
 	-- Initialize Elements Module
@@ -4852,7 +7232,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 		end
 	})
 
-	local ElementsSystem = ElementsModuleLib.init({
+	ElementsSystem = ElementsModuleLib.init({
 		TweenService = TweenService,
 		Animation = Animation,
 		RunService = RunService,
@@ -4871,6 +7251,12 @@ function RayfieldLibrary:CreateWindow(Settings)
 		rayfieldDestroyed = function() return rayfieldDestroyed end,
 		getMinimised = function() return Minimised end,
 		getSetting = getSetting,
+		getInternalSetting = function(category, setting)
+			return getSetting(category, setting)
+		end,
+		setInternalSetting = function(category, setting, value, persist)
+			return setSettingValue(category, setting, value, persist)
+		end,
 		bindTheme = bindTheme,
 		SaveConfiguration = SaveConfiguration,
 		makeElementDetachable = makeElementDetachable,
@@ -4880,8 +7266,25 @@ function RayfieldLibrary:CreateWindow(Settings)
 		setDebounce = function(val) Debounce = val end,
 		useMobileSizing = useMobileSizing,
 		ElementSync = ElementSyncSystem,
+		ViewportVirtualization = ViewportVirtualizationSystem,
+		ResourceOwnership = OwnershipSystem,
 		Settings = Settings
 	})
+	if favoritesRegistryUnsubscribe then
+		pcall(favoritesRegistryUnsubscribe)
+		favoritesRegistryUnsubscribe = nil
+	end
+	if ElementsSystem and type(ElementsSystem.subscribeControlRegistry) == "function" then
+		favoritesRegistryUnsubscribe = ElementsSystem.subscribeControlRegistry(function(reason)
+			if reason == "pin" or reason == "unpin" or reason == "set_pinned_ids" or reason == "control_removed" then
+				refreshFavoritesSettingsPersistence()
+			end
+			if reason == "pin" and ExperienceState.favoritesTabWindow then
+				ensureFavoritesTab(ExperienceState.favoritesTabWindow)
+			end
+			renderFavoritesTab()
+		end)
+	end
 
 	TabSplitSystem = TabSplitModuleLib.init({
 		UserInputService = UserInputService,
@@ -4903,6 +7306,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		getBlockedState = function()
 			return Debounce or searchOpen
 		end,
+		onLayoutDirty = function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end,
+		ViewportVirtualization = ViewportVirtualizationSystem,
 		enabled = Settings.EnableTabSplit,
 		holdDuration = Settings.TabSplitHoldDuration,
 		allowSettingsSplit = Settings.AllowSettingsTabSplit,
@@ -4910,6 +7317,113 @@ function RayfieldLibrary:CreateWindow(Settings)
 	})
 	TabSplitSystem.syncHidden(Hidden)
 	TabSplitSystem.syncMinimized(Minimised)
+
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.flush) == "function" then
+		LayoutPersistenceSystem.flush("window_recreate")
+	end
+	LayoutPersistenceSystem = LayoutPersistenceModuleLib.init({
+		layoutKey = "__rayfield_layout",
+		version = 1,
+		getEnabled = function()
+			return layoutSavingEnabled == true and CEnabled == true
+		end,
+		getDebounceMs = function()
+			return layoutDebounceMs
+		end,
+		requestSave = function()
+			return SaveConfiguration()
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("main", {
+		order = 10,
+		snapshot = function()
+			if UIStateSystem and type(UIStateSystem.getLayoutSnapshot) == "function" then
+				return UIStateSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if UIStateSystem and type(UIStateSystem.applyLayoutSnapshot) == "function" then
+				UIStateSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("split", {
+		order = 20,
+		snapshot = function()
+			if TabSplitSystem and type(TabSplitSystem.getLayoutSnapshot) == "function" then
+				return TabSplitSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if TabSplitSystem and type(TabSplitSystem.applyLayoutSnapshot) == "function" then
+				TabSplitSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("floating", {
+		order = 30,
+		snapshot = function()
+			if DragSystem and type(DragSystem.getLayoutSnapshot) == "function" then
+				return DragSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if DragSystem and type(DragSystem.applyLayoutSnapshot) == "function" then
+				DragSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+
+	if type(ConfigSystem.setLayoutHandlers) == "function" then
+		ConfigSystem.setLayoutHandlers(
+			function()
+				if LayoutPersistenceSystem and type(LayoutPersistenceSystem.getLayoutSnapshot) == "function" then
+					return LayoutPersistenceSystem.getLayoutSnapshot()
+				end
+				return nil
+			end,
+			function(layoutData)
+				if LayoutPersistenceSystem and type(LayoutPersistenceSystem.applyLayoutSnapshot) == "function" then
+					return LayoutPersistenceSystem.applyLayoutSnapshot(layoutData)
+				end
+				return false
+			end,
+			"__rayfield_layout"
+		)
+	end
+
+	if DragSystem and type(DragSystem.setLayoutDirtyCallback) == "function" then
+		DragSystem.setLayoutDirtyCallback(function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end)
+	end
+
+	if TabSplitSystem and type(TabSplitSystem.setLayoutDirtyCallback) == "function" then
+		TabSplitSystem.setLayoutDirtyCallback(function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end)
+	end
+
+	cleanupLayoutConnections()
+	if layoutSavingEnabled and CEnabled then
+		table.insert(layoutConnections, Main:GetPropertyChangedSignal("Position"):Connect(function()
+			markLayoutDirty("main", "position")
+		end))
+		table.insert(layoutConnections, Main:GetPropertyChangedSignal("Size"):Connect(function()
+			if UIStateSystem
+				and type(UIStateSystem.setExpandedSize) == "function"
+				and type(UIStateSystem.getMinimised) == "function"
+				and type(UIStateSystem.getHidden) == "function"
+				and not UIStateSystem.getMinimised()
+				and not UIStateSystem.getHidden() then
+				UIStateSystem.setExpandedSize(Main.Size)
+			end
+			markLayoutDirty("main", "size")
+		end))
+	end
 
 	-- Wrapper for Window:CreateTab
 	function Window:CreateTab(Name, Image, Ext)
@@ -4929,15 +7443,15 @@ function RayfieldLibrary:CreateWindow(Settings)
 	local function playStartupAnimation()
 		Elements.Visible = true
 
-		task.wait(1.1)
-		Animation:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
-		task.wait(0.3)
-		Animation:Create(LoadingFrame.Title, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		Animation:Create(LoadingFrame.Version, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		task.wait(0.1)
-		Animation:Create(Main, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
-		Animation:Create(Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
+		waitForStartup(1.1)
+		Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
+		waitForStartup(0.3)
+		Animation:Create(LoadingFrame.Title, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		Animation:Create(LoadingFrame.Version, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		waitForStartup(0.1)
+		Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
+		Animation:Create(Main.Shadow.Image, TweenInfo.new(startupTweenDuration(0.5), Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
 
 		local topbarDivider = Topbar:FindFirstChild("Divider")
 		local topbarCornerRepair = Topbar:FindFirstChild("CornerRepair")
@@ -4971,40 +7485,40 @@ function RayfieldLibrary:CreateWindow(Settings)
 			topbarHide.ImageTransparency = 1
 		end
 
-		task.wait(0.5)
+		waitForStartup(0.5)
 		Topbar.Visible = true
 		TabList.Visible = true
-		Animation:Create(Topbar, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+		Animation:Create(Topbar, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 		if topbarCornerRepair then
-			Animation:Create(topbarCornerRepair, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+			Animation:Create(topbarCornerRepair, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 		end
-		task.wait(0.1)
+		waitForStartup(0.1)
 		if topbarDivider then
-			Animation:Create(topbarDivider, TweenInfo.new(1, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
+			Animation:Create(topbarDivider, TweenInfo.new(startupTweenDuration(1), Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
 		end
 		if topbarTitle then
-			Animation:Create(topbarTitle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+			Animation:Create(topbarTitle, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
 		end
-		task.wait(0.05)
+		waitForStartup(0.05)
 		if topbarSearch then
-			Animation:Create(topbarSearch, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			Animation:Create(topbarSearch, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
 		end
-		task.wait(0.05)
+		waitForStartup(0.05)
 		if topbarSettings then
-			Animation:Create(topbarSettings, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-			task.wait(0.05)
+			Animation:Create(topbarSettings, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			waitForStartup(0.05)
 		end
 		if topbarChangeSize then
-			Animation:Create(topbarChangeSize, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-			task.wait(0.05)
+			Animation:Create(topbarChangeSize, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			waitForStartup(0.05)
 		end
 		if topbarHide then
-			Animation:Create(topbarHide, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			Animation:Create(topbarHide, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
 		end
-		task.wait(0.3)
+		waitForStartup(0.3)
 
 		if dragBar and dragBarCosmetic then
-			Animation:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
+			Animation:Create(dragBarCosmetic, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
 		end
 
 		LoadingFrame.Visible = false
@@ -5028,6 +7542,17 @@ function RayfieldLibrary:CreateWindow(Settings)
 
 	if not success then warn('Rayfield had an issue creating settings.') end
 
+	local function restoreExperienceStateSafely()
+		local okRestore, restoreErr = pcall(function()
+			restoreExperienceStateFromSettings(Window)
+		end)
+		if not okRestore then
+			warn("Rayfield | Failed to restore experience settings: " .. tostring(restoreErr))
+		end
+	end
+	restoreExperienceStateSafely()
+	task.delay(0.9, restoreExperienceStateSafely)
+
 	local startupSuccess, startupResult = pcall(function()
 		playStartupAnimation()
 	end)
@@ -5039,6 +7564,14 @@ function RayfieldLibrary:CreateWindow(Settings)
 		Elements.Visible = true
 	end
 
+	maybeNotifyLoaderFallback()
+
+	task.delay(1.1, function()
+		if not ExperienceState.onboardingRendered and not ExperienceState.onboardingSuppressed then
+			RayfieldLibrary:ShowOnboarding(false)
+		end
+	end)
+
 	return Window
 end
 
@@ -5049,6 +7582,7 @@ local function setVisibility(visibility: boolean, notify: boolean?)
 		if TabSplitSystem then
 			TabSplitSystem.syncHidden(Hidden)
 		end
+		markLayoutDirty("main", visibility and "set_visible_true" or "set_visible_false")
 	end
 end
 
@@ -5063,6 +7597,21 @@ end
 local hideHotkeyConnection -- Has to be initialized here since the connection is made later in the script
 function RayfieldLibrary:Destroy()
 	AnimationEngine:SetUiSuppressed(true)
+	detachPathEnabled = true
+	activePerformanceProfile = {
+		enabled = false,
+		requestedMode = "normal",
+		resolvedMode = "normal",
+		aggressive = false,
+		disableDetach = false,
+		disableTabSplit = false,
+		disableAnimations = false,
+		appliedFields = {}
+	}
+	cleanupLayoutConnections()
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.flush) == "function" then
+		pcall(LayoutPersistenceSystem.flush, "destroy")
+	end
 	-- Cleanup theme connections to prevent memory leaks on reload
 	if ThemeSystem and ThemeSystem.cleanup then
 		ThemeSystem.cleanup()
@@ -5070,6 +7619,17 @@ function RayfieldLibrary:Destroy()
 	if TabSplitSystem and TabSplitSystem.destroy then
 		TabSplitSystem.destroy()
 		TabSplitSystem = nil
+	end
+	if favoritesRegistryUnsubscribe then
+		pcall(favoritesRegistryUnsubscribe)
+		favoritesRegistryUnsubscribe = nil
+	end
+	if OwnershipSystem and type(OwnershipSystem.cleanupSession) == "function" then
+		pcall(OwnershipSystem.cleanupSession, {
+			destroyInstances = false,
+			clearAttributes = true,
+			sweepRoot = false
+		})
 	end
 	if UtilitiesSystem then
 		UtilitiesSystem.destroy(hideHotkeyConnection)
@@ -5081,6 +7641,23 @@ function RayfieldLibrary:Destroy()
 		ElementSyncSystem.destroy()
 		ElementSyncSystem = nil
 	end
+	if ViewportVirtualizationSystem and type(ViewportVirtualizationSystem.destroy) == "function" then
+		pcall(ViewportVirtualizationSystem.destroy)
+		ViewportVirtualizationSystem = nil
+	end
+	if _G then
+		_G.__RayfieldViewportVirtualization = nil
+		_G.__RayfieldOwnership = nil
+	end
+	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
+		ExperienceState.onboardingOverlay.Root:Destroy()
+	end
+	ExperienceState.onboardingOverlay = nil
+	ExperienceState.favoritesTab = nil
+	ExperienceState.favoritesTabWindow = nil
+	ExperienceState.onboardingRendered = false
+	experienceSuppressPromoPrompts = false
+	LayoutPersistenceSystem = nil
 
 	-- Reset global runtime/cache flags so the next execution reloads a fresh UI tree.
 	pcall(function()
@@ -5098,6 +7675,7 @@ function RayfieldLibrary:Destroy()
 	if type(_G.__RayfieldApiModuleCache) == "table" then
 		table.clear(_G.__RayfieldApiModuleCache)
 	end
+	OwnershipSystem = nil
 end
 
 function RayfieldLibrary:IsDestroyed(): boolean
@@ -5233,6 +7811,9 @@ hideHotkeyConnection = UserInputService.InputBegan:Connect(function(input, proce
 		end
 	end
 end)
+if OwnershipSystem and type(OwnershipSystem.trackConnection) == "function" then
+	pcall(OwnershipSystem.trackConnection, hideHotkeyConnection, "runtime:hotkeys")
+end
 
 if MPrompt then
 	MPrompt.Interact.MouseButton1Click:Connect(function()
@@ -5755,7 +8336,7 @@ return Logger
 ]])
 
 return {
-    name = BUNDLE_NAME,
-    count = 31,
-    bundle = bundle
+	name = BUNDLE_NAME,
+	count = 32,
+	bundle = bundle
 }
