@@ -19,10 +19,45 @@ local function compileChunk(source, label)
 	return chunk
 end
 
-local clientSource = game:HttpGet(root .. "src/api/client.lua")
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile, bundleOrErr = pcall(function()
+		return compileChunk(source, path)()
+	end)
+	if not okCompile then
+		warn("Rayfield Mod: failed to preload bundle " .. tostring(path) .. ": " .. tostring(bundleOrErr))
+		return false
+	end
+	return type(bundleOrErr) == "table"
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
+
+local function fetchSource(path)
+	if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
+		local bundled = _G.__RAYFIELD_BUNDLE_SOURCES[path]
+		if type(bundled) == "string" and bundled ~= "" then
+			return bundled
+		end
+	end
+	return game:HttpGet(root .. path)
+end
+
+local clientSource = fetchSource("src/api/client.lua")
 local client = compileChunk(clientSource, "src/api/client.lua")()
 if type(client) ~= "table" or type(client.fetchAndExecute) ~= "function" then
 	error("Invalid API client bootstrap: missing fetchAndExecute")
+end
+if type(_G) == "table" then
+	_G.__RayfieldApiClient = client
 end
 
 if _G and _G.__RayfieldWidgetBootstrap == nil then

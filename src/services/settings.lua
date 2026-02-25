@@ -24,7 +24,7 @@ SettingsModule.defaultSettings = {
 			Type = "dropdown",
 			Value = "Comfort",
 			Name = "UI Preset",
-			Options = {"Compact", "Comfort", "Focus"}
+			Options = {"Compact", "Comfort", "Focus", "Cripware"}
 		},
 		transitionProfile = {
 			Type = "dropdown",
@@ -648,7 +648,7 @@ function SettingsModule.init(ctx)
 		if uiPresetSetting then
 			uiPresetSetting.Element = newTab:CreateDropdown({
 				Name = uiPresetSetting.Name or "UI Preset",
-				Options = uiPresetSetting.Options or {"Compact", "Comfort", "Focus"},
+				Options = uiPresetSetting.Options or {"Compact", "Comfort", "Focus", "Cripware"},
 				CurrentOption = self.getSetting("Appearance", "uiPreset") or uiPresetSetting.Value,
 				MultipleOptions = false,
 				Ext = true,

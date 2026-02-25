@@ -1658,7 +1658,8 @@ end
 local UI_PRESET_NAMES = {
 	Compact = true,
 	Comfort = true,
-	Focus = true
+	Focus = true,
+	Cripware = true
 }
 local TRANSITION_PROFILE_NAMES = {
 	Minimal = true,
@@ -1705,6 +1706,8 @@ local function normalizePresetName(name)
 		return "Comfort"
 	elseif normalized == "focus" then
 		return "Focus"
+	elseif normalized == "cripware" then
+		return "Cripware"
 	end
 	return nil
 end
@@ -2137,6 +2140,60 @@ local function getMainScale()
 	return scale
 end
 
+local presetLayoutBaseline = nil
+local function capturePresetLayoutBaseline()
+	if presetLayoutBaseline then
+		return
+	end
+	presetLayoutBaseline = {
+		tabListPosition = TabList and TabList.Position or nil,
+		tabListSize = TabList and TabList.Size or nil,
+		elementsPosition = Elements and Elements.Position or nil,
+		elementsSize = Elements and Elements.Size or nil
+	}
+end
+
+local function applyPresetLayoutInternal(presetName)
+	capturePresetLayoutBaseline()
+	if not TabList or not Elements or not presetLayoutBaseline then
+		return false
+	end
+
+	if presetName == "Cripware" then
+		local mainWidth = math.max(420, tonumber(Main and Main.Size and Main.Size.X.Offset) or 500)
+		local topPadding = 45
+		local leftPadding = 10
+		local rightPadding = 10
+		local bottomPadding = 10
+		local spacing = 8
+		local availableWidth = math.max(260, mainWidth - leftPadding - rightPadding)
+		local sidebarWidth = math.clamp(math.floor(availableWidth * 0.28), 130, 170)
+		local contentX = leftPadding + sidebarWidth + spacing
+		local contentWidth = math.max(120, mainWidth - contentX - rightPadding)
+
+		TabList.Position = UDim2.fromOffset(leftPadding, topPadding)
+		TabList.Size = UDim2.new(0, sidebarWidth, 1, -(topPadding + bottomPadding))
+
+		Elements.Position = UDim2.fromOffset(contentX, topPadding)
+		Elements.Size = UDim2.new(0, contentWidth, 1, -(topPadding + bottomPadding))
+	else
+		if presetLayoutBaseline.tabListPosition then
+			TabList.Position = presetLayoutBaseline.tabListPosition
+		end
+		if presetLayoutBaseline.tabListSize then
+			TabList.Size = presetLayoutBaseline.tabListSize
+		end
+		if presetLayoutBaseline.elementsPosition then
+			Elements.Position = presetLayoutBaseline.elementsPosition
+		end
+		if presetLayoutBaseline.elementsSize then
+			Elements.Size = presetLayoutBaseline.elementsSize
+		end
+	end
+
+	return true
+end
+
 local function setTransitionProfileInternal(name, persist)
 	local canonical = normalizeTransitionProfileName(name)
 	if not canonical then
@@ -2174,6 +2231,8 @@ local function setUIPresetInternal(name, persist)
 	if uiScale then
 		if canonical == "Compact" then
 			uiScale.Scale = 0.93
+		elseif canonical == "Cripware" then
+			uiScale.Scale = 0.96
 		else
 			uiScale.Scale = 1.0
 		end
@@ -2193,16 +2252,19 @@ local function setUIPresetInternal(name, persist)
 	local defaultTransitionByPreset = {
 		Compact = "Snappy",
 		Comfort = "Smooth",
-		Focus = "Minimal"
+		Focus = "Minimal",
+		Cripware = "Snappy"
 	}
 	local transitionName = defaultTransitionByPreset[canonical] or "Smooth"
 	setTransitionProfileInternal(transitionName, persist ~= false)
+	applyPresetLayoutInternal(canonical)
 
 	if persist ~= false then
 		setSettingValue("Appearance", "uiPreset", canonical, true)
 	end
 
 	applyGlassLayer()
+	markLayoutDirty("main", "preset_" .. string.lower(canonical))
 
 	return true, "UI preset set to " .. canonical .. "."
 end

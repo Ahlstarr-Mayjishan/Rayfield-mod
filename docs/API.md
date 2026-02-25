@@ -81,7 +81,7 @@ Main methods:
 ### UI Experience API
 
 - UI presets:
-  - `SetUIPreset("Compact"|"Comfort"|"Focus")`
+  - `SetUIPreset("Compact"|"Comfort"|"Focus"|"Cripware")`
   - Non-destructive: preset does not overwrite script business flags.
 - Transition profiles:
   - `SetTransitionProfile("Minimal"|"Smooth"|"Snappy"|"Off")`

@@ -23,6 +23,7 @@
 - Changed runtime diagnostics payload to include `experience` state:
   - audio enabled/pack, glass mode/resolved mode/intensity, onboarding suppression
 - Changed runtime visibility transitions (`Hide/Unhide/Minimise/Maximise/SetVisibility`) to re-apply glass layer.
+- Changed UI preset set to include `Cripware` layout mode (sidebar-focused layout variant) via `SetUIPreset("Cripware")`.
 
 ## 2026-02-24
 

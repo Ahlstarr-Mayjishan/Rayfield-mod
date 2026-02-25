@@ -66,12 +66,37 @@ local function compileChunk(source, label)
 	return chunk
 end
 
+local function decodeBundlePath(path)
+	if type(path) ~= "string" then
+		return nil
+	end
+	return (path:gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end))
+end
+
 local MODULE_ROOT_URL = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 _G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
-local apiClientSource = game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua")
-local ApiClient = compileChunk(apiClientSource, "src/api/client.lua")()
-if _G then
-	_G.__RayfieldApiClient = ApiClient
+
+local function fetchBootstrapSource(path)
+	local bundleSources = type(_G) == "table" and _G.__RAYFIELD_BUNDLE_SOURCES or nil
+	if type(bundleSources) == "table" then
+		local decodedPath = decodeBundlePath(path)
+		local bundled = bundleSources[decodedPath or path]
+		if type(bundled) == "string" and bundled ~= "" then
+			return bundled
+		end
+	end
+	return game:HttpGet(MODULE_ROOT_URL .. path)
+end
+
+local ApiClient = type(_G) == "table" and _G.__RayfieldApiClient or nil
+if type(ApiClient) ~= "table" or type(ApiClient.fetchAndExecute) ~= "function" then
+	local apiClientSource = fetchBootstrapSource("src/api/client.lua")
+	ApiClient = compileChunk(apiClientSource, "src/api/client.lua")()
+	if _G then
+		_G.__RayfieldApiClient = ApiClient
+	end
 end
 
 -- ============================================
@@ -509,6 +534,22 @@ function AllInOne.loadAll()
 	return AllInOne.loadAdvanced()
 end
 
+local function isUIReusable(ui, mode)
+	if type(ui) ~= "table" or type(ui.Rayfield) ~= "table" then
+		return false
+	end
+	if type(mode) == "string" and type(ui.mode) == "string" and ui.mode ~= mode then
+		return false
+	end
+	if type(ui.Rayfield.IsDestroyed) == "function" then
+		local okDestroyed, isDestroyed = pcall(ui.Rayfield.IsDestroyed, ui.Rayfield)
+		if okDestroyed and isDestroyed then
+			return false
+		end
+	end
+	return true
+end
+
 -- ============================================
 -- QUICK SETUP
 -- ============================================
@@ -516,6 +557,17 @@ end
 function AllInOne.quickSetup(config)
 	config = config or {}
 	local mode = config.mode or CONFIG.AUTO_MODE
+
+	if config.forceReload ~= true then
+		local existing = AllInOne.currentUI
+		if not isUIReusable(existing, mode) then
+			existing = _G and _G.RayfieldUI or nil
+		end
+		if isUIReusable(existing, mode) then
+			AllInOne.currentUI = existing
+			return existing
+		end
+	end
 	
 	local UI
 	if mode == "base" then

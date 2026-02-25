@@ -109,6 +109,10 @@ local setPresetOk, setPresetMsg = Rayfield:SetUIPreset("Focus")
 assertTrue(setPresetOk == true, "SetUIPreset failed: " .. tostring(setPresetMsg))
 assertEquals(Rayfield:GetUIPreset(), "Focus", "UI preset mismatch")
 
+local setCripwareOk, setCripwareMsg = Rayfield:SetUIPreset("Cripware")
+assertTrue(setCripwareOk == true, "SetUIPreset(Cripware) failed: " .. tostring(setCripwareMsg))
+assertEquals(Rayfield:GetUIPreset(), "Cripware", "UI preset Cripware mismatch")
+
 local controlsBeforePin = Rayfield:ListControls()
 assertTrue(type(controlsBeforePin) == "table" and #controlsBeforePin > 0, "ListControls should contain created controls")
 
