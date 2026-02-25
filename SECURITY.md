@@ -42,3 +42,9 @@ Use one of these channels:
 
 - Issues caused solely by third-party executors outside this codebase.
 - Missing hardening in intentionally unsupported environments.
+
+## Malware Policy
+
+- Maintainers do not intentionally ship malicious code.
+- If you detect suspicious behavior (credential theft, hidden remote execution, silent persistence), report privately via the process above.
+- Include exact loader URL, commit SHA, and reproduction steps to speed triage.

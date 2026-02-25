@@ -109,6 +109,14 @@ local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 - `Documentation/TROUBLESHOOTING.md`
 - `Documentation/CHANGELOG.md`
 
+## Legal and Policy
+
+- `LICENSE`
+- `TERMS_OF_USE.md`
+- `THIRD_PARTY_NOTICES.md`
+- `SECURITY.md`
+- `CODE_OF_CONDUCT.md`
+
 ## Examples
 
 - `Examples/01-base-quickstart.lua`

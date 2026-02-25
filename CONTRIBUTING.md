@@ -61,6 +61,24 @@ find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
   - Risk / compatibility impact
   - Test evidence (commands and results)
 - If build outputs are affected, include generated artifacts in the same PR.
+- By contributing, you agree to `CLA.md`.
+
+## Release Process
+- Update user-facing docs (`Documentation/API.md`, examples, changelog) in the same PR.
+- Run local validation and ensure CI is green on `main`.
+- Tag releases using semantic version tags (`vMAJOR.MINOR.PATCH`).
+- Keep release notes clear about behavioral changes and migration impact.
+
+## Versioning Strategy
+- This project uses Semantic Versioning:
+  - `MAJOR`: breaking API/behavior changes
+  - `MINOR`: backward-compatible features
+  - `PATCH`: backward-compatible fixes
+
+## Breaking Change Policy
+- Breaking changes must be explicitly marked in PR title/body.
+- Include migration notes in `Documentation/CHANGELOG.md`.
+- Preserve loader compatibility when possible; if not possible, document exact impact and fallback path.
 
 ## Branch Protection (Maintainers)
 Enable GitHub branch protection on `main` with:
