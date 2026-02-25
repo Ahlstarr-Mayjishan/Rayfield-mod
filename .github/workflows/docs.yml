@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   build:
+    name: Build Docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +45,8 @@ jobs:
           path: site
 
   deploy:
+    name: Deploy Docs
+    if: vars.ENABLE_GH_PAGES == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

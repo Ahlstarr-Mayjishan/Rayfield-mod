@@ -7,20 +7,24 @@ on:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lua-syntax:
     name: Lua Syntax Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Lua
         uses: leafo/gh-actions-lua@v12
         with:
-          lua-version: "5.4"
+          luaVersion: "5.4"
 
       - name: Check Lua Syntax
         run: |
@@ -29,13 +33,14 @@ jobs:
   verify-scripts:
     name: Run Verification Scripts
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Lua
         uses: leafo/gh-actions-lua@v12
         with:
-          lua-version: "5.4"
+          luaVersion: "5.4"
 
       - name: Run Module Map Verification
         run: lua scripts/verify-module-map.lua
@@ -49,26 +54,29 @@ jobs:
   luacheck:
     name: Luacheck Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Lua
         uses: leafo/gh-actions-lua@v12
         with:
-          lua-version: "5.4"
+          luaVersion: "5.4"
 
-      - name: Setup LuaRocks
+      - name: Install LuaRocks + Luacheck
         run: |
           sudo apt-get update
           sudo apt-get install -y luarocks
-
-      - name: Install Luacheck
-        run: luarocks install luacheck
+          luarocks install luacheck || sudo luarocks install luacheck
+          echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
+          luacheck --version
 
       - name: Run Luacheck
         id: luacheck_run
         shell: bash
         run: |
+          mkdir -p luacheck-context
+          : > luacheck-report.txt
           set +e
           luacheck --config .luacheckrc --codes --ranges scripts 2>&1 | tee luacheck-report.txt
           status=${PIPESTATUS[0]}
@@ -98,21 +106,57 @@ jobs:
   selene:
     name: Selene Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed Lua files
+        id: changed_lua
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.lua' > changed-lua.txt
+          else
+            if [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+              git ls-files '*.lua' > changed-lua.txt
+            else
+              git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- '*.lua' > changed-lua.txt
+            fi
+          fi
+          grep '^src/.*\.lua$' changed-lua.txt > changed-src-lua.txt || true
+          echo "Changed Lua files:"
+          cat changed-lua.txt || true
+          echo "Changed src Lua files:"
+          cat changed-src-lua.txt || true
+          count=$(wc -l < changed-src-lua.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Skip Selene (no src lua changes)
+        if: steps.changed_lua.outputs.count == '0'
+        run: echo "No src/*.lua changes detected; skipping Selene."
 
       - name: Setup Rust
+        if: steps.changed_lua.outputs.count != '0'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Selene
+        if: steps.changed_lua.outputs.count != '0'
         run: cargo install selene --locked
 
       - name: Run Selene
-        run: selene src
+        if: steps.changed_lua.outputs.count != '0'
+        shell: bash
+        run: |
+          mapfile -t files < changed-src-lua.txt
+          selene "${files[@]}"
 
   complexity:
     name: Complexity Report
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -137,22 +181,55 @@ jobs:
   format-check:
     name: StyLua Format Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed Lua files
+        id: changed_lua
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.lua' > changed-lua.txt
+          else
+            if [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+              git ls-files '*.lua' > changed-lua.txt
+            else
+              git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- '*.lua' > changed-lua.txt
+            fi
+          fi
+          echo "Changed Lua files:"
+          cat changed-lua.txt || true
+          count=$(wc -l < changed-lua.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Skip StyLua (no lua changes)
+        if: steps.changed_lua.outputs.count == '0'
+        run: echo "No *.lua changes detected; skipping StyLua format check."
 
       - name: Setup Rust
+        if: steps.changed_lua.outputs.count != '0'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install StyLua
+        if: steps.changed_lua.outputs.count != '0'
         run: cargo install stylua --locked
 
       - name: Run StyLua Check
-        run: stylua --check .
+        if: steps.changed_lua.outputs.count != '0'
+        shell: bash
+        run: |
+          mapfile -t files < changed-lua.txt
+          stylua --check "${files[@]}"
 
   auto-format-on-push:
     name: Auto Format on Push
     if: github.event_name == 'push' && vars.AUTO_FORMAT_ON_PUSH == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -178,6 +255,7 @@ jobs:
   bundle-build:
     name: Build Production Bundle
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [lua-syntax, verify-scripts, luacheck, selene, complexity, format-check]
     steps:
       - uses: actions/checkout@v4
@@ -185,7 +263,7 @@ jobs:
       - name: Setup Lua
         uses: leafo/gh-actions-lua@v12
         with:
-          lua-version: "5.4"
+          luaVersion: "5.4"
 
       - name: Build Bundle
         run: lua scripts/build-bundle.lua

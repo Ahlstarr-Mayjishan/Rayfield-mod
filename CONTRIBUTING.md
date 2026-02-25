@@ -36,8 +36,12 @@ stylua --check .
 lizard src -l lua -C 30 -L 220
 ```
 
+CI runs Selene/StyLua on changed Lua files to avoid blocking unrelated legacy formatting debt.
+Use full-repo checks locally when you are doing cleanup work.
+
 CI runs the complexity report in advisory mode by default. Set repository variable `STRICT_COMPLEXITY_GUARD=true` to make complexity thresholds blocking.
 When luacheck fails in CI, download artifact `luacheck-context` to get full-file context for each reported file.
+GitHub Pages deploy is opt-in. Set repository variable `ENABLE_GH_PAGES=true` after configuring Pages in repository settings.
 
 Optional syntax pass:
 
