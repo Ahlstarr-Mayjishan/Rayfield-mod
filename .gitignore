@@ -1,3 +1,5 @@
 .hererocks/
 site/
 __pycache__/
+luacheck-report.txt
+luacheck-context*/

@@ -66,8 +66,34 @@ jobs:
         run: luarocks install luacheck
 
       - name: Run Luacheck
+        id: luacheck_run
+        shell: bash
         run: |
-          luacheck --config .luacheckrc --codes --ranges scripts
+          set +e
+          luacheck --config .luacheckrc --codes --ranges scripts 2>&1 | tee luacheck-report.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Build Luacheck Context Artifact
+        if: always()
+        run: lua scripts/emit-luacheck-context.lua luacheck-report.txt luacheck-context
+
+      - name: Upload Luacheck Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luacheck-context
+          path: |
+            luacheck-report.txt
+            luacheck-context/
+          retention-days: 14
+
+      - name: Fail On Luacheck Issues
+        if: steps.luacheck_run.outputs.status != '0'
+        run: |
+          echo "Luacheck reported issues. Download artifact 'luacheck-context' for full-file context."
+          exit 1
 
   selene:
     name: Selene Lint

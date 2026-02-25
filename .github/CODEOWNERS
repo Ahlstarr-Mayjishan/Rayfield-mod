@@ -1,0 +1,19 @@
+# Default owner
+* @Ahlstarr-Mayjishan
+
+# Core runtime and loaders
+/src/entry/rayfield-all-in-one.entry.lua @Ahlstarr-Mayjishan
+/src/entry/rayfield-modified.runtime.lua @Ahlstarr-Mayjishan
+/Main loader/* @Ahlstarr-Mayjishan
+
+# Critical state/persistence paths
+/src/services/config.lua @Ahlstarr-Mayjishan
+/src/services/settings.lua @Ahlstarr-Mayjishan
+/src/services/theme.lua @Ahlstarr-Mayjishan
+
+# Element factory surface
+/src/ui/elements/factory/* @Ahlstarr-Mayjishan
+
+# CI/CD policy
+/.github/workflows/* @Ahlstarr-Mayjishan
+/.github/CODEOWNERS @Ahlstarr-Mayjishan

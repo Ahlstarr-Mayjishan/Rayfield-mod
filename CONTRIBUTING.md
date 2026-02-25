@@ -37,6 +37,7 @@ lizard src -l lua -C 30 -L 220
 ```
 
 CI runs the complexity report in advisory mode by default. Set repository variable `STRICT_COMPLEXITY_GUARD=true` to make complexity thresholds blocking.
+When luacheck fails in CI, download artifact `luacheck-context` to get full-file context for each reported file.
 
 Optional syntax pass:
 
@@ -60,6 +61,23 @@ find . -name "*.lua" -not -path "./.git/*" -exec luac -p {} \;
   - Risk / compatibility impact
   - Test evidence (commands and results)
 - If build outputs are affected, include generated artifacts in the same PR.
+
+## Branch Protection (Maintainers)
+Enable GitHub branch protection on `main` with:
+- Require pull request before merging
+- Require approvals (at least 1)
+- Require review from Code Owners
+- Require branches to be up to date before merging
+- Required checks:
+  - `Lua Syntax Check`
+  - `Run Verification Scripts`
+  - `Luacheck Lint`
+  - `Selene Lint`
+  - `Complexity Report`
+  - `StyLua Format Check`
+  - `Build Production Bundle`
+  - `PR Metadata Guard`
+  - `Changed Files Guard`
 
 ## Commit Guidance
 - Prefer short, imperative commit subjects.

@@ -1,0 +1,68 @@
+name: PR Policy
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-metadata:
+    name: PR Metadata Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR template sections
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          missing=0
+          if ! echo "$PR_BODY" | grep -q "## Summary"; then
+            echo "Missing section: ## Summary"
+            missing=1
+          fi
+          if ! echo "$PR_BODY" | grep -q "## Validation"; then
+            echo "Missing section: ## Validation"
+            missing=1
+          fi
+          if ! echo "$PR_BODY" | grep -q "## Compatibility Checklist"; then
+            echo "Missing section: ## Compatibility Checklist"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "PR description is missing required template sections."
+            exit 1
+          fi
+
+  changed-files-guard:
+    name: Changed Files Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        id: changed
+        shell: bash
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}" --depth=1
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed-files.txt
+          cat changed-files.txt
+
+      - name: Enforce tests/examples for core logic changes
+        shell: bash
+        run: |
+          if grep -Eq '^(src/ui/elements/factory/|src/services/config.lua|src/entry/rayfield-modified.runtime.lua|src/entry/rayfield-all-in-one.entry.lua|Main loader/)' changed-files.txt; then
+            if ! grep -Eq '^(tests/|Examples/)' changed-files.txt; then
+              echo "Core logic changed but no tests/ or Examples/ updates found."
+              exit 1
+            fi
+          fi
+
+      - name: Enforce API docs for public surface changes
+        shell: bash
+        run: |
+          if grep -Eq '^(src/ui/elements/factory/|src/services/theme.lua|src/entry/rayfield-modified.runtime.lua|src/entry/rayfield-all-in-one.entry.lua)' changed-files.txt; then
+            if ! grep -Eq '^(Documentation/API.md|Documentation/CHANGELOG.md)' changed-files.txt; then
+              echo "Public/runtime surface changed but Documentation/API.md or Documentation/CHANGELOG.md was not updated."
+              exit 1
+            fi
+          fi
