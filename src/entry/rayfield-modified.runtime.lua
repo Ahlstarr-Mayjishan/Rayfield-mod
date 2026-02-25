@@ -2921,6 +2921,36 @@ function RayfieldLibrary:CreateWindow(Settings)
 	detachPathEnabled = resolvedPerformanceProfile.disableDetach ~= true
 	applySystemOverridesForProfile(resolvedPerformanceProfile)
 	ExperienceState.onboardingRendered = false
+	local fastLoadEnabled = Settings.FastLoad ~= false
+	if resolvedPerformanceProfile.disableAnimations == true then
+		fastLoadEnabled = true
+	end
+	local startupTimeScale = fastLoadEnabled and 0.2 or 1
+	if resolvedPerformanceProfile.disableAnimations == true then
+		startupTimeScale = 0.08
+	end
+
+	local function waitForStartup(seconds)
+		local duration = tonumber(seconds) or 0
+		if duration <= 0 then
+			return
+		end
+		local scaled = duration * startupTimeScale
+		if scaled > 0 then
+			task.wait(scaled)
+		end
+	end
+
+	local function startupTweenDuration(seconds)
+		local duration = tonumber(seconds) or 0
+		if duration <= 0 then
+			return 0
+		end
+		if startupTimeScale >= 1 then
+			return duration
+		end
+		return math.max(0.04, duration * startupTimeScale)
+	end
 
 	if type(loaderDiagnostics) == "table" then
 		loaderDiagnostics.performanceProfile = {
@@ -2940,7 +2970,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 			Rayfield.Enabled = true
 			Rayfield.Loading.Visible = true
 
-			task.wait(1.4)
+			waitForStartup(1.4)
 			Rayfield.Loading.Visible = false
 		end
 	end
@@ -3406,15 +3436,15 @@ function RayfieldLibrary:CreateWindow(Settings)
 	Notifications.Visible = true
 	Rayfield.Enabled = true
 
-	task.wait(0.5)
-	Animation:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-	Animation:Create(Main.Shadow.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
-	task.wait(0.1)
-	Animation:Create(LoadingFrame.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	task.wait(0.05)
-	Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	task.wait(0.05)
-	Animation:Create(LoadingFrame.Version, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.5)
+	Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+	Animation:Create(Main.Shadow.Image, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
+	waitForStartup(0.1)
+	Animation:Create(LoadingFrame.Title, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.05)
+	Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	waitForStartup(0.05)
+	Animation:Create(LoadingFrame.Version, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
 
 
 	Elements.Template.LayoutOrder = 100000
@@ -3674,15 +3704,15 @@ function RayfieldLibrary:CreateWindow(Settings)
 	local function playStartupAnimation()
 		Elements.Visible = true
 
-		task.wait(1.1)
-		Animation:Create(Main, TweenInfo.new(0.7, Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
-		task.wait(0.3)
-		Animation:Create(LoadingFrame.Title, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		Animation:Create(LoadingFrame.Version, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-		task.wait(0.1)
-		Animation:Create(Main, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
-		Animation:Create(Main.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
+		waitForStartup(1.1)
+		Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential, Enum.EasingDirection.InOut), {Size = UDim2.new(0, 390, 0, 90)}):Play()
+		waitForStartup(0.3)
+		Animation:Create(LoadingFrame.Title, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		Animation:Create(LoadingFrame.Subtitle, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		Animation:Create(LoadingFrame.Version, TweenInfo.new(startupTweenDuration(0.2), Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
+		waitForStartup(0.1)
+		Animation:Create(Main, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Size = useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)}):Play()
+		Animation:Create(Main.Shadow.Image, TweenInfo.new(startupTweenDuration(0.5), Enum.EasingStyle.Exponential), {ImageTransparency = 0.6}):Play()
 
 		local topbarDivider = Topbar:FindFirstChild("Divider")
 		local topbarCornerRepair = Topbar:FindFirstChild("CornerRepair")
@@ -3716,40 +3746,40 @@ function RayfieldLibrary:CreateWindow(Settings)
 			topbarHide.ImageTransparency = 1
 		end
 
-		task.wait(0.5)
+		waitForStartup(0.5)
 		Topbar.Visible = true
 		TabList.Visible = true
-		Animation:Create(Topbar, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+		Animation:Create(Topbar, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 		if topbarCornerRepair then
-			Animation:Create(topbarCornerRepair, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+			Animation:Create(topbarCornerRepair, TweenInfo.new(startupTweenDuration(0.7), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
 		end
-		task.wait(0.1)
+		waitForStartup(0.1)
 		if topbarDivider then
-			Animation:Create(topbarDivider, TweenInfo.new(1, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
+			Animation:Create(topbarDivider, TweenInfo.new(startupTweenDuration(1), Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 0, 1)}):Play()
 		end
 		if topbarTitle then
-			Animation:Create(topbarTitle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+			Animation:Create(topbarTitle, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
 		end
-		task.wait(0.05)
+		waitForStartup(0.05)
 		if topbarSearch then
-			Animation:Create(topbarSearch, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			Animation:Create(topbarSearch, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
 		end
-		task.wait(0.05)
+		waitForStartup(0.05)
 		if topbarSettings then
-			Animation:Create(topbarSettings, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-			task.wait(0.05)
+			Animation:Create(topbarSettings, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			waitForStartup(0.05)
 		end
 		if topbarChangeSize then
-			Animation:Create(topbarChangeSize, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
-			task.wait(0.05)
+			Animation:Create(topbarChangeSize, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			waitForStartup(0.05)
 		end
 		if topbarHide then
-			Animation:Create(topbarHide, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
+			Animation:Create(topbarHide, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {ImageTransparency = 0.8}):Play()
 		end
-		task.wait(0.3)
+		waitForStartup(0.3)
 
 		if dragBar and dragBarCosmetic then
-			Animation:Create(dragBarCosmetic, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
+			Animation:Create(dragBarCosmetic, TweenInfo.new(startupTweenDuration(0.6), Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
 		end
 
 		LoadingFrame.Visible = false

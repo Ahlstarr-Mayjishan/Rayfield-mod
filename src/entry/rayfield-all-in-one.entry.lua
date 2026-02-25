@@ -421,6 +421,15 @@ local function startAutoReloadWatcher()
 	return true
 end
 
+local function startAutoReloadWatcherAsync(errorPrefix)
+	task.spawn(function()
+		local okStart, errStart = startAutoReloadWatcher()
+		if not okStart and errStart then
+			warn((errorPrefix or "⚠️ [Rayfield] Auto reload start failed: ") .. tostring(errStart))
+		end
+	end)
+end
+
 -- ============================================
 -- LOAD FUNCTIONS
 -- ============================================
@@ -536,10 +545,7 @@ function AllInOne.quickSetup(config)
 	AllInOne.currentUI = UI
 
 	if CONFIG.AUTO_RELOAD_ENABLED and not AutoReloadState.running then
-		local okStart, errStart = startAutoReloadWatcher()
-		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload is enabled but failed to start: " .. tostring(errStart))
-		end
+		startAutoReloadWatcherAsync("⚠️ [Rayfield] Auto reload is enabled but failed to start: ")
 	end
 	
 	return UI
@@ -753,13 +759,6 @@ if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	print("✅ [Rayfield] Auto-loaded successfully!")
 	print("Access via: _G.Rayfield or _G.RayfieldUI")
 	print("Return mode:", CONFIG.AUTO_EXECUTE_RETURN, "\n")
-
-	if CONFIG.AUTO_RELOAD_ENABLED then
-		local okStart, errStart = startAutoReloadWatcher()
-		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload start failed: " .. tostring(errStart))
-		end
-	end
 
 	-- Return lightweight loader by default to avoid executor freeze on large return objects
 	if CONFIG.AUTO_EXECUTE_RETURN == "ui" then

@@ -91,6 +91,9 @@ Main methods:
 
 `CreateWindow` setting note:
 - `ToggleUIKeybind` hỗ trợ key đơn (`"K"`) hoặc sequence canonical (`"LeftControl+K>LeftShift+M"`).
+- `FastLoad` (optional, default: `true`):
+  - giảm delay startup + thời lượng tween để UI lên nhanh hơn.
+  - set `FastLoad = false` nếu muốn giữ timing animation cũ.
 - `ConfigurationSaving.Layout` (optional):
   - `Enabled` (default: follow `ConfigurationSaving.Enabled`)
   - `DebounceMs` (default: `300`)
