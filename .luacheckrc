@@ -38,7 +38,7 @@ globals = {
    "print",
 }
 
-unused_args = false
+unused_args = true
 max_line_length = false
 
 exclude_files = {

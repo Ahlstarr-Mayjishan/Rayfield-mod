@@ -30,10 +30,13 @@ bash scripts/install-hooks.sh
 Optional lint/format checks:
 
 ```bash
-luacheck --config .luacheckrc src scripts tests "Main loader" feature
+luacheck --config .luacheckrc --codes --ranges scripts
 selene src
 stylua --check .
+lizard src -l lua -C 30 -L 220
 ```
+
+CI runs the complexity report in advisory mode by default. Set repository variable `STRICT_COMPLEXITY_GUARD=true` to make complexity thresholds blocking.
 
 Optional syntax pass:
 
