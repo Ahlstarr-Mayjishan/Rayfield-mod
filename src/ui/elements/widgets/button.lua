@@ -1,8 +1,19 @@
-local client = _G and _G.__RayfieldApiClient
-if not client then
-	error("Rayfield ApiClient is not initialized")
+local bootstrap = _G and _G.__RayfieldWidgetBootstrap
+if not bootstrap then
+	error("[E_BOOTSTRAP_MISSING] Rayfield widget bootstrap is not initialized")
+end
+if type(bootstrap) ~= "table" or type(bootstrap.bootstrapWidget) ~= "function" then
+	error("[E_BOOTSTRAP_INVALID] Rayfield widget bootstrap contract is invalid")
 end
 
-local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local WidgetsIndex = client.fetchAndExecute(root .. "src/ui/elements/widgets/index.lua")
-return { name = "button", index = WidgetsIndex }
+return bootstrap.bootstrapWidget(
+	"button",
+	"src/ui/elements/widgets/index.lua",
+	function(widgetsIndex)
+		return {
+			name = "button",
+			index = widgetsIndex
+		}
+	end,
+	{ expectedType = "table" }
+)

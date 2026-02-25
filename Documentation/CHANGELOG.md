@@ -1,8 +1,162 @@
 # Changelog
 
+## 2026-02-24
+
+### Added
+- Added Element Expansion Pack v1 (additive, no breaking changes):
+  - New tab factories: `CreateCollapsibleSection`, `CreateNumberStepper`, `CreateConfirmButton`, `CreateImage`, `CreateGallery`, `CreateChart`, `CreateLogConsole`.
+  - `CreateDropdown` searchable extension: `SearchEnabled`, `SearchPlaceholder`, `ResetSearchOnRefresh`, methods `SetSearchQuery/GetSearchQuery/ClearSearch`.
+  - Extended element API tooltip methods: `SetTooltip(textOrOptions)`, `ClearTooltip()`.
+  - Collapsible section hybrid layout behavior:
+    - implicit grouping for subsequent elements
+    - explicit override via `ParentSection`.
+  - Chart push API + viewport state:
+    - `AddPoint`, `SetData`, `GetData`, `Zoom`, `Pan`.
+  - Log console capture modes:
+    - `manual`, `global`, `both` (`global` backed by `LogService.MessageOut` fan-out hub).
+  - Image URL fallback behavior:
+    - when executor asset bridge is unavailable, URL source falls back safely to empty asset.
+- Added UI Experience Pack v1:
+  - Theme Studio full key editor (live preview, base theme + custom packed colors).
+  - UI Presets (`Compact`, `Comfort`, `Focus`) with non-destructive behavior bundles.
+  - Favorites/Pin system with per-element pin badge + Favorites manager.
+  - Global Transition Profiles (`Minimal`, `Smooth`, `Snappy`, `Off`) wired into animation engine.
+  - Onboarding overlay flow with suppression checkbox text: `Don't show this again`.
+- Added public APIs on base runtime:
+  - `SetUIPreset`, `GetUIPreset`
+  - `SetTransitionProfile`, `GetTransitionProfile`
+  - `ListControls`, `PinControl`, `UnpinControl`, `GetPinnedControls`
+  - `ShowOnboarding`, `SetOnboardingSuppressed`, `IsOnboardingSuppressed`
+  - `GetThemeStudioState`, `ApplyThemeStudioTheme`, `ResetThemeStudio`
+- Added element-level favorites APIs:
+  - `Element:GetFavoriteId()`
+  - `Element:Pin()`
+  - `Element:Unpin()`
+  - `Element:IsPinned()`
+
+### Changed
+- Changed settings defaults:
+  - added internal `Layout.collapsedSections` for collapsible section persistence.
+- Changed runtime element module init to pass internal settings callbacks:
+  - `getInternalSetting(category, key)`
+  - `setInternalSetting(category, key, value, persist?)`
+- Changed theme schema with additive keys + fallback consistency:
+  - `TooltipBackground`, `TooltipTextColor`, `TooltipStroke`
+  - `ChartLine`, `ChartGrid`, `ChartFill`
+  - `LogInfo`, `LogWarn`, `LogError`
+  - `ConfirmArmed`, `SectionChevron`
+- Changed settings system:
+  - added internal categories `Appearance`, `Favorites`, `Onboarding`, `ThemeStudio`
+  - added dropdown renderer support in generic settings UI
+  - added experience handler injection channel (`setExperienceHandlers`)
+- Changed animation engine to support runtime transition profiles and profile-aware tween scaling.
+- Changed runtime window boot flow to restore experience settings in order:
+  - transition profile -> ui preset -> theme studio -> favorites -> onboarding decision.
+
+## 2026-02-20
+
+### Added
+- Added executor compatibility service:
+  - `src/services/compatibility.lua`
+  - unified helpers for `getService`, `getCompileString`, GUI container resolve, protect/parent, and duplicate GUI cleanup.
+- Added production bundle builder:
+  - `scripts/build-bundle.lua`
+  - outputs:
+    - `dist/rayfield-runtime-core.bundle.lua`
+    - `dist/rayfield-runtime-ui.bundle.lua`
+    - `dist/rayfield-production.bootstrap.lua`
+- Added bundle runtime globals (non-breaking):
+  - `_G.__RAYFIELD_BUNDLE_SOURCES`
+  - `_G.__RAYFIELD_BUNDLE_MODE`
+- Added leak cause attribution APIs on enhanced memory detector:
+  - `setAttributionPolicy(policy)`
+  - `getAttributionReport()`
+- Added enhanced passthrough API:
+  - `EnhancedRayfield:GetAttributionReport()`
+- Added runtime diagnostics provider on base runtime:
+  - `Rayfield:GetRuntimeDiagnostics()`
+  - includes animation/text/theme visibility diagnostics for attribution.
+- Added layout persistence service:
+  - `src/services/layout-persistence.lua`
+  - internal layout namespace key: `__rayfield_layout`
+  - supports debounced config save and ordered apply (`main -> split -> floating`).
+- Added viewport virtualization/hibernation service:
+  - `src/services/viewport-virtualization.lua`
+  - event-based sleep/wake with spacer preservation (no `while true`)
+  - default always-on policy with overscan + throttled updates
+  - wired for main tab hosts, split tab panels, detached floating hosts, and mini-window scrolling hosts.
+- Added low-spec loader profile support in `CreateWindow` (opt-in, non-breaking):
+  - `Settings.PerformanceProfile = { Enabled, Mode, Aggressive, DisableDetach, DisableTabSplit, DisableAnimations, ViewportVirtualization }`
+  - hybrid auto/manual profile resolution
+  - performance-first auto rule: touch => `mobile`, non-touch => `potato`.
+
+### Changed
+- Changed API client fetch path to `bundle-first` behavior with safe fallback:
+  - `src/api/client.lua` now resolves bundled sources before `game:HttpGet`.
+  - `fetchAndExecute` retries once via network when bundled source fails compile/execute.
+- Changed API loader to mark bundle mode automatically when bundle sources are present:
+  - `src/api/loader.lua`
+- Changed runtime GUI parenting/dedup logic to use compatibility service instead of repeated inline branches:
+  - `src/entry/rayfield-modified.runtime.lua`
+- Changed runtime env service resolution to reuse compatibility service:
+  - `src/core/runtime-env.lua`
+- Changed memory leak detector defaults to UI-centric scanning:
+  - `src/feature/enhanced/create-enhanced-rayfield.lua`
+  - new scan modes: `ui`, `mixed`, `game`
+  - new APIs: `setScanMode`, `setScanRoots`
+- Changed memory leak response flow to classification-based handling:
+  - weighted cause attribution (`rayfield_ui` vs `unknown`)
+  - emergency cleanup now only runs when cause is confirmed `rayfield_ui` across configured confirm cycles.
+- Changed unknown-cause path to notification-only behavior (no emergency trigger, no warn spam).
+- Changed configuration pipeline to persist and restore UI layout (non-breaking):
+  - `ConfigurationSaving.Layout = { Enabled, DebounceMs }`
+  - layout now merges into existing config payload and is applied after element flags.
+- Changed runtime initialization to wire viewport virtualization into elements/drag/tabsplit:
+  - `src/entry/rayfield-modified.runtime.lua`
+  - wake path now re-syncs element state and hover evaluation.
+- Changed drag/tabsplit lifecycle to emit host/element move and busy signals for virtualization:
+  - `src/feature/drag/controller.lua`
+  - `src/feature/drag/detacher.lua`
+  - `src/feature/tabsplit/controller.lua`
+- Changed mini-window controller to register/unregister virtualization host and widget elements:
+  - `src/feature/mini-window/controller.lua`
+- Changed drag module to support runtime detach gating:
+  - `src/feature/drag/controller.lua`
+  - when low-spec profile disables detach, element detach API is not attached and drag snapshot methods return lightweight defaults.
+- Changed runtime `CreateWindow` pipeline to resolve and apply performance profile before window bootstrap:
+  - `src/entry/rayfield-modified.runtime.lua`
+  - profile diagnostics exposed via `_G.__RAYFIELD_LOADER_DIAGNOSTICS.performanceProfile`.
+- Changed configuration apply flow for heavy config files:
+  - `src/services/config.lua`
+  - flags are now applied in tab-priority batches instead of one unordered full pass
+  - each applied element gets a lightweight fade-in to smooth visual load.
+
+### Fixed
+- Fixed potential stale theme bindings by tracking per-object/per-property bindings and disconnecting on lifecycle events:
+  - `src/services/theme.lua`
+  - `Destroying` primary cleanup + `AncestryChanged` fallback.
+- Reduced risk of periodic FPS spikes from full-game descendant scans in enhanced memory leak monitor by defaulting to Rayfield UI root scope.
+
 ## 2026-02-17
 
 ### Added
+- Added dynamic sequence keybind service:
+  - `src/services/keybind-sequence.lua`
+  - canonical sequence format with max 4 steps and 800ms default step timeout
+- Added sequence support to `Tab:CreateKeybind(settings)` with custom parse/display hooks:
+  - `DisplayFormatter(canonical, steps)`
+  - `ParseInput(text)`
+  - `MaxSteps`
+  - `StepTimeoutMs`
+- Added toggle keybind UI and wrappers:
+  - `Tab:CreateToggle(settings)` now supports `Keybind = { ... }`
+  - `Tab:CreateToggleBind(settings)`
+  - `Tab:CreateHotToggle(settings)`
+  - keybind box renders on the left side of toggle switch when enabled
+- Added sequence support for window setting `ToggleUIKeybind` (single key or multi-step canonical sequence).
+- Added keybind-sequence regression script:
+  - `tests/regression/test-keybind-sequence.lua`
+  - root wrapper: `test-keybind-sequence.lua`
 - Added all-in-one GitHub commit watcher with optional auto UI reload:
   - `autoReload` / `autoReloadEnabled`
   - `autoReloadInterval`
@@ -58,6 +212,12 @@
   - `src/ui/elements/widgets/slider.lua`
   - `src/ui/elements/widgets/input.lua`
   - `src/ui/elements/widgets/keybind.lua`
+- Added shared widget bootstrap contract:
+  - `src/ui/elements/widgets/bootstrap.lua`
+  - standardized fail-fast error codes (`E_CLIENT_MISSING`, `E_CLIENT_INVALID`, `E_ROOT_INVALID`, `E_TARGET_INVALID`, `E_FETCH_FAILED`, `E_EXPORT_INVALID`)
+  - structured branch tracing with `branch_id`
+- Added widget bootstrap regression test:
+  - `tests/regression/test-widget-bootstrap.lua`
 - Added architecture document:
   - `Documentation/architecture/module-boundaries.md`
 - Added canonical test tree:
@@ -83,6 +243,22 @@
 - Reintroduced top-level test entry files as compatibility wrappers:
   - `rayfield-smoke-test.lua`
   - `test-animation-api.lua`
+- Hardened drag/reorder behavior for main UI:
+  - in-place reorder is now handled during hold-drag-drop inside current tab page
+  - detached -> main dock preview and dock insertion use consistent candidate filtering
+  - `src/feature/drag/dock.lua` now enforces `UIListLayout.SortOrder = LayoutOrder` when applicable
+- Hardened hover synchronization for fast tab switching/mouse movement:
+  - detach cue now re-syncs with pointer and page lifecycle changes
+  - element hover state in canonical elements factory is tracked by a per-tab hover registry with throttled sync
+- `src/ui/elements/widgets/index.lua` now forwards to canonical `src/ui/elements/factory/init.lua` to avoid behavior drift.
+- Widget wrappers (`src/ui/elements/widgets/*.lua`) now route through one canonical bootstrap branch tree instead of per-file ad-hoc checks.
+- Dropdown state pipeline is now normalized and deterministic:
+  - `normalize -> visual -> callback -> persist`
+  - supports `DefaultSelection` fallback on clear/refresh when selection becomes invalid
+  - supports `ClearBehavior = "default" | "none"`
+  - auto-fallback emits callback and persists normalized state
+- Added canonical element sync service (`src/services/element-sync.lua`) and wired core stateful elements
+  (`Dropdown`, `Toggle`, `Input`, `Slider`, `TrackBar`, `StatusBar`) to one shared commit contract.
 
 ### Removed
 - Removed canonical export of `RayfieldAdvanced.AnimationAPI` from `src/feature/enhanced/advanced.lua`.

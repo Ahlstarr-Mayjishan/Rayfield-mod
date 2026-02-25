@@ -24,6 +24,18 @@ local client = compileChunk(clientSource, "src/api/client.lua")()
 if type(client) ~= "table" or type(client.fetchAndExecute) ~= "function" then
 	error("Invalid API client bootstrap: missing fetchAndExecute")
 end
+
+if _G and _G.__RayfieldWidgetBootstrap == nil then
+	local okBootstrap, bootstrapModule = pcall(client.fetchAndExecute, root .. "src/ui/elements/widgets/bootstrap.lua")
+	if not okBootstrap then
+		error("Failed to preload widget bootstrap: " .. tostring(bootstrapModule))
+	end
+	if type(bootstrapModule) ~= "table" or type(bootstrapModule.bootstrapWidget) ~= "function" then
+		error("Invalid widget bootstrap module: missing bootstrapWidget")
+	end
+	_G.__RayfieldWidgetBootstrap = bootstrapModule
+end
+
 local loader = client.fetchAndExecute(root .. "src/api/loader.lua")
 if type(loader) ~= "table" or type(loader.load) ~= "function" then
 	error("Invalid API loader bootstrap: missing loader.load")

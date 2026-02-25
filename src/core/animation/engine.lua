@@ -2,6 +2,24 @@ local Engine = {}
 Engine.__index = Engine
 
 local DefaultCleanup = {}
+local TRANSITION_PROFILES = {
+	Smooth = {
+		durationScale = 1.0,
+		suppressTextEffects = false
+	},
+	Snappy = {
+		durationScale = 0.75,
+		suppressTextEffects = false
+	},
+	Minimal = {
+		durationScale = 0.55,
+		suppressTextEffects = false
+	},
+	Off = {
+		durationScale = 0.01,
+		suppressTextEffects = true
+	}
+}
 
 function DefaultCleanup.safeDisconnect(connection)
 	if not connection then
@@ -79,6 +97,16 @@ local function countEntries(t)
 	return count
 end
 
+local function countTextHandles(handleBuckets)
+	local total = 0
+	for _, handles in pairs(handleBuckets) do
+		if type(handles) == "table" then
+			total = total + #handles
+		end
+	end
+	return total
+end
+
 local function getGoalKey(goals)
 	local keys = {}
 	for key in pairs(goals or {}) do
@@ -108,7 +136,70 @@ function Engine.new(opts)
 	self._cleanupHooks = setmetatable({}, { __mode = "k" })
 	self._textHandles = setmetatable({}, { __mode = "k" })
 	self._textHeartbeat = nil
+	self._transitionProfileName = "Smooth"
+	self._transitionProfile = {
+		durationScale = TRANSITION_PROFILES.Smooth.durationScale,
+		suppressTextEffects = TRANSITION_PROFILES.Smooth.suppressTextEffects
+	}
 	return self
+end
+
+local function cloneProfileSpec(spec)
+	return {
+		durationScale = tonumber(spec and spec.durationScale) or 1,
+		suppressTextEffects = spec and spec.suppressTextEffects == true or false
+	}
+end
+
+local function resolveProfileName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "smooth" then
+		return "Smooth"
+	elseif normalized == "snappy" then
+		return "Snappy"
+	elseif normalized == "minimal" then
+		return "Minimal"
+	elseif normalized == "off" then
+		return "Off"
+	end
+	return nil
+end
+
+function Engine:SetTransitionProfile(profileName, profileSpec)
+	local canonicalName = resolveProfileName(profileName)
+	if not canonicalName then
+		return false, "Invalid transition profile."
+	end
+
+	local defaultSpec = TRANSITION_PROFILES[canonicalName]
+	local nextSpec = cloneProfileSpec(defaultSpec)
+	if type(profileSpec) == "table" then
+		if profileSpec.durationScale ~= nil then
+			local parsedScale = tonumber(profileSpec.durationScale)
+			if parsedScale and parsedScale > 0 then
+				nextSpec.durationScale = parsedScale
+			end
+		end
+		if profileSpec.suppressTextEffects ~= nil then
+			nextSpec.suppressTextEffects = profileSpec.suppressTextEffects == true
+		end
+	end
+
+	self._transitionProfileName = canonicalName
+	self._transitionProfile = nextSpec
+	if nextSpec.suppressTextEffects then
+		self:StopAllText()
+	end
+
+	return true, canonicalName
+end
+
+function Engine:GetTransitionProfile()
+	local profile = cloneProfileSpec(self._transitionProfile)
+	return self._transitionProfileName, profile
 end
 
 function Engine:SetUiSuppressionProvider(provider)
@@ -205,7 +296,23 @@ function Engine:Create(instance, tweenInfo, goals, opts)
 		return nil
 	end
 
-	local tween = self.TweenService:Create(instance, tweenInfo, goals)
+	local scale = tonumber(self._transitionProfile and self._transitionProfile.durationScale) or 1
+	if scale <= 0 then
+		scale = 1
+	end
+	local adjustedTweenInfo = tweenInfo
+	if scale ~= 1 then
+		adjustedTweenInfo = TweenInfo.new(
+			math.max(0.01, tweenInfo.Time * scale),
+			tweenInfo.EasingStyle,
+			tweenInfo.EasingDirection,
+			tweenInfo.RepeatCount,
+			tweenInfo.Reverses,
+			tweenInfo.DelayTime
+		)
+	end
+
+	local tween = self.TweenService:Create(instance, adjustedTweenInfo, goals)
 
 	if opts.track then
 		local key = opts.key
@@ -252,6 +359,18 @@ function Engine:GetActiveAnimationCount()
 		count = count + countEntries(bucket)
 	end
 	return count
+end
+
+function Engine:GetTextHandleCount()
+	return countTextHandles(self._textHandles)
+end
+
+function Engine:GetRuntimeStats()
+	return {
+		activeTweens = self:GetActiveAnimationCount(),
+		activeTextHandles = self:GetTextHandleCount(),
+		heartbeatConnected = self._textHeartbeat ~= nil
+	}
 end
 
 function Engine:CancelObject(instance)
@@ -302,7 +421,8 @@ function Engine:_maybeReleaseTextHeartbeat()
 end
 
 function Engine:_tickTextHandles()
-	local suppressed = self:IsUiSuppressed()
+	local transitionSuppressed = self._transitionProfile and self._transitionProfile.suppressTextEffects == true
+	local suppressed = self:IsUiSuppressed() or transitionSuppressed
 	for instance, handles in pairs(self._textHandles) do
 		if type(handles) == "table" then
 			for i = #handles, 1, -1 do
@@ -330,6 +450,14 @@ end
 
 function Engine:RegisterTextHandle(instance, handle)
 	if typeof(instance) ~= "Instance" or not handle then
+		return
+	end
+	if self._transitionProfile and self._transitionProfile.suppressTextEffects == true then
+		if handle and handle.Stop then
+			pcall(function()
+				handle:Stop()
+			end)
+		end
 		return
 	end
 	local handles = self._textHandles[instance]

@@ -2,11 +2,21 @@ local Resolver = {}
 
 local DEFAULT_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 
+function Resolver.normalizeRuntimeRoot(rootUrl)
+	if type(rootUrl) ~= "string" or rootUrl == "" then
+		return DEFAULT_ROOT
+	end
+	if rootUrl:sub(-1) ~= "/" then
+		return rootUrl .. "/"
+	end
+	return rootUrl
+end
+
 function Resolver.getRuntimeRoot()
 	if _G and type(_G.__RAYFIELD_RUNTIME_ROOT_URL) == "string" and #_G.__RAYFIELD_RUNTIME_ROOT_URL > 0 then
-		return _G.__RAYFIELD_RUNTIME_ROOT_URL
+		return Resolver.normalizeRuntimeRoot(_G.__RAYFIELD_RUNTIME_ROOT_URL)
 	end
-	return DEFAULT_ROOT
+	return Resolver.normalizeRuntimeRoot(DEFAULT_ROOT)
 end
 
 function Resolver.isStudio()

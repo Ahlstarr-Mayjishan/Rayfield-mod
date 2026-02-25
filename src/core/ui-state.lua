@@ -33,6 +33,86 @@ function UIStateModule.init(ctx)
 	local Debounce = false
 	local Minimised = false
 	local Hidden = false
+	local expandedSize = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)
+
+	local function clampExpandedOffsets(width, height)
+		local clampedWidth = math.max(math.floor(width), 320)
+		local clampedHeight = math.max(math.floor(height), self.useMobileSizing and 170 or 220)
+
+		local parentGui = self.Main and self.Main.Parent
+		if parentGui and parentGui.AbsoluteSize then
+			local viewport = parentGui.AbsoluteSize
+			if viewport.X > 0 then
+				clampedWidth = math.min(clampedWidth, math.max(320, viewport.X - 24))
+			end
+			if viewport.Y > 0 then
+				local minHeight = self.useMobileSizing and 170 or 220
+				clampedHeight = math.min(clampedHeight, math.max(minHeight, viewport.Y - 24))
+			end
+		end
+
+		return clampedWidth, clampedHeight
+	end
+
+	local function normalizeExpandedSize(value)
+		if typeof(value) == "UDim2" then
+			return value.X.Offset, value.Y.Offset
+		end
+		if type(value) == "table" then
+			local width = tonumber(value.width or value.x or value.X or value.xOffset)
+			local height = tonumber(value.height or value.y or value.Y or value.yOffset)
+			if width and height then
+				return width, height
+			end
+		end
+		return nil, nil
+	end
+
+	local function getExpandedSize()
+		return expandedSize
+	end
+
+	local function setExpandedSize(nextSize)
+		local width, height = normalizeExpandedSize(nextSize)
+		if not width or not height then
+			return false
+		end
+		width, height = clampExpandedOffsets(width, height)
+		expandedSize = UDim2.fromOffset(width, height)
+		return true
+	end
+
+	local function applyExpandedSizeToFrames()
+		local targetSize = getExpandedSize()
+		if self.Main then
+			self.Main.Size = targetSize
+		end
+		if self.Topbar then
+			self.Topbar.Size = UDim2.fromOffset(targetSize.X.Offset, 45)
+		end
+	end
+
+	local function clampMainToViewport()
+		if not (self.Main and self.Main.Parent and self.Main.Parent.AbsoluteSize) then
+			return
+		end
+		local parentSize = self.Main.Parent.AbsoluteSize
+		local mainPosition = self.Main.AbsolutePosition
+		local mainSize = self.Main.AbsoluteSize
+
+		local clampedX = math.clamp(mainPosition.X, 0, math.max(0, parentSize.X - mainSize.X))
+		local clampedY = math.clamp(mainPosition.Y, 0, math.max(0, parentSize.Y - mainSize.Y))
+		local deltaX = clampedX - mainPosition.X
+		local deltaY = clampedY - mainPosition.Y
+		if deltaX ~= 0 or deltaY ~= 0 then
+			self.Main.Position = UDim2.new(
+				self.Main.Position.X.Scale,
+				self.Main.Position.X.Offset + deltaX,
+				self.Main.Position.Y.Scale,
+				self.Main.Position.Y.Offset + deltaY
+			)
+		end
+	end
 
 	-- Forward declare functions
 	local closeSearch
@@ -41,6 +121,110 @@ function UIStateModule.init(ctx)
 		if instance then
 			self.Animation:Create(instance, tweenInfo, properties):Play()
 		end
+	end
+
+	local TAB_BUTTON_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Exponential)
+	local TAB_VISUAL_PRESETS = {
+		hidden = { background = 1, image = 1, text = 1, stroke = 1 },
+		selected = { background = 0, image = 0, text = 0, stroke = 1 },
+		idle = { background = 0.7, image = 0.2, text = 0.2, stroke = 0.5 }
+	}
+
+	local function forEachTabButton(callback)
+		if not self.TabList then
+			return
+		end
+		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
+			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
+				callback(tabbtn)
+			end
+		end
+	end
+
+	local function applyTabButtonVisual(tabbtn, visual)
+		if not (tabbtn and visual) then
+			return
+		end
+		playTween(tabbtn, TAB_BUTTON_TWEEN, {BackgroundTransparency = visual.background})
+		playTween(tabbtn:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = visual.text})
+		playTween(tabbtn:FindFirstChild("Image"), TAB_BUTTON_TWEEN, {ImageTransparency = visual.image})
+		playTween(tabbtn:FindFirstChild("UIStroke"), TAB_BUTTON_TWEEN, {Transparency = visual.stroke})
+	end
+
+	local function isCurrentTabButton(tabbtn)
+		return tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text
+	end
+
+	local function animateTabButtonsHidden(interactVisible)
+		forEachTabButton(function(tabbtn)
+			local interact = tabbtn:FindFirstChild("Interact")
+			if interact and interactVisible ~= nil then
+				interact.Visible = interactVisible
+			end
+			applyTabButtonVisual(tabbtn, TAB_VISUAL_PRESETS.hidden)
+		end)
+	end
+
+	local function animateTabButtonsByCurrentPage(interactVisible)
+		forEachTabButton(function(tabbtn)
+			local interact = tabbtn:FindFirstChild("Interact")
+			if interact and interactVisible ~= nil then
+				interact.Visible = interactVisible
+			end
+			applyTabButtonVisual(tabbtn, isCurrentTabButton(tabbtn) and TAB_VISUAL_PRESETS.selected or TAB_VISUAL_PRESETS.idle)
+		end)
+	end
+
+	local function forEachElementFrame(callback)
+		if not self.Elements then
+			return
+		end
+		for _, tab in ipairs(self.Elements:GetChildren()) do
+			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
+				for _, element in ipairs(tab:GetChildren()) do
+					if element.ClassName == "Frame" and element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
+						callback(element)
+					end
+				end
+			end
+		end
+	end
+
+	local function setElementChildrenVisible(element, visible)
+		for _, child in ipairs(element:GetChildren()) do
+			if child.ClassName == "Frame"
+				or child.ClassName == "TextLabel"
+				or child.ClassName == "TextBox"
+				or child.ClassName == "ImageButton"
+				or child.ClassName == "ImageLabel" then
+				child.Visible = visible
+			end
+		end
+	end
+
+	local function applyElementFrameState(element, collapsed)
+		local targetTitleTransparency = collapsed and 1 or 0.4
+		local targetDividerTransparency = collapsed and 1 or 0.85
+		local targetBackgroundTransparency = collapsed and 1 or 0
+		local targetStrokeTransparency = collapsed and 1 or 0
+
+		if element.Name == "SectionTitle" or element.Name == "SearchTitle-fsefsefesfsefesfesfThanks" then
+			playTween(element:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = targetTitleTransparency})
+		elseif element.Name == "Divider" then
+			playTween(element:FindFirstChild("Divider"), TAB_BUTTON_TWEEN, {BackgroundTransparency = targetDividerTransparency})
+		else
+			playTween(element, TAB_BUTTON_TWEEN, {BackgroundTransparency = targetBackgroundTransparency})
+			playTween(element:FindFirstChild("UIStroke"), TAB_BUTTON_TWEEN, {Transparency = targetStrokeTransparency})
+			playTween(element:FindFirstChild("Title"), TAB_BUTTON_TWEEN, {TextTransparency = targetBackgroundTransparency})
+		end
+
+		setElementChildrenVisible(element, not collapsed)
+	end
+
+	local function animateElementFramesCollapsed(collapsed)
+		forEachElementFrame(function(element)
+			applyElementFrameState(element, collapsed == true)
+		end)
 	end
 
 	-- Extract code starts here
@@ -202,15 +386,7 @@ function UIStateModule.init(ctx)
 	
 		self.Main.Search.Visible = true
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				tabbtn.Interact.Visible = false
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(false)
 	
 		self.Main.Search.Input:CaptureFocus()
 		self.Animation:Create(self.Main.Search.Shadow, TweenInfo.new(0.05, Enum.EasingStyle.Quint), {ImageTransparency = 0.95}):Play()
@@ -230,22 +406,7 @@ function UIStateModule.init(ctx)
 		self.Animation:Create(self.Main.Search.UIStroke, TweenInfo.new(0.15, Enum.EasingStyle.Quint), {Transparency = 1}):Play()
 		self.Animation:Create(self.Main.Search.Input, TweenInfo.new(0.15, Enum.EasingStyle.Quint), {TextTransparency = 1}):Play()
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				tabbtn.Interact.Visible = true
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-			end
-		end
+		animateTabButtonsByCurrentPage(true)
 	
 		self.Main.Search.Input.Text = ''
 		self.Main.Search.Input.Interactable = false
@@ -296,43 +457,13 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(nil)
 	
 		if self.dragInteract then
 			self.dragInteract.Visible = false
 		end
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = false
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(true)
 	
 		task.wait(0.5)
 		self.Main.Visible = false
@@ -350,8 +481,8 @@ function UIStateModule.init(ctx)
 		playTween(self.Topbar and self.Topbar:FindFirstChild("CornerRepair"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.Topbar and self.Topbar:FindFirstChild("Divider"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.7})
-		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
-		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = getExpandedSize()})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.fromOffset(getExpandedSize().X.Offset, 45)})
 		if self.TabList then
 			self.TabList.Visible = true
 		end
@@ -361,49 +492,11 @@ function UIStateModule.init(ctx)
 			self.Elements.Visible = true
 		end
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.4}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = true
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(false)
 	
 		task.wait(0.1)
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-	
-			end
-		end
+		animateTabButtonsByCurrentPage(nil)
 	
 		task.wait(0.5)
 		Debounce = false
@@ -414,8 +507,8 @@ function UIStateModule.init(ctx)
 		Debounce = true
 		self.Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 		self.Main.Visible = true
-		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = self.useMobileSizing and UDim2.new(0, 500, 0, 275) or UDim2.new(0, 500, 0, 475)})
-		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 45)})
+		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = getExpandedSize()})
+		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Size = UDim2.fromOffset(getExpandedSize().X.Offset, 45)})
 		playTween(self.Main and self.Main:FindFirstChild("Shadow") and self.Main.Shadow:FindFirstChild("Image"), TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.6})
 		playTween(self.Main, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
 		playTween(self.Topbar, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0})
@@ -459,46 +552,9 @@ function UIStateModule.init(ctx)
 			end
 		end
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				if tostring(self.Elements.UIPageLayout.CurrentPage) == tabbtn.Title.Text then
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				else
-					self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-			end
-		end
+		animateTabButtonsByCurrentPage(nil)
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0.4}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = true
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(false)
 	
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 0.5})
 	
@@ -519,39 +575,9 @@ function UIStateModule.init(ctx)
 	
 		task.spawn(closeSearch)
 	
-		for _, tabbtn in ipairs(self.TabList:GetChildren()) do
-			if tabbtn.ClassName == "Frame" and tabbtn.Name ~= "Placeholder" then
-				self.Animation:Create(tabbtn, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Image, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				self.Animation:Create(tabbtn.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-			end
-		end
+		animateTabButtonsHidden(nil)
 	
-		for _, tab in ipairs(self.Elements:GetChildren()) do
-			if tab.Name ~= "Template" and tab.ClassName == "ScrollingFrame" and tab.Name ~= "Placeholder" then
-				for _, element in ipairs(tab:GetChildren()) do
-					if element.ClassName == "Frame" then
-						if element.Name ~= "SectionSpacing" and element.Name ~= "Placeholder" then
-							if element.Name == "SectionTitle" or element.Name == 'SearchTitle-fsefsefesfsefesfesfThanks' then
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							elseif element.Name == 'Divider' then
-								self.Animation:Create(element.Divider, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-							else
-								self.Animation:Create(element, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-								self.Animation:Create(element.UIStroke, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-								self.Animation:Create(element.Title, TweenInfo.new(0.3, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-							end
-							for _, child in ipairs(element:GetChildren()) do
-								if child.ClassName == "Frame" or child.ClassName == "TextLabel" or child.ClassName == "TextBox" or child.ClassName == "ImageButton" or child.ClassName == "ImageLabel" then
-									child.Visible = false
-								end
-							end
-						end
-					end
-				end
-			end
-		end
+		animateElementFramesCollapsed(true)
 	
 		playTween(self.dragBarCosmetic, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
 		playTween(self.Topbar and self.Topbar:FindFirstChild("UIStroke"), TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 0})
@@ -574,6 +600,89 @@ function UIStateModule.init(ctx)
 		Debounce = false
 	end
 
+	local function getLayoutSnapshot()
+		local currentExpanded = getExpandedSize()
+		return {
+			position = {
+				xScale = self.Main.Position.X.Scale,
+				xOffset = self.Main.Position.X.Offset,
+				yScale = self.Main.Position.Y.Scale,
+				yOffset = self.Main.Position.Y.Offset
+			},
+			expandedSize = {
+				xOffset = currentExpanded.X.Offset,
+				yOffset = currentExpanded.Y.Offset
+			},
+			minimized = Minimised == true,
+			hidden = Hidden == true
+		}
+	end
+
+	local function applyLayoutSnapshot(layout)
+		if type(layout) ~= "table" then
+			return false
+		end
+
+		local expanded = layout.expandedSize
+		if type(expanded) == "table" then
+			setExpandedSize({
+				xOffset = tonumber(expanded.xOffset) or tonumber(expanded.width),
+				yOffset = tonumber(expanded.yOffset) or tonumber(expanded.height)
+			})
+		end
+
+		applyExpandedSizeToFrames()
+
+		local position = layout.position
+		if type(position) == "table" then
+			local xScale = tonumber(position.xScale) or self.Main.Position.X.Scale
+			local xOffset = tonumber(position.xOffset) or self.Main.Position.X.Offset
+			local yScale = tonumber(position.yScale) or self.Main.Position.Y.Scale
+			local yOffset = tonumber(position.yOffset) or self.Main.Position.Y.Offset
+			self.Main.Position = UDim2.new(xScale, xOffset, yScale, yOffset)
+			clampMainToViewport()
+		end
+
+		local targetHidden = layout.hidden == true
+		local targetMinimized = layout.minimized == true
+		if targetHidden then
+			Hidden = true
+			Minimised = false
+			self.Main.Visible = false
+			if self.Elements then
+				self.Elements.Visible = false
+			end
+			if self.TabList then
+				self.TabList.Visible = false
+			end
+		elseif targetMinimized then
+			Hidden = false
+			Minimised = true
+			self.Main.Visible = true
+			self.Main.Size = UDim2.fromOffset(495, 45)
+			self.Topbar.Size = UDim2.fromOffset(495, 45)
+			if self.Elements then
+				self.Elements.Visible = false
+			end
+			if self.TabList then
+				self.TabList.Visible = false
+			end
+		else
+			Hidden = false
+			Minimised = false
+			self.Main.Visible = true
+			if self.Elements then
+				self.Elements.Visible = true
+			end
+			if self.TabList then
+				self.TabList.Visible = true
+			end
+			applyExpandedSizeToFrames()
+		end
+
+		return true
+	end
+
 	-- Export functions
 	self.Notify = Notify
 	self.openSearch = openSearch
@@ -589,6 +698,10 @@ function UIStateModule.init(ctx)
 	self.setMinimised = function(value) Minimised = value end
 	self.getHidden = function() return Hidden end
 	self.setHidden = function(value) Hidden = value end
+	self.getExpandedSize = getExpandedSize
+	self.setExpandedSize = setExpandedSize
+	self.getLayoutSnapshot = getLayoutSnapshot
+	self.applyLayoutSnapshot = applyLayoutSnapshot
 	
 	return self
 end

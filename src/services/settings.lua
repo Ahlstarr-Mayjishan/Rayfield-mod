@@ -18,6 +18,35 @@ SettingsModule.defaultSettings = {
 	},
 	System = {
 		usageAnalytics = {Type = 'toggle', Value = true, Name = 'Anonymised Analytics'},
+	},
+	Appearance = {
+		uiPreset = {
+			Type = "dropdown",
+			Value = "Comfort",
+			Name = "UI Preset",
+			Options = {"Compact", "Comfort", "Focus"}
+		},
+		transitionProfile = {
+			Type = "dropdown",
+			Value = "Smooth",
+			Name = "Transition Profile",
+			Options = {"Minimal", "Smooth", "Snappy", "Off"}
+		}
+	},
+	Favorites = {
+		showPinBadges = {Type = "toggle", Value = true, Name = "Show Pin Badges"},
+		pinnedIds = {Type = "hidden", Value = {}, Name = "Pinned Control IDs"}
+	},
+	Onboarding = {
+		suppressed = {Type = "hidden", Value = false, Name = "Onboarding Suppressed"}
+	},
+	ThemeStudio = {
+		baseTheme = {Type = "hidden", Value = "Default", Name = "Base Theme"},
+		useCustom = {Type = "toggle", Value = false, Name = "Use Custom Theme"},
+		customThemePacked = {Type = "hidden", Value = {}, Name = "Custom Theme Colors"}
+	},
+	Layout = {
+		collapsedSections = {Type = "hidden", Value = {}, Name = "Collapsed Sections"}
 	}
 }
 
@@ -41,6 +70,73 @@ function SettingsModule.init(ctx)
 	self.cachedSettings = nil
 	self.settingsInitialized = false
 	self.settingsCreated = false
+	self.shareCodeHandlers = {}
+	self.shareCodeDraft = ""
+	self.shareCodeInput = nil
+	self.experienceHandlers = {}
+
+	local function cloneSerializable(value)
+		local valueType = type(value)
+		if valueType == "function" or valueType == "userdata" or valueType == "thread" then
+			return nil
+		end
+		if valueType ~= "table" then
+			return value
+		end
+
+		local out = {}
+		for key, nestedValue in pairs(value) do
+			if key ~= "Element" then
+				local keyType = type(key)
+				if keyType ~= "function" and keyType ~= "userdata" and keyType ~= "thread" then
+					local cloned = cloneSerializable(nestedValue)
+					if cloned ~= nil then
+						out[key] = cloned
+					end
+				end
+			end
+		end
+		return out
+	end
+
+	local function valuesEqual(a, b)
+		if a == b then
+			return true
+		end
+		if type(a) ~= type(b) then
+			return false
+		end
+		if type(a) ~= "table" then
+			return false
+		end
+
+		for key, valueA in pairs(a) do
+			if not valuesEqual(valueA, b[key]) then
+				return false
+			end
+		end
+		for key in pairs(b) do
+			if a[key] == nil then
+				return false
+			end
+		end
+		return true
+	end
+
+	local function buildInternalSettingsData()
+		local out = {}
+		for categoryName, settingCategory in pairs(self.settingsTable) do
+			out[categoryName] = {}
+			for settingName, setting in pairs(settingCategory) do
+				out[categoryName][settingName] = {
+					Type = setting.Type,
+					Value = cloneSerializable(setting.Value),
+					Name = setting.Name
+				}
+			end
+		end
+		return out
+	end
 	
 	-- Initialize settings table with defaults
 	for category, settings in pairs(SettingsModule.defaultSettings) do
@@ -48,8 +144,9 @@ function SettingsModule.init(ctx)
 		for name, setting in pairs(settings) do
 			self.settingsTable[category][name] = {
 				Type = setting.Type,
-				Value = setting.Value,
+				Value = cloneSerializable(setting.Value),
 				Name = setting.Name,
+				Options = cloneSerializable(setting.Options),
 				Element = nil
 			}
 		end
@@ -62,10 +159,122 @@ function SettingsModule.init(ctx)
 	
 	-- Get setting value (checks overrides first)
 	function self.getSetting(category, name)
-		if self.overriddenSettings[category .. "." .. name] ~= nil then
-			return self.overriddenSettings[category .. "." .. name]
-		elseif self.settingsTable[category][name] ~= nil then
+		local key = tostring(category or "") .. "." .. tostring(name or "")
+		if self.overriddenSettings[key] ~= nil then
+			return self.overriddenSettings[key]
+		end
+		if self.settingsTable[category] and self.settingsTable[category][name] ~= nil then
 			return self.settingsTable[category][name].Value
+		end
+		return nil
+	end
+
+	function self.setSettingValue(category, name, value, persist)
+		if not (self.settingsTable[category] and self.settingsTable[category][name]) then
+			return false, "Unknown setting."
+		end
+
+		local setting = self.settingsTable[category][name]
+		local previousValue = setting.Value
+		local nextValue = cloneSerializable(value)
+		local changed = not valuesEqual(previousValue, nextValue)
+		setting.Value = nextValue
+		self.overriddenSettings[tostring(category) .. "." .. tostring(name)] = nil
+
+		if changed and setting.Element and type(setting.Element.Set) == "function" then
+			local okSet = pcall(function()
+				setting.Element:Set(nextValue)
+			end)
+			if not okSet then
+				-- Keep in-memory value even if UI element fails.
+			end
+		end
+
+		if persist ~= false then
+			self.saveSettings()
+		end
+		return true, "ok"
+	end
+
+	function self.ExportInternalSettingsData()
+		return buildInternalSettingsData()
+	end
+
+	function self.ImportInternalSettingsData(dataTable)
+		if type(dataTable) ~= "table" then
+			return false, "Internal settings data must be a table."
+		end
+
+		local appliedCount = 0
+		for categoryName, settingCategory in pairs(self.settingsTable) do
+			local incomingCategory = dataTable[categoryName]
+			if type(incomingCategory) == "table" then
+				for settingName, setting in pairs(settingCategory) do
+					local incomingSetting = incomingCategory[settingName]
+					if type(incomingSetting) == "table" and incomingSetting.Value ~= nil then
+						local nextValue = cloneSerializable(incomingSetting.Value)
+						setting.Value = nextValue
+						self.overriddenSettings[categoryName .. "." .. settingName] = nil
+						if setting.Element and type(setting.Element.Set) == "function" then
+							local okSet, errSet = pcall(function()
+								setting.Element:Set(nextValue)
+							end)
+							if not okSet then
+								warn("Rayfield | Failed to apply internal setting '" .. categoryName .. "." .. settingName .. "': " .. tostring(errSet))
+							end
+						end
+						appliedCount += 1
+					end
+				end
+			end
+		end
+
+		return true, appliedCount
+	end
+
+	function self.getShareCodeInputValue()
+		return tostring(self.shareCodeDraft or "")
+	end
+
+	function self.setShareCodeInputValue(value)
+		self.shareCodeDraft = tostring(value or "")
+		if self.shareCodeInput and type(self.shareCodeInput.Set) == "function" then
+			pcall(function()
+				self.shareCodeInput:Set(self.shareCodeDraft)
+			end)
+		end
+		return self.shareCodeDraft
+	end
+
+	local function syncShareCodeInputFromHandlers()
+		local handlers = self.shareCodeHandlers
+		if type(handlers) ~= "table" then
+			return
+		end
+		if type(handlers.getActiveShareCode) ~= "function" then
+			return
+		end
+
+		local okGet, code = pcall(handlers.getActiveShareCode)
+		if okGet and type(code) == "string" then
+			self.setShareCodeInputValue(code)
+		end
+	end
+
+	function self.setShareCodeHandlers(handlers)
+		if type(handlers) == "table" then
+			self.shareCodeHandlers = handlers
+		else
+			self.shareCodeHandlers = {}
+		end
+		syncShareCodeInputFromHandlers()
+	end
+
+	function self.setExperienceHandlers(handlers)
+		if type(handlers) == "table" then
+			self.experienceHandlers = handlers
+		else
+			self.experienceHandlers = {}
 		end
 	end
 	
@@ -73,7 +282,7 @@ function SettingsModule.init(ctx)
 	function self.saveSettings()
 		local encoded
 		local success, err = pcall(function()
-			encoded = self.HttpService:JSONEncode(self.settingsTable)
+			encoded = self.HttpService:JSONEncode(buildInternalSettingsData())
 		end)
 
 		if success then
@@ -82,8 +291,13 @@ function SettingsModule.init(ctx)
 					script.Parent['get.val'].Value = encoded
 				end
 			end
-			self.callSafely(writefile, self.RayfieldFolder..'/settings'..self.ConfigurationExtension, encoded)
+			if type(writefile) ~= "function" then
+				return self.useStudio == true
+			end
+			local writeResult = self.callSafely(writefile, self.RayfieldFolder..'/settings'..self.ConfigurationExtension, encoded)
+			return writeResult ~= false
 		end
+		return false
 	end
 	
 	-- Update a setting and save
@@ -100,8 +314,8 @@ function SettingsModule.init(ctx)
 	function self.loadSettings()
 		local file = nil
 
-		local success, result = pcall(function()
-			task.spawn(function()
+		task.spawn(function()
+			local ok, err = xpcall(function()
 				if self.callSafely(isfolder, self.RayfieldFolder) then
 					if self.callSafely(isfile, self.RayfieldFolder..'/settings'..self.ConfigurationExtension) then
 						file = self.callSafely(readfile, self.RayfieldFolder..'/settings'..self.ConfigurationExtension)
@@ -136,25 +350,35 @@ function SettingsModule.init(ctx)
 						if file[categoryName] then
 							for settingName, setting in pairs(settingCategory) do
 								if file[categoryName][settingName] then
-									setting.Value = file[categoryName][settingName].Value
-									setting.Element:Set(self.getSetting(categoryName, settingName))
+									setting.Value = cloneSerializable(file[categoryName][settingName].Value)
+									if setting.Element and type(setting.Element.Set) == "function" then
+										setting.Element:Set(self.getSetting(categoryName, settingName))
+									end
 								end
 							end
 						end
 					end
 				else
-					for settingName, settingValue in self.overriddenSettings do
+					for settingName, settingValue in pairs(self.overriddenSettings) do
 						local split = string.split(settingName, ".")
 						assert(#split == 2, "Rayfield | Invalid overridden setting name: " .. settingName)
 						local categoryName = split[1]
 						local settingNameOnly = split[2]
 						if self.settingsTable[categoryName] and self.settingsTable[categoryName][settingNameOnly] then
-							self.settingsTable[categoryName][settingNameOnly].Element:Set(settingValue)
+							local targetSetting = self.settingsTable[categoryName][settingNameOnly]
+							if targetSetting.Element and type(targetSetting.Element.Set) == "function" then
+								targetSetting.Element:Set(settingValue)
+							else
+								targetSetting.Value = cloneSerializable(settingValue)
+							end
 						end
 					end
 				end
 				self.settingsInitialized = true
-			end)
+			end, debug.traceback)
+			if not ok then
+				warn("Rayfield | Failed to load settings: " .. tostring(err))
+			end
 		end)
 	end
 
@@ -178,47 +402,559 @@ function SettingsModule.init(ctx)
 			self.Elements['Rayfield Settings'].LayoutOrder = 1000
 		end
 
-		-- Create sections and elements
-		for categoryName, settingCategory in pairs(self.settingsTable) do
-			newTab:CreateSection(categoryName)
+		local function notifyShareCodeResult(success, message)
+			local handlers = self.shareCodeHandlers
+			if type(handlers) == "table" and type(handlers.notify) == "function" then
+				local okNotify = pcall(handlers.notify, success == true, tostring(message or ""))
+				if okNotify then
+					return
+				end
+			end
+			if success ~= true then
+				warn("Rayfield | " .. tostring(message or "Share code operation failed."))
+			end
+		end
 
-			for settingName, setting in pairs(settingCategory) do
-				if setting.Type == 'input' then
-					setting.Element = newTab:CreateInput({
-						Name = setting.Name,
-						CurrentValue = setting.Value,
-						PlaceholderText = setting.Placeholder,
-						Ext = true,
-						RemoveTextAfterFocusLost = setting.ClearOnFocus,
-						Callback = function(Value)
-							self.updateSetting(categoryName, settingName, Value)
-						end,
-					})
-				elseif setting.Type == 'toggle' then
-					setting.Element = newTab:CreateToggle({
-						Name = setting.Name,
-						CurrentValue = setting.Value,
-						Ext = true,
-						Callback = function(Value)
-							self.updateSetting(categoryName, settingName, Value)
-						end,
-					})
-				elseif setting.Type == 'bind' then
-					setting.Element = newTab:CreateKeybind({
-						Name = setting.Name,
-						CurrentKeybind = setting.Value,
-						HoldToInteract = false,
-						Ext = true,
-						CallOnChange = true,
-						Callback = function(Value)
-							self.updateSetting(categoryName, settingName, Value)
-						end,
-					})
+		local function runImportCode()
+			local handlers = self.shareCodeHandlers
+			if type(handlers) ~= "table" or type(handlers.importCode) ~= "function" then
+				notifyShareCodeResult(false, "Share code system unavailable.")
+				return
+			end
+
+			local okCall, success, message = pcall(handlers.importCode, tostring(self.shareCodeDraft or ""))
+			if not okCall then
+				notifyShareCodeResult(false, tostring(success))
+				return
+			end
+
+			if success == true and type(handlers.getActiveShareCode) == "function" then
+				local okGet, code = pcall(handlers.getActiveShareCode)
+				if okGet and type(code) == "string" then
+					self.setShareCodeInputValue(code)
+				end
+			end
+			notifyShareCodeResult(success == true, message)
+		end
+
+		local function runImportSettings()
+			local handlers = self.shareCodeHandlers
+			if type(handlers) ~= "table" or type(handlers.importSettings) ~= "function" then
+				notifyShareCodeResult(false, "Share code system unavailable.")
+				return
+			end
+
+			local okCall, success, message = pcall(handlers.importSettings)
+			if not okCall then
+				notifyShareCodeResult(false, tostring(success))
+				return
+			end
+
+			if type(handlers.getActiveShareCode) == "function" then
+				local okGet, code = pcall(handlers.getActiveShareCode)
+				if okGet and type(code) == "string" then
+					self.setShareCodeInputValue(code)
+				end
+			end
+			notifyShareCodeResult(success == true, message)
+		end
+
+		local function runExportSettings()
+			local handlers = self.shareCodeHandlers
+			if type(handlers) ~= "table" or type(handlers.exportSettings) ~= "function" then
+				notifyShareCodeResult(false, "Share code system unavailable.")
+				return
+			end
+
+			local okCall, exportedCode, message = pcall(handlers.exportSettings)
+			if not okCall then
+				notifyShareCodeResult(false, tostring(exportedCode))
+				return
+			end
+
+			local success = type(exportedCode) == "string" and exportedCode ~= ""
+			if success then
+				self.setShareCodeInputValue(exportedCode)
+			elseif type(handlers.getActiveShareCode) == "function" then
+				local okGet, code = pcall(handlers.getActiveShareCode)
+				if okGet and type(code) == "string" then
+					self.setShareCodeInputValue(code)
+				end
+			end
+			notifyShareCodeResult(success, message)
+		end
+
+		local function runCopyShareCode()
+			local handlers = self.shareCodeHandlers
+			if type(handlers) ~= "table" or type(handlers.copyShareCode) ~= "function" then
+				notifyShareCodeResult(false, "Share code system unavailable.")
+				return
+			end
+
+			local okCall, success, message = pcall(handlers.copyShareCode)
+			if not okCall then
+				notifyShareCodeResult(false, tostring(success))
+				return
+			end
+
+			if type(handlers.getActiveShareCode) == "function" then
+				local okGet, code = pcall(handlers.getActiveShareCode)
+				if okGet and type(code) == "string" then
+					self.setShareCodeInputValue(code)
+				end
+			end
+			notifyShareCodeResult(success == true, message)
+		end
+
+		local function notifyExperienceResult(success, message)
+			local handlers = self.experienceHandlers
+			if type(handlers) == "table" and type(handlers.notify) == "function" then
+				local okNotify = pcall(handlers.notify, success == true, tostring(message or ""))
+				if okNotify then
+					return
+				end
+			end
+			if success ~= true then
+				warn("Rayfield | " .. tostring(message or "UI experience operation failed."))
+			end
+		end
+
+		local genericSkipCategories = {
+			Appearance = true,
+			Favorites = true,
+			ThemeStudio = true,
+			Onboarding = true
+		}
+
+		-- Create generic sections and elements
+		for categoryName, settingCategory in pairs(self.settingsTable) do
+			if not genericSkipCategories[categoryName] then
+				local sectionCreated = false
+				for settingName, setting in pairs(settingCategory) do
+					if setting.Type ~= "hidden" then
+						if not sectionCreated then
+							newTab:CreateSection(categoryName)
+							sectionCreated = true
+						end
+
+						if setting.Type == 'input' then
+							setting.Element = newTab:CreateInput({
+								Name = setting.Name,
+								CurrentValue = setting.Value,
+								PlaceholderText = setting.Placeholder,
+								Ext = true,
+								RemoveTextAfterFocusLost = setting.ClearOnFocus,
+								Callback = function(Value)
+									self.updateSetting(categoryName, settingName, Value)
+								end,
+							})
+						elseif setting.Type == 'toggle' then
+							setting.Element = newTab:CreateToggle({
+								Name = setting.Name,
+								CurrentValue = setting.Value,
+								Ext = true,
+								Callback = function(Value)
+									self.updateSetting(categoryName, settingName, Value)
+								end,
+							})
+						elseif setting.Type == 'bind' then
+							setting.Element = newTab:CreateKeybind({
+								Name = setting.Name,
+								CurrentKeybind = setting.Value,
+								HoldToInteract = false,
+								Ext = true,
+								CallOnChange = true,
+								Callback = function(Value)
+									self.updateSetting(categoryName, settingName, Value)
+								end,
+							})
+						elseif setting.Type == "dropdown" then
+							setting.Element = newTab:CreateDropdown({
+								Name = setting.Name,
+								Options = setting.Options or {},
+								CurrentOption = setting.Value,
+								MultipleOptions = false,
+								Ext = true,
+								Callback = function(selection)
+									local nextValue = nil
+									if type(selection) == "table" then
+										nextValue = selection[1]
+									else
+										nextValue = selection
+									end
+									self.updateSetting(categoryName, settingName, tostring(nextValue or ""))
+								end
+							})
+						end
+					end
 				end
 			end
 		end
 
+		local function invokeExperience(handlerName, ...)
+			local experienceHandlers = self.experienceHandlers
+			if type(experienceHandlers) ~= "table" then
+				return false, "UI experience system unavailable.", nil
+			end
+			local handler = experienceHandlers[handlerName]
+			if type(handler) ~= "function" then
+				return false, "Handler unavailable: " .. tostring(handlerName), nil
+			end
+			local okCall, resultA, resultB = pcall(handler, ...)
+			if not okCall then
+				return false, tostring(resultA), nil
+			end
+			if type(resultA) == "boolean" then
+				return resultA, resultB, nil
+			end
+			return true, resultA, resultB
+		end
+
+		newTab:CreateSection("Experience")
+		local appearanceCategory = self.settingsTable.Appearance or {}
+		local uiPresetSetting = appearanceCategory.uiPreset
+		local transitionSetting = appearanceCategory.transitionProfile
+
+		if uiPresetSetting then
+			uiPresetSetting.Element = newTab:CreateDropdown({
+				Name = uiPresetSetting.Name or "UI Preset",
+				Options = uiPresetSetting.Options or {"Compact", "Comfort", "Focus"},
+				CurrentOption = self.getSetting("Appearance", "uiPreset") or uiPresetSetting.Value,
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = tostring(value or "")
+					local ok, message = invokeExperience("setUIPreset", value)
+					if ok then
+						self.updateSetting("Appearance", "uiPreset", value)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		if transitionSetting then
+			transitionSetting.Element = newTab:CreateDropdown({
+				Name = transitionSetting.Name or "Transition Profile",
+				Options = transitionSetting.Options or {"Minimal", "Smooth", "Snappy", "Off"},
+				CurrentOption = self.getSetting("Appearance", "transitionProfile") or transitionSetting.Value,
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = tostring(value or "")
+					local ok, message = invokeExperience("setTransitionProfile", value)
+					if ok then
+						self.updateSetting("Appearance", "transitionProfile", value)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		newTab:CreateButton({
+			Name = "Replay Onboarding",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("showOnboarding", true)
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Favorites Manager")
+		local favoritesCategory = self.settingsTable.Favorites or {}
+		local selectedFavoriteId = ""
+		local favoritesOptionMap = {}
+		local favoritesOptionOrder = {}
+		local favoritesDropdownElement = nil
+
+		local function listFavoriteControlOptions()
+			favoritesOptionMap = {}
+			favoritesOptionOrder = {}
+			local fallback = "(No controls found)"
+			local options = { fallback }
+			favoritesOptionMap[fallback] = nil
+
+			local controls = nil
+			local okList, listOrMessage = invokeExperience("listControls", true)
+			if okList and type(listOrMessage) == "table" and #listOrMessage > 0 then
+				controls = listOrMessage
+			end
+			if type(controls) == "table" and #controls > 0 then
+				options = {}
+				for _, control in ipairs(controls) do
+					local controlId = tostring(control.id or "")
+					if controlId ~= "" then
+						local label = string.format("[%s] %s (%s)", tostring(control.type or "Element"), tostring(control.name or controlId), controlId)
+						table.insert(options, label)
+						favoritesOptionMap[label] = controlId
+						table.insert(favoritesOptionOrder, controlId)
+					end
+				end
+			end
+
+			return options
+		end
+
+		local function refreshFavoritesDropdown()
+			local options = listFavoriteControlOptions()
+			local targetLabel = options[1]
+			for _, label in ipairs(options) do
+				if favoritesOptionMap[label] == selectedFavoriteId then
+					targetLabel = label
+					break
+				end
+			end
+
+			if favoritesDropdownElement and type(favoritesDropdownElement.Refresh) == "function" then
+				favoritesDropdownElement:Refresh(options)
+				if type(favoritesDropdownElement.Set) == "function" and targetLabel then
+					favoritesDropdownElement:Set(targetLabel)
+				end
+			end
+		end
+
+		favoritesDropdownElement = newTab:CreateDropdown({
+			Name = "Control",
+			Options = listFavoriteControlOptions(),
+			CurrentOption = nil,
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local label = type(selection) == "table" and selection[1] or selection
+				selectedFavoriteId = favoritesOptionMap[tostring(label or "")] or ""
+			end
+		})
+
+		local showPinBadgesSetting = favoritesCategory.showPinBadges
+		if showPinBadgesSetting then
+			showPinBadgesSetting.Element = newTab:CreateToggle({
+				Name = showPinBadgesSetting.Name or "Show Pin Badges",
+				CurrentValue = self.getSetting("Favorites", "showPinBadges"),
+				Ext = true,
+				Callback = function(value)
+					self.updateSetting("Favorites", "showPinBadges", value == true)
+					local okPin, message = invokeExperience("setPinBadgesVisible", value == true)
+					notifyExperienceResult(okPin, message)
+				end
+			})
+			local okInit, message = invokeExperience("setPinBadgesVisible", self.getSetting("Favorites", "showPinBadges") ~= false)
+			if not okInit then
+				notifyExperienceResult(false, message)
+			end
+		end
+
+		newTab:CreateButton({
+			Name = "Pin Selected",
+			Ext = true,
+			Callback = function()
+				if selectedFavoriteId == "" then
+					notifyExperienceResult(false, "No control selected.")
+					return
+				end
+				local ok, message = invokeExperience("pinControl", selectedFavoriteId)
+				notifyExperienceResult(ok, message)
+				refreshFavoritesDropdown()
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Unpin Selected",
+			Ext = true,
+			Callback = function()
+				if selectedFavoriteId == "" then
+					notifyExperienceResult(false, "No control selected.")
+					return
+				end
+				local ok, message = invokeExperience("unpinControl", selectedFavoriteId)
+				notifyExperienceResult(ok, message)
+				refreshFavoritesDropdown()
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Refresh Controls",
+			Ext = true,
+			Callback = function()
+				refreshFavoritesDropdown()
+				notifyExperienceResult(true, "Control list refreshed.")
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Open Favorites Tab",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("openFavoritesTab")
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Theme Studio")
+		local themeCategory = self.settingsTable.ThemeStudio or {}
+		local themeColorElements = {}
+		local themeBaseDropdown = nil
+
+		local function listThemeNames()
+			local okNames, names = invokeExperience("getThemeNames")
+			if okNames and type(names) == "table" and #names > 0 then
+				return names
+			end
+			return {"Default"}
+		end
+
+		local function getThemeColorValue(themeKey)
+			local okColor, color = invokeExperience("getThemeStudioColor", themeKey)
+			if okColor and typeof(color) == "Color3" then
+				return color
+			end
+			return Color3.fromRGB(255, 255, 255)
+		end
+
+		local baseThemeSetting = themeCategory.baseTheme
+		themeBaseDropdown = newTab:CreateDropdown({
+			Name = "Base Theme",
+			Options = listThemeNames(),
+			CurrentOption = self.getSetting("ThemeStudio", "baseTheme") or "Default",
+			MultipleOptions = false,
+			Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = tostring(value or "Default")
+					local ok, message = invokeExperience("setThemeStudioBaseTheme", value)
+					if ok then
+						self.setSettingValue("ThemeStudio", "baseTheme", value, true)
+					end
+				notifyExperienceResult(ok, message)
+			end
+		})
+		if baseThemeSetting then
+			baseThemeSetting.Element = themeBaseDropdown
+		end
+
+		local useCustomSetting = themeCategory.useCustom
+		if useCustomSetting then
+			useCustomSetting.Element = newTab:CreateToggle({
+				Name = useCustomSetting.Name or "Use Custom Theme",
+				CurrentValue = self.getSetting("ThemeStudio", "useCustom") == true,
+				Ext = true,
+				Callback = function(value)
+					local boolValue = value == true
+					local ok, message = invokeExperience("setThemeStudioUseCustom", boolValue)
+					if ok then
+						self.setSettingValue("ThemeStudio", "useCustom", boolValue, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		local themeKeys = {}
+		local okThemeKeys, resolvedThemeKeys = invokeExperience("getThemeStudioKeys")
+		if okThemeKeys and type(resolvedThemeKeys) == "table" then
+			themeKeys = resolvedThemeKeys
+		end
+		for _, themeKey in ipairs(themeKeys) do
+			local keyName = tostring(themeKey)
+			themeColorElements[keyName] = newTab:CreateColorPicker({
+				Name = keyName,
+				Color = getThemeColorValue(keyName),
+				Ext = true,
+				Callback = function(color)
+					local okColor, message = invokeExperience("setThemeStudioColor", keyName, color)
+					if okColor then
+						self.setSettingValue("ThemeStudio", "useCustom", true, false)
+						local packedSetting = self.getSetting("ThemeStudio", "customThemePacked")
+						if type(packedSetting) ~= "table" then
+							packedSetting = {}
+						end
+						packedSetting[keyName] = {
+							R = math.floor(color.R * 255 + 0.5),
+							G = math.floor(color.G * 255 + 0.5),
+							B = math.floor(color.B * 255 + 0.5)
+						}
+						self.setSettingValue("ThemeStudio", "customThemePacked", packedSetting, false)
+					end
+					notifyExperienceResult(okColor, message)
+				end
+			})
+		end
+
+		newTab:CreateButton({
+			Name = "Apply Draft",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("applyThemeStudioDraft")
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Reset To Base",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("resetThemeStudio")
+				if ok then
+					self.setSettingValue("ThemeStudio", "useCustom", false, false)
+					self.setSettingValue("ThemeStudio", "customThemePacked", {}, false)
+					if useCustomSetting and useCustomSetting.Element and type(useCustomSetting.Element.Set) == "function" then
+						useCustomSetting.Element:Set(false)
+					end
+					if themeBaseDropdown and type(themeBaseDropdown.Set) == "function" then
+						local nextBase = self.getSetting("ThemeStudio", "baseTheme") or "Default"
+						themeBaseDropdown:Set(nextBase)
+					end
+					for keyName, colorElement in pairs(themeColorElements) do
+						if colorElement and type(colorElement.Set) == "function" then
+							colorElement:Set(getThemeColorValue(keyName))
+						end
+					end
+					self.saveSettings()
+				end
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Share Code")
+
+		self.shareCodeInput = newTab:CreateInput({
+			Name = "Share Code",
+			CurrentValue = self.getShareCodeInputValue(),
+			PlaceholderText = "Paste RFSC1 share code here",
+			Ext = true,
+			RemoveTextAfterFocusLost = false,
+			Callback = function(value)
+				self.shareCodeDraft = tostring(value or "")
+			end,
+		})
+
+		newTab:CreateButton({
+			Name = "Import Code",
+			Ext = true,
+			Callback = runImportCode,
+		})
+
+		newTab:CreateButton({
+			Name = "Import Settings",
+			Ext = true,
+			Callback = runImportSettings,
+		})
+
+		newTab:CreateButton({
+			Name = "Export Settings",
+			Ext = true,
+			Callback = runExportSettings,
+		})
+
+		newTab:CreateButton({
+			Name = "Copy Share code",
+			Ext = true,
+			Callback = runCopyShareCode,
+		})
+
 		self.settingsCreated = true
+		syncShareCodeInputFromHandlers()
 		self.loadSettings()
 		self.saveSettings()
 	end

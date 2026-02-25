@@ -1,23 +1,41 @@
+local function row(canonical, legacy, extraLegacy)
+	local output = {
+		canonical,
+		legacy or canonical
+	}
+	if extraLegacy and extraLegacy ~= "" then
+		table.insert(output, extraLegacy)
+	end
+	return output
+end
+
 return {
-	theme = {"src/services/theme.lua", "feature/rayfield-theme.lua"},
-	settings = {"src/services/settings.lua", "feature/rayfield-settings.lua"},
-	config = {"src/services/config.lua", "feature/rayfield-config.lua"},
-	utilities = {"src/services/utilities.lua", "feature/rayfield-utilities.lua"},
-	uiState = {"src/core/ui-state.lua", "feature/rayfield-ui-state.lua"},
-	elements = {"src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua"},
-	elementsExtracted = {"src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua"},
-	drag = {"src/feature/drag/init.lua", "feature/rayfield-drag.lua"},
-	tabSplit = {"src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua"},
-	miniWindow = {"src/feature/mini-window/init.lua", "feature/mini-window-system.lua"},
-	enhanced = {"src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua"},
-	advanced = {"src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua"},
-	animationEngine = {"src/core/animation/engine.lua", "src/core/animation/engine.lua"},
-	animationPublic = {"src/core/animation/public.lua", "src/core/animation/public.lua"},
-	animationSequence = {"src/core/animation/sequence.lua", "src/core/animation/sequence.lua"},
-	animationUI = {"src/core/animation/ui.lua", "src/core/animation/ui.lua"},
-	animationText = {"src/core/animation/text.lua", "src/core/animation/text.lua"},
-	animationEasing = {"src/core/animation/easing.lua", "src/core/animation/easing.lua"},
-	animationCleanup = {"src/core/animation/cleanup.lua", "src/core/animation/cleanup.lua"},
-	allInOne = {"src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"},
-	modifiedEntry = {"src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua"}
+	theme = row("src/services/theme.lua", "feature/rayfield-theme.lua"),
+	settings = row("src/services/settings.lua", "feature/rayfield-settings.lua"),
+	compatibility = row("src/services/compatibility.lua"),
+	ownershipTracker = row("src/services/ownership-tracker.lua"),
+	elementSync = row("src/services/element-sync.lua"),
+	keybindSequence = row("src/services/keybind-sequence.lua"),
+	layoutPersistence = row("src/services/layout-persistence.lua"),
+	viewportVirtualization = row("src/services/viewport-virtualization.lua"),
+	config = row("src/services/config.lua", "feature/rayfield-config.lua"),
+	utilities = row("src/services/utilities.lua", "feature/rayfield-utilities.lua"),
+	uiState = row("src/core/ui-state.lua", "feature/rayfield-ui-state.lua"),
+	elements = row("src/ui/elements/factory/init.lua", "feature/rayfield-elements.lua"),
+	elementsExtracted = row("src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua"),
+	widgetsBootstrap = row("src/ui/elements/widgets/bootstrap.lua"),
+	drag = row("src/feature/drag/init.lua", "feature/rayfield-drag.lua"),
+	tabSplit = row("src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua"),
+	miniWindow = row("src/feature/mini-window/init.lua", "feature/mini-window-system.lua"),
+	enhanced = row("src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua"),
+	advanced = row("src/feature/enhanced/advanced.lua", "feature/rayfield-advanced-features.lua"),
+	animationEngine = row("src/core/animation/engine.lua"),
+	animationPublic = row("src/core/animation/public.lua"),
+	animationSequence = row("src/core/animation/sequence.lua"),
+	animationUI = row("src/core/animation/ui.lua"),
+	animationText = row("src/core/animation/text.lua"),
+	animationEasing = row("src/core/animation/easing.lua"),
+	animationCleanup = row("src/core/animation/cleanup.lua"),
+	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
+	modifiedEntry = row("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua")
 }

@@ -4,6 +4,7 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
 
 local function buildFallbackAnimateFacade()
 	local engine = (_G and _G.__RayfieldSharedAnimationEngine) or nil
@@ -53,6 +54,14 @@ local Animation = (_G and _G.__RayfieldSharedAnimateFacade) or buildFallbackAnim
 local MiniWindow = {}
 MiniWindow.__index = MiniWindow
 
+local function getViewportVirtualization()
+	local service = _G and _G.__RayfieldViewportVirtualization
+	if type(service) == "table" then
+		return service
+	end
+	return nil
+end
+
 function MiniWindow.new(config)
     local self = setmetatable({}, MiniWindow)
     
@@ -63,10 +72,83 @@ function MiniWindow.new(config)
     self.Buttons = {}
     self.Labels = {}
     self.Animation = Animation
+    self.Connections = {}
+    self.ViewportVirtualization = getViewportVirtualization()
+    self.VirtualHostId = "mini:" .. tostring(HttpService:GenerateGUID(false))
+    self.VirtualTokens = setmetatable({}, { __mode = "k" })
     
     self:CreateUI()
     
     return self
+end
+
+function MiniWindow:_trackConnection(connection)
+	if connection then
+		table.insert(self.Connections, connection)
+	end
+	return connection
+end
+
+function MiniWindow:_registerVirtualHost()
+	local viewport = self.ViewportVirtualization
+	if not (viewport and type(viewport.registerHost) == "function") then
+		return false
+	end
+	return pcall(viewport.registerHost, self.VirtualHostId, self.Content, {
+		mode = "scrolling"
+	})
+end
+
+function MiniWindow:_refreshVirtualHost(reason)
+	local viewport = self.ViewportVirtualization
+	if viewport and type(viewport.refreshHost) == "function" then
+		pcall(viewport.refreshHost, self.VirtualHostId, reason or "mini_window_update")
+	end
+end
+
+function MiniWindow:_registerVirtualElement(guiObject, elementType)
+	if not guiObject then
+		return nil
+	end
+	local viewport = self.ViewportVirtualization
+	if not (viewport and type(viewport.registerElement) == "function") then
+		return nil
+	end
+	local okToken, token = pcall(viewport.registerElement, self.VirtualHostId, guiObject, {
+		meta = {
+			elementType = elementType or guiObject.ClassName or "GuiObject",
+			miniWindow = true,
+			title = self.Title
+		}
+	})
+	if okToken and type(token) == "string" then
+		self.VirtualTokens[guiObject] = token
+		if guiObject.SetAttribute then
+			pcall(guiObject.SetAttribute, guiObject, "RayfieldVirtualToken", token)
+		end
+		return token
+	end
+	return nil
+end
+
+function MiniWindow:_unregisterVirtualElement(guiObject)
+	if not guiObject then
+		return
+	end
+	local viewport = self.ViewportVirtualization
+	if not (viewport and type(viewport.unregisterElement) == "function") then
+		return
+	end
+	local token = self.VirtualTokens[guiObject]
+	if token then
+		pcall(viewport.unregisterElement, token)
+		self.VirtualTokens[guiObject] = nil
+	else
+		pcall(viewport.unregisterElement, guiObject)
+	end
+	if guiObject.SetAttribute then
+		pcall(guiObject.SetAttribute, guiObject, "RayfieldVirtualToken", nil)
+	end
 end
 
 function MiniWindow:CreateUI()
@@ -138,9 +220,9 @@ function MiniWindow:CreateUI()
     closeCorner.CornerRadius = UDim.new(1, 0)
     closeCorner.Parent = self.CloseButton
     
-    self.CloseButton.MouseButton1Click:Connect(function()
+    self:_trackConnection(self.CloseButton.MouseButton1Click:Connect(function()
         self:Toggle()
-    end)
+    end))
     
     -- Content Frame
     self.Content = Instance.new("ScrollingFrame")
@@ -164,27 +246,35 @@ function MiniWindow:CreateUI()
     
     -- Parent to PlayerGui
     self.ScreenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+    self:_registerVirtualHost()
+    self:_trackConnection(self.Frame:GetPropertyChangedSignal("Visible"):Connect(function()
+        if self.ViewportVirtualization and type(self.ViewportVirtualization.setHostSuppressed) == "function" then
+            pcall(self.ViewportVirtualization.setHostSuppressed, self.VirtualHostId, not self.Frame.Visible)
+        end
+        self:_refreshVirtualHost("mini_visibility")
+    end))
+    self:_refreshVirtualHost("mini_window_created")
 end
 
 function MiniWindow:MakeDraggable()
     local dragging = false
     local dragInput, mousePos, framePos
     
-    self.TitleBar.InputBegan:Connect(function(input)
+    self:_trackConnection(self.TitleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             mousePos = input.Position
             framePos = self.Frame.Position
             
-            input.Changed:Connect(function()
+            self:_trackConnection(input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
                 end
-            end)
+            end))
         end
-    end)
+    end))
     
-    UserInputService.InputChanged:Connect(function(input)
+    self:_trackConnection(UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             local delta = input.Position - mousePos
             self.Frame.Position = UDim2.new(
@@ -194,7 +284,7 @@ function MiniWindow:MakeDraggable()
                 framePos.Y.Offset + delta.Y
             )
         end
-    end)
+    end))
 end
 
 function MiniWindow:AddButton(name, callback)
@@ -213,17 +303,18 @@ function MiniWindow:AddButton(name, callback)
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = button
     
-    button.MouseButton1Click:Connect(callback)
+    self:_trackConnection(button.MouseButton1Click:Connect(callback))
     
-    button.MouseEnter:Connect(function()
+    self:_trackConnection(button.MouseEnter:Connect(function()
         Animation:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(60, 60, 80)}):Play()
-    end)
+    end))
     
-    button.MouseLeave:Connect(function()
+    self:_trackConnection(button.MouseLeave:Connect(function()
         Animation:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(45, 45, 60)}):Play()
-    end)
+    end))
     
     table.insert(self.Buttons, button)
+    self:_registerVirtualElement(button, "Button")
     self:UpdateContentSize()
     
     return button
@@ -242,6 +333,7 @@ function MiniWindow:AddLabel(text)
     label.Parent = self.Content
     
     table.insert(self.Labels, label)
+    self:_registerVirtualElement(label, "Label")
     self:UpdateContentSize()
     
     return label
@@ -250,18 +342,31 @@ end
 function MiniWindow:UpdateContentSize()
     local contentSize = self.Layout.AbsoluteContentSize
     self.Content.CanvasSize = UDim2.new(0, 0, 0, contentSize.Y + 10)
+    self:_refreshVirtualHost("content_size")
 end
 
 function MiniWindow:Toggle()
     self.Frame.Visible = not self.Frame.Visible
+    if self.ViewportVirtualization and type(self.ViewportVirtualization.setHostSuppressed) == "function" then
+        pcall(self.ViewportVirtualization.setHostSuppressed, self.VirtualHostId, not self.Frame.Visible)
+    end
+    self:_refreshVirtualHost("mini_toggle")
 end
 
 function MiniWindow:Show()
     self.Frame.Visible = true
+    if self.ViewportVirtualization and type(self.ViewportVirtualization.setHostSuppressed) == "function" then
+        pcall(self.ViewportVirtualization.setHostSuppressed, self.VirtualHostId, false)
+    end
+    self:_refreshVirtualHost("mini_show")
 end
 
 function MiniWindow:Hide()
     self.Frame.Visible = false
+    if self.ViewportVirtualization and type(self.ViewportVirtualization.setHostSuppressed) == "function" then
+        pcall(self.ViewportVirtualization.setHostSuppressed, self.VirtualHostId, true)
+    end
+    self:_refreshVirtualHost("mini_hide")
 end
 
 function MiniWindow:AddToggle(name, defaultValue, callback)
@@ -304,15 +409,16 @@ function MiniWindow:AddToggle(name, defaultValue, callback)
 
     local state = defaultValue
 
-    toggle.MouseButton1Click:Connect(function()
+    self:_trackConnection(toggle.MouseButton1Click:Connect(function()
         state = not state
         toggle.Text = state and "ON" or "OFF"
         Animation:Create(toggle, TweenInfo.new(0.2), {
             BackgroundColor3 = state and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(80, 80, 90)
         }):Play()
         callback(state)
-    end)
+    end))
 
+    self:_registerVirtualElement(container, "Toggle")
     self:UpdateContentSize()
 
     return {
@@ -385,25 +491,26 @@ function MiniWindow:AddSlider(name, min, max, defaultValue, callback)
         callback(currentValue)
     end
 
-    sliderBg.InputBegan:Connect(function(input)
+    self:_trackConnection(sliderBg.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             updateSlider(input)
         end
-    end)
+    end))
 
-    sliderBg.InputEnded:Connect(function(input)
+    self:_trackConnection(sliderBg.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
         end
-    end)
+    end))
 
-    UserInputService.InputChanged:Connect(function(input)
+    self:_trackConnection(UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             updateSlider(input)
         end
-    end)
+    end))
 
+    self:_registerVirtualElement(container, "Slider")
     self:UpdateContentSize()
 
     return {
@@ -421,6 +528,23 @@ function MiniWindow:AddSlider(name, min, max, defaultValue, callback)
 end
 
 function MiniWindow:Destroy()
+    local tokenObjects = {}
+    for guiObject in pairs(self.VirtualTokens) do
+        table.insert(tokenObjects, guiObject)
+    end
+    for _, guiObject in ipairs(tokenObjects) do
+        self:_unregisterVirtualElement(guiObject)
+    end
+    local viewport = self.ViewportVirtualization
+    if viewport and type(viewport.unregisterHost) == "function" then
+        pcall(viewport.unregisterHost, self.VirtualHostId)
+    end
+    for _, connection in ipairs(self.Connections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+    self.Connections = {}
     self.ScreenGui:Destroy()
 end
 

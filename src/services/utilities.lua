@@ -2,6 +2,62 @@
 -- Handles utility functions, dragging, visibility, and lifecycle management
 
 local UtilitiesModule = {}
+local SharedUtils = {}
+
+function SharedUtils.trim(value)
+	if type(value) ~= "string" then
+		return ""
+	end
+	local out = value:gsub("^%s+", "")
+	out = out:gsub("%s+$", "")
+	return out
+end
+
+function SharedUtils.cloneTable(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, nested in pairs(value) do
+		out[SharedUtils.cloneTable(key)] = SharedUtils.cloneTable(nested)
+	end
+	return out
+end
+
+function SharedUtils.deepEqual(left, right, seen)
+	if left == right then
+		return true
+	end
+	if type(left) ~= "table" or type(right) ~= "table" then
+		return false
+	end
+	seen = seen or {}
+	if seen[left] and seen[left] == right then
+		return true
+	end
+	seen[left] = right
+
+	for key, value in pairs(left) do
+		if not SharedUtils.deepEqual(value, right[key], seen) then
+			return false
+		end
+	end
+	for key in pairs(right) do
+		if left[key] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+UtilitiesModule.Shared = SharedUtils
+UtilitiesModule.trim = SharedUtils.trim
+UtilitiesModule.cloneTable = SharedUtils.cloneTable
+UtilitiesModule.deepEqual = SharedUtils.deepEqual
+
+if type(_G) == "table" then
+	_G.__RayfieldSharedUtils = SharedUtils
+end
 
 function UtilitiesModule.init(ctx)
 	local self = {}

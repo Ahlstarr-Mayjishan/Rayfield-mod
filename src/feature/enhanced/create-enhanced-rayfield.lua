@@ -27,6 +27,66 @@ local RunService = game:GetService("RunService")
 local MemoryLeakDetector = {}
 MemoryLeakDetector.__index = MemoryLeakDetector
 
+local function resolveCompatibility()
+	if type(_G) == "table" and type(_G.__RayfieldCompatibility) == "table" then
+		return _G.__RayfieldCompatibility
+	end
+	return nil
+end
+
+local function getService(name)
+	local compatibility = resolveCompatibility()
+	if compatibility and type(compatibility.getService) == "function" then
+		local service = compatibility.getService(name)
+		if service then
+			return service
+		end
+	end
+	return game:GetService(name)
+end
+
+local function safeGetChildren(instance)
+	local ok, children = pcall(function()
+		return instance:GetChildren()
+	end)
+	if ok and type(children) == "table" then
+		return children
+	end
+	return {}
+end
+
+local function safeGetDescendants(instance)
+	local ok, descendants = pcall(function()
+		return instance:GetDescendants()
+	end)
+	if ok and type(descendants) == "table" then
+		return descendants
+	end
+	return {}
+end
+
+local UI_HEAVY_CLASSES = {
+	Frame = true,
+	TextLabel = true,
+	ImageLabel = true,
+	UIStroke = true,
+	UICorner = true,
+	ScrollingFrame = true,
+	TextButton = true,
+	ImageButton = true,
+}
+
+local function clamp(value, minValue, maxValue)
+	value = tonumber(value) or 0
+	if value < minValue then
+		return minValue
+	end
+	if value > maxValue then
+		return maxValue
+	end
+	return value
+end
+
 function MemoryLeakDetector.new()
 	local self = setmetatable({}, MemoryLeakDetector)
 	
@@ -42,48 +102,324 @@ function MemoryLeakDetector.new()
 	self.objectCounts = {}
 	self.lastObjectCounts = {}
 	
-	-- Target containers for scanning (avoid full game:GetDescendants())
-	self.scanTargets = {"Workspace", "Players"}
+	-- Scan behavior
+	self.scanMode = "ui" -- "ui", "mixed", "game"
+	self.scanTargets = {"Workspace", "Players"} -- legacy targets for "game" mode
+	self.customScanRoots = nil
+	self.maxScanDescendants = 50000
+	self.scanBudgetWarning = 20000
+	self.lastScanMeta = nil
 	
 	-- Callbacks
 	self.onLeakDetected = nil
+	self.onUnknownCause = nil
 	self.running = false
 	self.monitorThread = nil
+
+	self.runtimeDiagnosticsProvider = nil
+	self.attributionPolicy = {
+		mode = "weighted",
+		triggerScore = 70,
+		confirmCycles = 2,
+		unknownNotifyOncePerSession = true
+	}
+	self.attributionState = {
+		lastScore = 0,
+		lastClassification = "unknown",
+		confirmStreak = 0,
+		lastEvidence = {},
+		unknownNotified = false
+	}
 	
 	self:startMonitoring()
 	
 	return self
 end
 
-function MemoryLeakDetector:getTargetedInstanceCount()
-	local count = 0
+function MemoryLeakDetector:setRuntimeDiagnosticsProvider(provider)
+	if provider ~= nil and type(provider) ~= "function" then
+		warn("[Memory Leak Detector] setRuntimeDiagnosticsProvider expects function or nil")
+		return false
+	end
+	self.runtimeDiagnosticsProvider = provider
+	return true
+end
+
+function MemoryLeakDetector:setAttributionPolicy(policy)
+	if type(policy) ~= "table" then
+		warn("[Memory Leak Detector] setAttributionPolicy expects table")
+		return false
+	end
+
+	local updated = {
+		mode = tostring(policy.mode or self.attributionPolicy.mode):lower(),
+		triggerScore = tonumber(policy.triggerScore) or self.attributionPolicy.triggerScore,
+		confirmCycles = tonumber(policy.confirmCycles) or self.attributionPolicy.confirmCycles,
+		unknownNotifyOncePerSession = policy.unknownNotifyOncePerSession
+	}
+
+	if updated.mode ~= "weighted" then
+		warn("[Memory Leak Detector] Unsupported attribution mode: " .. tostring(updated.mode))
+		return false
+	end
+
+	if updated.unknownNotifyOncePerSession == nil then
+		updated.unknownNotifyOncePerSession = self.attributionPolicy.unknownNotifyOncePerSession
+	end
+
+	self.attributionPolicy = {
+		mode = updated.mode,
+		triggerScore = clamp(updated.triggerScore, 1, 100),
+		confirmCycles = math.max(1, math.floor(updated.confirmCycles)),
+		unknownNotifyOncePerSession = updated.unknownNotifyOncePerSession == true
+	}
+
+	return true
+end
+
+function MemoryLeakDetector:getAttributionReport()
+	return {
+		lastScore = self.attributionState.lastScore,
+		lastClassification = self.attributionState.lastClassification,
+		confirmStreak = self.attributionState.confirmStreak,
+		lastEvidence = self.attributionState.lastEvidence
+	}
+end
+
+function MemoryLeakDetector:_collectRuntimeDiagnostics()
+	local diagnostics = {
+		activeTweens = 0,
+		activeTextHandles = 0,
+		themeBindings = {
+			objectsBound = 0,
+			propertiesBound = 0
+		},
+		gcTrackedObjects = 0,
+		rayfieldVisible = false,
+		rayfieldMinimized = false,
+		rayfieldDestroyed = false
+	}
+
+	if type(self.runtimeDiagnosticsProvider) == "function" then
+		local ok, provided = pcall(self.runtimeDiagnosticsProvider)
+		if ok and type(provided) == "table" then
+			diagnostics.activeTweens = tonumber(provided.activeTweens) or diagnostics.activeTweens
+			diagnostics.activeTextHandles = tonumber(provided.activeTextHandles) or diagnostics.activeTextHandles
+			diagnostics.gcTrackedObjects = tonumber(provided.gcTrackedObjects) or diagnostics.gcTrackedObjects
+			diagnostics.rayfieldVisible = provided.rayfieldVisible == true
+			diagnostics.rayfieldMinimized = provided.rayfieldMinimized == true
+			diagnostics.rayfieldDestroyed = provided.rayfieldDestroyed == true
+			if type(provided.themeBindings) == "table" then
+				diagnostics.themeBindings = {
+					objectsBound = tonumber(provided.themeBindings.objectsBound) or 0,
+					propertiesBound = tonumber(provided.themeBindings.propertiesBound) or 0
+				}
+			end
+		end
+	end
+
+	return diagnostics
+end
+
+function MemoryLeakDetector:setScanMode(mode)
+	local normalized = tostring(mode or ""):lower()
+	if normalized ~= "ui" and normalized ~= "mixed" and normalized ~= "game" then
+		warn("[Memory Leak Detector] Invalid scan mode: " .. tostring(mode) .. " (use 'ui', 'mixed', or 'game')")
+		return false
+	end
+	self.scanMode = normalized
+	return true
+end
+
+function MemoryLeakDetector:setScanRoots(roots)
+	if roots == nil then
+		self.customScanRoots = nil
+		return true
+	end
+	if type(roots) ~= "table" then
+		warn("[Memory Leak Detector] setScanRoots expects table or nil")
+		return false
+	end
+
+	local sanitized = {}
+	local seen = {}
+	for _, root in ipairs(roots) do
+		if typeof(root) == "Instance" and not seen[root] then
+			seen[root] = true
+			table.insert(sanitized, root)
+		end
+	end
+	self.customScanRoots = sanitized
+	return true
+end
+
+function MemoryLeakDetector:_resolveUiRoots()
+	if type(self.customScanRoots) == "table" and #self.customScanRoots > 0 then
+		return self.customScanRoots
+	end
+
+	local roots = {}
+	local seen = {}
+	local function addRoot(root)
+		if typeof(root) ~= "Instance" then
+			return
+		end
+		if seen[root] then
+			return
+		end
+		seen[root] = true
+		table.insert(roots, root)
+	end
+
+	local compatibility = resolveCompatibility()
+	local coreGui = getService("CoreGui")
+	local players = getService("Players")
+	local localPlayer = players and players.LocalPlayer or nil
+
+	if type(_G) == "table" then
+		addRoot(_G.Rayfield)
+		local rayfieldUi = _G.RayfieldUI
+		if type(rayfieldUi) == "table" and typeof(rayfieldUi.ScreenGui) == "Instance" then
+			addRoot(rayfieldUi.ScreenGui)
+		end
+	end
+
+	if compatibility and type(compatibility.tryGetHui) == "function" then
+		local hui = compatibility.tryGetHui()
+		if hui then
+			for _, child in ipairs(safeGetChildren(hui)) do
+				if child.Name == "Rayfield" or child.Name == "Key" then
+					addRoot(child)
+				end
+			end
+		end
+	end
+
+	if coreGui then
+		for _, child in ipairs(safeGetChildren(coreGui)) do
+			if child.Name == "Rayfield" or child.Name == "Key" then
+				addRoot(child)
+			end
+		end
+	end
+
+	local playerGui = nil
+	if localPlayer then
+		playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+	end
+	if playerGui then
+		for _, child in ipairs(safeGetChildren(playerGui)) do
+			if child.Name == "Rayfield" or child.Name == "Key" then
+				addRoot(child)
+			end
+		end
+	end
+
+	return roots
+end
+
+function MemoryLeakDetector:_resolveGameRoots()
+	local roots = {}
 	for _, targetName in ipairs(self.scanTargets) do
 		local target = game:FindFirstChild(targetName)
 		if target then
-			count = count + #target:GetDescendants()
+			table.insert(roots, target)
 		end
 	end
+	return roots
+end
+
+function MemoryLeakDetector:_resolveScanRoots()
+	if self.scanMode == "game" then
+		return self:_resolveGameRoots()
+	end
+	return self:_resolveUiRoots()
+end
+
+function MemoryLeakDetector:_scanRoots(collectBreakdown)
+	local objectBreakdown = collectBreakdown and {} or nil
+	local totalCount = 0
+	local totalDescendantsVisited = 0
+	local truncated = false
+	local roots = self:_resolveScanRoots()
+
+	for _, root in ipairs(roots) do
+		local descendants = safeGetDescendants(root)
+		totalDescendantsVisited += #descendants
+		local allowed = #descendants
+		local remainingBudget = self.maxScanDescendants - totalCount
+		if remainingBudget <= 0 then
+			truncated = true
+			break
+		end
+		if allowed > remainingBudget then
+			allowed = remainingBudget
+			truncated = true
+		end
+
+		for index = 1, allowed do
+			local obj = descendants[index]
+			totalCount += 1
+			if objectBreakdown then
+				local className = obj.ClassName
+				objectBreakdown[className] = (objectBreakdown[className] or 0) + 1
+			end
+		end
+	end
+
+	if totalDescendantsVisited > self.scanBudgetWarning then
+		warn(string.format(
+			"[Memory Leak Detector] Scan budget warning: visited=%d mode=%s roots=%d",
+			totalDescendantsVisited,
+			tostring(self.scanMode),
+			#roots
+		))
+	end
+
+	self.lastScanMeta = {
+		mode = self.scanMode,
+		rootCount = #roots,
+		visited = totalDescendantsVisited,
+		counted = totalCount,
+		truncated = truncated
+	}
+
+	return totalCount, objectBreakdown
+end
+
+function MemoryLeakDetector:getTargetedInstanceCount()
+	local count = self:_scanRoots(false)
 	return count
 end
 
+function MemoryLeakDetector:_getMixedLightweightStats()
+	local workspace = getService("Workspace")
+	local players = getService("Players")
+	local stats = {
+		workspaceChildren = workspace and #safeGetChildren(workspace) or 0,
+		playersChildren = players and #safeGetChildren(players) or 0
+	}
+	return stats
+end
+
 function MemoryLeakDetector:takeSnapshot()
-	local stats = game:GetService("Stats")
+	local statsService = getService("Stats")
+	local instanceCount, objectBreakdown = self:_scanRoots(true)
+	local runtimeDiagnostics = self:_collectRuntimeDiagnostics()
 	local snapshot = {
 		timestamp = tick(),
-		totalMemory = stats:GetTotalMemoryUsageMb(),
-		instanceCount = self:getTargetedInstanceCount(),
-		objectBreakdown = {}
+		totalMemory = statsService and statsService:GetTotalMemoryUsageMb() or 0,
+		instanceCount = instanceCount,
+		objectBreakdown = objectBreakdown or {},
+		scanMode = self.scanMode,
+		runtimeDiagnostics = runtimeDiagnostics
 	}
 	
-	-- Count objects by type (targeted scan only)
-	for _, targetName in ipairs(self.scanTargets) do
-		local target = game:FindFirstChild(targetName)
-		if target then
-			for _, obj in ipairs(target:GetDescendants()) do
-				local className = obj.ClassName
-				snapshot.objectBreakdown[className] = (snapshot.objectBreakdown[className] or 0) + 1
-				end
-		end
+	if self.scanMode == "mixed" then
+		snapshot.mixedStats = self:_getMixedLightweightStats()
+	end
+	if self.lastScanMeta then
+		snapshot.scanMeta = self.lastScanMeta
 	end
 	
 	table.insert(self.snapshots, snapshot)
@@ -94,6 +430,105 @@ function MemoryLeakDetector:takeSnapshot()
 	end
 	
 	return snapshot
+end
+
+function MemoryLeakDetector:_evaluateAttribution()
+	local snapshots = self.snapshots
+	local newest = snapshots[#snapshots]
+	local previous = snapshots[#snapshots - 1]
+	if not newest or not previous then
+		self.attributionState.lastScore = 0
+		self.attributionState.lastClassification = "unknown"
+		self.attributionState.confirmStreak = 0
+		self.attributionState.lastEvidence = {
+			reason = "insufficient_snapshots"
+		}
+		return {
+			score = 0,
+			classification = "unknown",
+			confirmed = false,
+			evidence = self.attributionState.lastEvidence
+		}
+	end
+
+	local latestDiag = newest.runtimeDiagnostics or {}
+	local prevDiag = previous.runtimeDiagnostics or {}
+	local latestTheme = latestDiag.themeBindings or {}
+	local prevTheme = prevDiag.themeBindings or {}
+
+	local uiInstanceGrowth = math.max(0, (newest.instanceCount or 0) - (previous.instanceCount or 0))
+	local uiClassGrowth = 0
+	for className in pairs(UI_HEAVY_CLASSES) do
+		local newestCount = tonumber(newest.objectBreakdown and newest.objectBreakdown[className]) or 0
+		local previousCount = tonumber(previous.objectBreakdown and previous.objectBreakdown[className]) or 0
+		uiClassGrowth += math.max(0, newestCount - previousCount)
+	end
+
+	local tweenGrowth = math.max(0, (tonumber(latestDiag.activeTweens) or 0) - (tonumber(prevDiag.activeTweens) or 0))
+	local textHandleGrowth = math.max(0, (tonumber(latestDiag.activeTextHandles) or 0) - (tonumber(prevDiag.activeTextHandles) or 0))
+	local themeBindingGrowth = math.max(0, (tonumber(latestTheme.propertiesBound) or 0) - (tonumber(prevTheme.propertiesBound) or 0))
+	local gcTrackedGrowth = math.max(0, (tonumber(latestDiag.gcTrackedObjects) or 0) - (tonumber(prevDiag.gcTrackedObjects) or 0))
+
+	local subsystemGrowth = tweenGrowth + textHandleGrowth + themeBindingGrowth + gcTrackedGrowth
+	local rayfieldGuiAlive = false
+	if type(_G) == "table" and typeof(_G.Rayfield) == "Instance" then
+		local ok, parent = pcall(function()
+			return _G.Rayfield.Parent
+		end)
+		rayfieldGuiAlive = ok and parent ~= nil
+	end
+
+	local scoreS1 = clamp((uiInstanceGrowth / 300) * 40, 0, 40)
+	local scoreS2 = clamp((uiClassGrowth / 160) * 20, 0, 20)
+	local scoreS3 = clamp((subsystemGrowth / 60) * 30, 0, 30)
+	local scoreS4 = rayfieldGuiAlive and 10 or 0
+	local totalScore = clamp(scoreS1 + scoreS2 + scoreS3 + scoreS4, 0, 100)
+
+	local classification = totalScore >= self.attributionPolicy.triggerScore and "rayfield_ui" or "unknown"
+	if classification == "rayfield_ui" then
+		self.attributionState.confirmStreak = self.attributionState.confirmStreak + 1
+	else
+		self.attributionState.confirmStreak = 0
+	end
+
+	local evidence = {
+		uiInstanceGrowth = uiInstanceGrowth,
+		uiClassGrowth = uiClassGrowth,
+		subsystemGrowth = subsystemGrowth,
+		tweenGrowth = tweenGrowth,
+		textHandleGrowth = textHandleGrowth,
+		themeBindingGrowth = themeBindingGrowth,
+		gcTrackedGrowth = gcTrackedGrowth,
+		rayfieldGuiAlive = rayfieldGuiAlive,
+		scoreBreakdown = {
+			S1 = scoreS1,
+			S2 = scoreS2,
+			S3 = scoreS3,
+			S4 = scoreS4
+		}
+	}
+
+	self.attributionState.lastScore = totalScore
+	self.attributionState.lastClassification = classification
+	self.attributionState.lastEvidence = evidence
+
+	return {
+		score = totalScore,
+		classification = classification,
+		confirmed = classification == "rayfield_ui" and self.attributionState.confirmStreak >= self.attributionPolicy.confirmCycles,
+		evidence = evidence
+	}
+end
+
+function MemoryLeakDetector:_shouldNotifyUnknownCause()
+	if not self.attributionPolicy.unknownNotifyOncePerSession then
+		return true
+	end
+	if self.attributionState.unknownNotified then
+		return false
+	end
+	self.attributionState.unknownNotified = true
+	return true
 end
 
 function MemoryLeakDetector:detectLeaks()
@@ -173,13 +608,18 @@ function MemoryLeakDetector:startMonitoring()
 			
 			-- Take snapshot
 			self:takeSnapshot()
+			local attribution = self:_evaluateAttribution()
 			
 			-- Detect leaks
 			local leaks = self:detectLeaks()
 			
 			if leaks then
+				local unknownNotificationSent = false
 				for _, leak in ipairs(leaks) do
-					warn("[Memory Leak Detector] " .. leak.message)
+					leak.sourceClassification = attribution.classification
+					leak.attributionScore = attribution.score
+					leak.attributionEvidence = attribution.evidence
+					leak.attributionConfirmed = attribution.confirmed
 					
 					-- Track suspected leaks
 					table.insert(self.suspectedLeaks, {
@@ -187,9 +627,20 @@ function MemoryLeakDetector:startMonitoring()
 						timestamp = tick()
 					})
 					
-					-- Callback
-					if self.onLeakDetected then
-						pcall(self.onLeakDetected, leak)
+					if leak.sourceClassification == "rayfield_ui" then
+						warn("[Memory Leak Detector] " .. leak.message)
+						if self.onLeakDetected then
+							pcall(self.onLeakDetected, leak)
+						end
+					elseif not unknownNotificationSent and self:_shouldNotifyUnknownCause() then
+						unknownNotificationSent = true
+						if self.onUnknownCause then
+							pcall(self.onUnknownCause, {
+								message = leak.message,
+								attributionScore = attribution.score,
+								attributionEvidence = attribution.evidence
+							})
+						end
 					end
 				end
 			end
@@ -210,6 +661,7 @@ function MemoryLeakDetector:destroy()
 	self:setEnabled(false)
 	self:stopMonitoring()
 	self.onLeakDetected = nil
+	self.onUnknownCause = nil
 end
 
 function MemoryLeakDetector:getReport()
@@ -217,13 +669,19 @@ function MemoryLeakDetector:getReport()
 		snapshots = #self.snapshots,
 		suspectedLeaks = #self.suspectedLeaks,
 		currentMemory = 0,
-		details = {}
+		details = {},
+		scanMode = self.scanMode,
+		attribution = self:getAttributionReport()
 	}
 	
 	if #self.snapshots > 0 then
 		local latest = self.snapshots[#self.snapshots]
 		report.currentMemory = latest.totalMemory
 		report.instanceCount = latest.instanceCount
+		report.scanMeta = latest.scanMeta
+		if latest.mixedStats then
+			report.mixedStats = latest.mixedStats
+		end
 		
 		-- Top 10 object types
 		local sorted = {}
@@ -380,6 +838,27 @@ function ErrorManager.new()
 	return self
 end
 
+function ErrorManager:formatError(identifier, errorMessage)
+	local id = tostring(identifier or "Unknown")
+	local detail = tostring(errorMessage or "Unknown error")
+	local lowerId = string.lower(id)
+	local component = id
+
+	if string.find(lowerId, "split") then
+		component = "Tab Splitter"
+	elseif string.find(lowerId, "drag") or string.find(lowerId, "dock") then
+		component = "Drag & Dock"
+	elseif string.find(lowerId, "remote") then
+		component = "Remote Protection"
+	elseif string.find(lowerId, "config") then
+		component = "Configuration"
+	elseif string.find(lowerId, "theme") then
+		component = "Theme"
+	end
+
+	return string.format("Rayfield Mod: %s | %s", component, detail)
+end
+
 function ErrorManager:isCircuitOpen(identifier)
 	if self.exceptionMode or self.exceptionList[identifier] then
 		return false
@@ -408,10 +887,11 @@ end
 function ErrorManager:recordError(identifier, errorMessage)
 	self.errorCount[identifier] = (self.errorCount[identifier] or 0) + 1
 	self.lastErrorTime[identifier] = tick()
+	local formatted = self:formatError(identifier, errorMessage)
 	
 	table.insert(self.errorLog, {
 		identifier = identifier,
-		message = errorMessage,
+		message = formatted,
 		timestamp = tick(),
 		count = self.errorCount[identifier]
 	})
@@ -423,7 +903,7 @@ function ErrorManager:recordError(identifier, errorMessage)
 	if self.errorCount[identifier] >= self.errorThreshold then
 		self.circuitState[identifier] = "open"
 		warn(string.format(
-			"[Rayfield Circuit Breaker] Circuit mở cho '%s' sau %d lỗi",
+			"Rayfield Mod: Circuit breaker opened for '%s' after %d errors",
 			identifier,
 			self.errorCount[identifier]
 		))
@@ -860,7 +1340,7 @@ local function createHybridCallback(callback, identifier, errorManager, profiler
 			end
 			
 			if not success then
-				warn(string.format("[Fast Callback] '%s' error: %s", identifier, tostring(result)))
+				warn(errorManager:formatError(identifier, tostring(result)))
 			end
 			
 			return result
@@ -921,7 +1401,7 @@ local function createHybridCallback(callback, identifier, errorManager, profiler
 				
 				if circuitOpened then
 					errorManager:triggerFatalError(
-						string.format("Circuit breaker opened for '%s'", identifier)
+						errorManager:formatError(identifier, "Circuit breaker opened")
 					)
 				end
 				
@@ -941,6 +1421,21 @@ local function createEnhancedRayfield(originalRayfield)
 	local remoteProtection = RemoteProtection.new(errorManager)
 	local memoryLeakDetector = MemoryLeakDetector.new()
 	local profiler = PerformanceProfiler.new()
+
+	memoryLeakDetector:setRuntimeDiagnosticsProvider(function()
+		local diagnostics = {}
+		if type(originalRayfield.GetRuntimeDiagnostics) == "function" then
+			local ok, value = pcall(function()
+				return originalRayfield:GetRuntimeDiagnostics()
+			end)
+			if ok and type(value) == "table" then
+				diagnostics = value
+			end
+		end
+
+		diagnostics.gcTrackedObjects = type(garbageCollector.trackedObjects) == "table" and #garbageCollector.trackedObjects or 0
+		return diagnostics
+	end)
 	
 	-- Shutdown callback
 	errorManager:onShutdown(function()
@@ -950,9 +1445,21 @@ local function createEnhancedRayfield(originalRayfield)
 	
 	-- Leak detection callback
 	memoryLeakDetector.onLeakDetected = function(leak)
-		if leak.severity == "high" then
+		if leak.severity == "high" and leak.sourceClassification == "rayfield_ui" and leak.attributionConfirmed == true then
 			warn("[Memory Leak] Triggering emergency cleanup")
 			garbageCollector:cleanup()
+		end
+	end
+
+	memoryLeakDetector.onUnknownCause = function()
+		if type(originalRayfield.Notify) == "function" then
+			pcall(function()
+				originalRayfield:Notify({
+					Title = "Memory Monitor",
+					Content = "RAM tăng cao nhưng chưa đủ bằng chứng do Rayfield; chưa kích hoạt emergency.",
+					Duration = 8
+				})
+			end)
 		end
 	end
 	
@@ -1031,6 +1538,10 @@ local function createEnhancedRayfield(originalRayfield)
 	
 	originalRayfield.GetMemoryReport = function()
 		return memoryLeakDetector:getReport()
+	end
+
+	originalRayfield.GetAttributionReport = function()
+		return memoryLeakDetector:getAttributionReport()
 	end
 	
 	originalRayfield.GetPerformanceReport = function()

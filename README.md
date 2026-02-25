@@ -23,6 +23,8 @@ Canonical test layout:
   - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/Main%20loader/rayfield-modified.lua
 - Main All-in-One Loader:
   - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/Main%20loader/rayfield-all-in-one.lua
+- Main All-in-One 3-Tab Elements Check Loader (5:5 + Settings):
+  - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/Main%20loader/rayfield-all-in-one-2tabs-elements-check.lua
 - Legacy All-in-One Loader:
   - https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/feature/rayfield-all-in-one.lua
 - Enhanced Wrapper Loader:
@@ -113,3 +115,4 @@ local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 - `Examples/02-extended-api.lua`
 - `Examples/03-enhanced-wrapper.lua`
 - `Examples/04-all-in-one.lua`
+- `Main loader/rayfield-all-in-one-2tabs-elements-check.lua` (3 tabs: Elements A, Elements B, Settings)

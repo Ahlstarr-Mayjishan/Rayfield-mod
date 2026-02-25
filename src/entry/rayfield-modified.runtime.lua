@@ -25,9 +25,9 @@ if debugX then
 	warn('Initialising Rayfield')
 end
 
+local Compatibility = nil
 local function getService(name)
-	local service = game:GetService(name)
-	return if cloneref then cloneref(service) else service
+	return game:GetService(name)
 end
 
 -- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
@@ -243,384 +243,7 @@ end
 
 local RayfieldLibrary = {
 	Flags = {},
-	Theme = {
-		Default = {
-			TextColor = Color3.fromRGB(240, 240, 240),
-
-			Background = Color3.fromRGB(25, 25, 25),
-			Topbar = Color3.fromRGB(34, 34, 34),
-			Shadow = Color3.fromRGB(20, 20, 20),
-
-			NotificationBackground = Color3.fromRGB(20, 20, 20),
-			NotificationActionsBackground = Color3.fromRGB(230, 230, 230),
-
-			TabBackground = Color3.fromRGB(80, 80, 80),
-			TabStroke = Color3.fromRGB(85, 85, 85),
-			TabBackgroundSelected = Color3.fromRGB(210, 210, 210),
-			TabTextColor = Color3.fromRGB(240, 240, 240),
-			SelectedTabTextColor = Color3.fromRGB(50, 50, 50),
-
-			ElementBackground = Color3.fromRGB(35, 35, 35),
-			ElementBackgroundHover = Color3.fromRGB(40, 40, 40),
-			SecondaryElementBackground = Color3.fromRGB(25, 25, 25),
-			ElementStroke = Color3.fromRGB(50, 50, 50),
-			SecondaryElementStroke = Color3.fromRGB(40, 40, 40),
-
-			SliderBackground = Color3.fromRGB(50, 138, 220),
-			SliderProgress = Color3.fromRGB(50, 138, 220),
-			SliderStroke = Color3.fromRGB(58, 163, 255),
-
-			ToggleBackground = Color3.fromRGB(30, 30, 30),
-			ToggleEnabled = Color3.fromRGB(0, 146, 214),
-			ToggleDisabled = Color3.fromRGB(100, 100, 100),
-			ToggleEnabledStroke = Color3.fromRGB(0, 170, 255),
-			ToggleDisabledStroke = Color3.fromRGB(125, 125, 125),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(65, 65, 65),
-
-			DropdownSelected = Color3.fromRGB(40, 40, 40),
-			DropdownUnselected = Color3.fromRGB(30, 30, 30),
-
-			InputBackground = Color3.fromRGB(30, 30, 30),
-			InputStroke = Color3.fromRGB(65, 65, 65),
-			PlaceholderColor = Color3.fromRGB(178, 178, 178)
-		},
-
-		Ocean = {
-			TextColor = Color3.fromRGB(230, 240, 240),
-
-			Background = Color3.fromRGB(20, 30, 30),
-			Topbar = Color3.fromRGB(25, 40, 40),
-			Shadow = Color3.fromRGB(15, 20, 20),
-
-			NotificationBackground = Color3.fromRGB(25, 35, 35),
-			NotificationActionsBackground = Color3.fromRGB(230, 240, 240),
-
-			TabBackground = Color3.fromRGB(40, 60, 60),
-			TabStroke = Color3.fromRGB(50, 70, 70),
-			TabBackgroundSelected = Color3.fromRGB(100, 180, 180),
-			TabTextColor = Color3.fromRGB(210, 230, 230),
-			SelectedTabTextColor = Color3.fromRGB(20, 50, 50),
-
-			ElementBackground = Color3.fromRGB(30, 50, 50),
-			ElementBackgroundHover = Color3.fromRGB(40, 60, 60),
-			SecondaryElementBackground = Color3.fromRGB(30, 45, 45),
-			ElementStroke = Color3.fromRGB(45, 70, 70),
-			SecondaryElementStroke = Color3.fromRGB(40, 65, 65),
-
-			SliderBackground = Color3.fromRGB(0, 110, 110),
-			SliderProgress = Color3.fromRGB(0, 140, 140),
-			SliderStroke = Color3.fromRGB(0, 160, 160),
-
-			ToggleBackground = Color3.fromRGB(30, 50, 50),
-			ToggleEnabled = Color3.fromRGB(0, 130, 130),
-			ToggleDisabled = Color3.fromRGB(70, 90, 90),
-			ToggleEnabledStroke = Color3.fromRGB(0, 160, 160),
-			ToggleDisabledStroke = Color3.fromRGB(85, 105, 105),
-			ToggleEnabledOuterStroke = Color3.fromRGB(50, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(45, 65, 65),
-
-			DropdownSelected = Color3.fromRGB(30, 60, 60),
-			DropdownUnselected = Color3.fromRGB(25, 40, 40),
-
-			InputBackground = Color3.fromRGB(30, 50, 50),
-			InputStroke = Color3.fromRGB(50, 70, 70),
-			PlaceholderColor = Color3.fromRGB(140, 160, 160)
-		},
-
-		AmberGlow = {
-			TextColor = Color3.fromRGB(255, 245, 230),
-
-			Background = Color3.fromRGB(45, 30, 20),
-			Topbar = Color3.fromRGB(55, 40, 25),
-			Shadow = Color3.fromRGB(35, 25, 15),
-
-			NotificationBackground = Color3.fromRGB(50, 35, 25),
-			NotificationActionsBackground = Color3.fromRGB(245, 230, 215),
-
-			TabBackground = Color3.fromRGB(75, 50, 35),
-			TabStroke = Color3.fromRGB(90, 60, 45),
-			TabBackgroundSelected = Color3.fromRGB(230, 180, 100),
-			TabTextColor = Color3.fromRGB(250, 220, 200),
-			SelectedTabTextColor = Color3.fromRGB(50, 30, 10),
-
-			ElementBackground = Color3.fromRGB(60, 45, 35),
-			ElementBackgroundHover = Color3.fromRGB(70, 50, 40),
-			SecondaryElementBackground = Color3.fromRGB(55, 40, 30),
-			ElementStroke = Color3.fromRGB(85, 60, 45),
-			SecondaryElementStroke = Color3.fromRGB(75, 50, 35),
-
-			SliderBackground = Color3.fromRGB(220, 130, 60),
-			SliderProgress = Color3.fromRGB(250, 150, 75),
-			SliderStroke = Color3.fromRGB(255, 170, 85),
-
-			ToggleBackground = Color3.fromRGB(55, 40, 30),
-			ToggleEnabled = Color3.fromRGB(240, 130, 30),
-			ToggleDisabled = Color3.fromRGB(90, 70, 60),
-			ToggleEnabledStroke = Color3.fromRGB(255, 160, 50),
-			ToggleDisabledStroke = Color3.fromRGB(110, 85, 75),
-			ToggleEnabledOuterStroke = Color3.fromRGB(200, 100, 50),
-			ToggleDisabledOuterStroke = Color3.fromRGB(75, 60, 55),
-
-			DropdownSelected = Color3.fromRGB(70, 50, 40),
-			DropdownUnselected = Color3.fromRGB(55, 40, 30),
-
-			InputBackground = Color3.fromRGB(60, 45, 35),
-			InputStroke = Color3.fromRGB(90, 65, 50),
-			PlaceholderColor = Color3.fromRGB(190, 150, 130)
-		},
-
-		Light = {
-			TextColor = Color3.fromRGB(40, 40, 40),
-
-			Background = Color3.fromRGB(245, 245, 245),
-			Topbar = Color3.fromRGB(230, 230, 230),
-			Shadow = Color3.fromRGB(200, 200, 200),
-
-			NotificationBackground = Color3.fromRGB(250, 250, 250),
-			NotificationActionsBackground = Color3.fromRGB(240, 240, 240),
-
-			TabBackground = Color3.fromRGB(235, 235, 235),
-			TabStroke = Color3.fromRGB(215, 215, 215),
-			TabBackgroundSelected = Color3.fromRGB(255, 255, 255),
-			TabTextColor = Color3.fromRGB(80, 80, 80),
-			SelectedTabTextColor = Color3.fromRGB(0, 0, 0),
-
-			ElementBackground = Color3.fromRGB(240, 240, 240),
-			ElementBackgroundHover = Color3.fromRGB(225, 225, 225),
-			SecondaryElementBackground = Color3.fromRGB(235, 235, 235),
-			ElementStroke = Color3.fromRGB(210, 210, 210),
-			SecondaryElementStroke = Color3.fromRGB(210, 210, 210),
-
-			SliderBackground = Color3.fromRGB(150, 180, 220),
-			SliderProgress = Color3.fromRGB(100, 150, 200), 
-			SliderStroke = Color3.fromRGB(120, 170, 220),
-
-			ToggleBackground = Color3.fromRGB(220, 220, 220),
-			ToggleEnabled = Color3.fromRGB(0, 146, 214),
-			ToggleDisabled = Color3.fromRGB(150, 150, 150),
-			ToggleEnabledStroke = Color3.fromRGB(0, 170, 255),
-			ToggleDisabledStroke = Color3.fromRGB(170, 170, 170),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 100, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(180, 180, 180),
-
-			DropdownSelected = Color3.fromRGB(230, 230, 230),
-			DropdownUnselected = Color3.fromRGB(220, 220, 220),
-
-			InputBackground = Color3.fromRGB(240, 240, 240),
-			InputStroke = Color3.fromRGB(180, 180, 180),
-			PlaceholderColor = Color3.fromRGB(140, 140, 140)
-		},
-
-		Amethyst = {
-			TextColor = Color3.fromRGB(240, 240, 240),
-
-			Background = Color3.fromRGB(30, 20, 40),
-			Topbar = Color3.fromRGB(40, 25, 50),
-			Shadow = Color3.fromRGB(20, 15, 30),
-
-			NotificationBackground = Color3.fromRGB(35, 20, 40),
-			NotificationActionsBackground = Color3.fromRGB(240, 240, 250),
-
-			TabBackground = Color3.fromRGB(60, 40, 80),
-			TabStroke = Color3.fromRGB(70, 45, 90),
-			TabBackgroundSelected = Color3.fromRGB(180, 140, 200),
-			TabTextColor = Color3.fromRGB(230, 230, 240),
-			SelectedTabTextColor = Color3.fromRGB(50, 20, 50),
-
-			ElementBackground = Color3.fromRGB(45, 30, 60),
-			ElementBackgroundHover = Color3.fromRGB(50, 35, 70),
-			SecondaryElementBackground = Color3.fromRGB(40, 30, 55),
-			ElementStroke = Color3.fromRGB(70, 50, 85),
-			SecondaryElementStroke = Color3.fromRGB(65, 45, 80),
-
-			SliderBackground = Color3.fromRGB(100, 60, 150),
-			SliderProgress = Color3.fromRGB(130, 80, 180),
-			SliderStroke = Color3.fromRGB(150, 100, 200),
-
-			ToggleBackground = Color3.fromRGB(45, 30, 55),
-			ToggleEnabled = Color3.fromRGB(120, 60, 150),
-			ToggleDisabled = Color3.fromRGB(94, 47, 117),
-			ToggleEnabledStroke = Color3.fromRGB(140, 80, 170),
-			ToggleDisabledStroke = Color3.fromRGB(124, 71, 150),
-			ToggleEnabledOuterStroke = Color3.fromRGB(90, 40, 120),
-			ToggleDisabledOuterStroke = Color3.fromRGB(80, 50, 110),
-
-			DropdownSelected = Color3.fromRGB(50, 35, 70),
-			DropdownUnselected = Color3.fromRGB(35, 25, 50),
-
-			InputBackground = Color3.fromRGB(45, 30, 60),
-			InputStroke = Color3.fromRGB(80, 50, 110),
-			PlaceholderColor = Color3.fromRGB(178, 150, 200)
-		},
-
-		Green = {
-			TextColor = Color3.fromRGB(30, 60, 30),
-
-			Background = Color3.fromRGB(235, 245, 235),
-			Topbar = Color3.fromRGB(210, 230, 210),
-			Shadow = Color3.fromRGB(200, 220, 200),
-
-			NotificationBackground = Color3.fromRGB(240, 250, 240),
-			NotificationActionsBackground = Color3.fromRGB(220, 235, 220),
-
-			TabBackground = Color3.fromRGB(215, 235, 215),
-			TabStroke = Color3.fromRGB(190, 210, 190),
-			TabBackgroundSelected = Color3.fromRGB(245, 255, 245),
-			TabTextColor = Color3.fromRGB(50, 80, 50),
-			SelectedTabTextColor = Color3.fromRGB(20, 60, 20),
-
-			ElementBackground = Color3.fromRGB(225, 240, 225),
-			ElementBackgroundHover = Color3.fromRGB(210, 225, 210),
-			SecondaryElementBackground = Color3.fromRGB(235, 245, 235), 
-			ElementStroke = Color3.fromRGB(180, 200, 180),
-			SecondaryElementStroke = Color3.fromRGB(180, 200, 180),
-
-			SliderBackground = Color3.fromRGB(90, 160, 90),
-			SliderProgress = Color3.fromRGB(70, 130, 70),
-			SliderStroke = Color3.fromRGB(100, 180, 100),
-
-			ToggleBackground = Color3.fromRGB(215, 235, 215),
-			ToggleEnabled = Color3.fromRGB(60, 130, 60),
-			ToggleDisabled = Color3.fromRGB(150, 175, 150),
-			ToggleEnabledStroke = Color3.fromRGB(80, 150, 80),
-			ToggleDisabledStroke = Color3.fromRGB(130, 150, 130),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 160, 100),
-			ToggleDisabledOuterStroke = Color3.fromRGB(160, 180, 160),
-
-			DropdownSelected = Color3.fromRGB(225, 240, 225),
-			DropdownUnselected = Color3.fromRGB(210, 225, 210),
-
-			InputBackground = Color3.fromRGB(235, 245, 235),
-			InputStroke = Color3.fromRGB(180, 200, 180),
-			PlaceholderColor = Color3.fromRGB(120, 140, 120)
-		},
-
-		Bloom = {
-			TextColor = Color3.fromRGB(60, 40, 50),
-
-			Background = Color3.fromRGB(255, 240, 245),
-			Topbar = Color3.fromRGB(250, 220, 225),
-			Shadow = Color3.fromRGB(230, 190, 195),
-
-			NotificationBackground = Color3.fromRGB(255, 235, 240),
-			NotificationActionsBackground = Color3.fromRGB(245, 215, 225),
-
-			TabBackground = Color3.fromRGB(240, 210, 220),
-			TabStroke = Color3.fromRGB(230, 200, 210),
-			TabBackgroundSelected = Color3.fromRGB(255, 225, 235),
-			TabTextColor = Color3.fromRGB(80, 40, 60),
-			SelectedTabTextColor = Color3.fromRGB(50, 30, 50),
-
-			ElementBackground = Color3.fromRGB(255, 235, 240),
-			ElementBackgroundHover = Color3.fromRGB(245, 220, 230),
-			SecondaryElementBackground = Color3.fromRGB(255, 235, 240), 
-			ElementStroke = Color3.fromRGB(230, 200, 210),
-			SecondaryElementStroke = Color3.fromRGB(230, 200, 210),
-
-			SliderBackground = Color3.fromRGB(240, 130, 160),
-			SliderProgress = Color3.fromRGB(250, 160, 180),
-			SliderStroke = Color3.fromRGB(255, 180, 200),
-
-			ToggleBackground = Color3.fromRGB(240, 210, 220),
-			ToggleEnabled = Color3.fromRGB(255, 140, 170),
-			ToggleDisabled = Color3.fromRGB(200, 180, 185),
-			ToggleEnabledStroke = Color3.fromRGB(250, 160, 190),
-			ToggleDisabledStroke = Color3.fromRGB(210, 180, 190),
-			ToggleEnabledOuterStroke = Color3.fromRGB(220, 160, 180),
-			ToggleDisabledOuterStroke = Color3.fromRGB(190, 170, 180),
-
-			DropdownSelected = Color3.fromRGB(250, 220, 225),
-			DropdownUnselected = Color3.fromRGB(240, 210, 220),
-
-			InputBackground = Color3.fromRGB(255, 235, 240),
-			InputStroke = Color3.fromRGB(220, 190, 200),
-			PlaceholderColor = Color3.fromRGB(170, 130, 140)
-		},
-
-		DarkBlue = {
-			TextColor = Color3.fromRGB(230, 230, 230),
-
-			Background = Color3.fromRGB(20, 25, 30),
-			Topbar = Color3.fromRGB(30, 35, 40),
-			Shadow = Color3.fromRGB(15, 20, 25),
-
-			NotificationBackground = Color3.fromRGB(25, 30, 35),
-			NotificationActionsBackground = Color3.fromRGB(45, 50, 55),
-
-			TabBackground = Color3.fromRGB(35, 40, 45),
-			TabStroke = Color3.fromRGB(45, 50, 60),
-			TabBackgroundSelected = Color3.fromRGB(40, 70, 100),
-			TabTextColor = Color3.fromRGB(200, 200, 200),
-			SelectedTabTextColor = Color3.fromRGB(255, 255, 255),
-
-			ElementBackground = Color3.fromRGB(30, 35, 40),
-			ElementBackgroundHover = Color3.fromRGB(40, 45, 50),
-			SecondaryElementBackground = Color3.fromRGB(35, 40, 45), 
-			ElementStroke = Color3.fromRGB(45, 50, 60),
-			SecondaryElementStroke = Color3.fromRGB(40, 45, 55),
-
-			SliderBackground = Color3.fromRGB(0, 90, 180),
-			SliderProgress = Color3.fromRGB(0, 120, 210),
-			SliderStroke = Color3.fromRGB(0, 150, 240),
-
-			ToggleBackground = Color3.fromRGB(35, 40, 45),
-			ToggleEnabled = Color3.fromRGB(0, 120, 210),
-			ToggleDisabled = Color3.fromRGB(70, 70, 80),
-			ToggleEnabledStroke = Color3.fromRGB(0, 150, 240),
-			ToggleDisabledStroke = Color3.fromRGB(75, 75, 85),
-			ToggleEnabledOuterStroke = Color3.fromRGB(20, 100, 180), 
-			ToggleDisabledOuterStroke = Color3.fromRGB(55, 55, 65),
-
-			DropdownSelected = Color3.fromRGB(30, 70, 90),
-			DropdownUnselected = Color3.fromRGB(25, 30, 35),
-
-			InputBackground = Color3.fromRGB(25, 30, 35),
-			InputStroke = Color3.fromRGB(45, 50, 60), 
-			PlaceholderColor = Color3.fromRGB(150, 150, 160)
-		},
-
-		Serenity = {
-			TextColor = Color3.fromRGB(50, 55, 60),
-			Background = Color3.fromRGB(240, 245, 250),
-			Topbar = Color3.fromRGB(215, 225, 235),
-			Shadow = Color3.fromRGB(200, 210, 220),
-
-			NotificationBackground = Color3.fromRGB(210, 220, 230),
-			NotificationActionsBackground = Color3.fromRGB(225, 230, 240),
-
-			TabBackground = Color3.fromRGB(200, 210, 220),
-			TabStroke = Color3.fromRGB(180, 190, 200),
-			TabBackgroundSelected = Color3.fromRGB(175, 185, 200),
-			TabTextColor = Color3.fromRGB(50, 55, 60),
-			SelectedTabTextColor = Color3.fromRGB(30, 35, 40),
-
-			ElementBackground = Color3.fromRGB(210, 220, 230),
-			ElementBackgroundHover = Color3.fromRGB(220, 230, 240),
-			SecondaryElementBackground = Color3.fromRGB(200, 210, 220),
-			ElementStroke = Color3.fromRGB(190, 200, 210),
-			SecondaryElementStroke = Color3.fromRGB(180, 190, 200),
-
-			SliderBackground = Color3.fromRGB(200, 220, 235),  -- Lighter shade
-			SliderProgress = Color3.fromRGB(70, 130, 180),
-			SliderStroke = Color3.fromRGB(150, 180, 220),
-
-			ToggleBackground = Color3.fromRGB(210, 220, 230),
-			ToggleEnabled = Color3.fromRGB(70, 160, 210),
-			ToggleDisabled = Color3.fromRGB(180, 180, 180),
-			ToggleEnabledStroke = Color3.fromRGB(60, 150, 200),
-			ToggleDisabledStroke = Color3.fromRGB(140, 140, 140),
-			ToggleEnabledOuterStroke = Color3.fromRGB(100, 120, 140),
-			ToggleDisabledOuterStroke = Color3.fromRGB(120, 120, 130),
-
-			DropdownSelected = Color3.fromRGB(220, 230, 240),
-			DropdownUnselected = Color3.fromRGB(200, 210, 220),
-
-			InputBackground = Color3.fromRGB(220, 230, 240),
-			InputStroke = Color3.fromRGB(180, 190, 200),
-			PlaceholderColor = Color3.fromRGB(150, 150, 150)
-		},
-	}
+	Theme = {}
 }
 
 -- Compatibility wrapper for loadstring (some executors use different names)
@@ -634,7 +257,89 @@ local MODULE_ROOT_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Ra
 _G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
 
 local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
-local ApiLoader = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. "src/api/loader.lua")
+local function fetchExecuteSafely(path)
+	local ok, result = pcall(ApiClient.fetchAndExecute, MODULE_ROOT_URL .. path)
+	if ok then
+		return true, result
+	end
+	return false, tostring(result)
+end
+
+local okCompatibility, compatibilityResult = fetchExecuteSafely("src/services/compatibility.lua")
+if okCompatibility and type(compatibilityResult) == "table" then
+	Compatibility = compatibilityResult
+else
+	warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT] Failed to load compatibility service; using fallback compatibility.")
+	if not okCompatibility then
+		warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT_REASON] " .. tostring(compatibilityResult))
+	end
+	Compatibility = {
+		getService = function(name)
+			return game:GetService(name)
+		end,
+		getCompileString = function()
+			return compileString
+		end,
+		protectAndParent = function(gui, preferredContainer, opts)
+			local inStudio = opts and opts.useStudio
+			if inStudio then
+				return nil
+			end
+			local okCore, core = pcall(function()
+				return game:GetService("CoreGui")
+			end)
+			if okCore and core then
+				gui.Parent = core
+				return core
+			end
+			return nil
+		end,
+		dedupeGuiByName = function()
+			return
+		end
+	}
+end
+if _G then
+	_G.__RayfieldCompatibility = Compatibility
+end
+if type(Compatibility.getService) == "function" then
+	getService = Compatibility.getService
+end
+if type(Compatibility.getCompileString) == "function" then
+	compileString = Compatibility.getCompileString()
+end
+
+local okWidgetBootstrap, widgetBootstrapResult = fetchExecuteSafely("src/ui/elements/widgets/bootstrap.lua")
+local WidgetBootstrap = okWidgetBootstrap and widgetBootstrapResult or nil
+if type(WidgetBootstrap) ~= "table" or type(WidgetBootstrap.bootstrapWidget) ~= "function" then
+	warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS] Failed to load widget bootstrap; using fallback widget loader.")
+	if not okWidgetBootstrap then
+		warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS_REASON] " .. tostring(widgetBootstrapResult))
+	end
+	WidgetBootstrap = {
+		bootstrapWidget = function(widgetName, targetPath, exportAdapter, opts)
+			local moduleValue = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. tostring(targetPath))
+			if opts and opts.expectedType and type(moduleValue) ~= opts.expectedType then
+				error("Rayfield Mod: [E_WIDGET_BOOTSTRAP] " .. tostring(widgetName) .. " expected " .. tostring(opts.expectedType) .. ", got " .. type(moduleValue))
+			end
+			if type(exportAdapter) == "function" then
+				return exportAdapter(moduleValue)
+			end
+			return moduleValue
+		end
+	}
+end
+if _G then
+	_G.__RayfieldWidgetBootstrap = WidgetBootstrap
+end
+local okApiLoader, apiLoaderResult = fetchExecuteSafely("src/api/loader.lua")
+if not okApiLoader then
+	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Failed to load API loader: " .. tostring(apiLoaderResult))
+end
+local ApiLoader = apiLoaderResult
+if type(ApiLoader) ~= "table" or type(ApiLoader.load) ~= "function" then
+	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Invalid API loader contract")
+end
 
 local function getScriptRef()
 	local scriptRef = nil
@@ -645,26 +350,231 @@ local function getScriptRef()
 end
 
 local function loadModule(moduleName)
-	return ApiLoader.load(moduleName, {
+	local opts = {
 		tryStudioRequire = useStudio,
-		scriptRef = getScriptRef()
-	})
+		scriptRef = getScriptRef(),
+		allowLegacyFallback = true
+	}
+	if type(ApiLoader.tryLoad) == "function" then
+		return ApiLoader.tryLoad(moduleName, opts)
+	end
+	local ok, result = pcall(ApiLoader.load, moduleName, opts)
+	if ok then
+		return true, result
+	end
+	return false, tostring(result)
 end
 
-local ThemeModule = loadModule("theme")
-local SettingsModuleLib = loadModule("settings")
-local DragModuleLib = loadModule("drag")
-local UIStateModuleLib = loadModule("uiState")
-local ElementsModuleLib = loadModule("elements")
-local ConfigModuleLib = loadModule("config")
-local UtilitiesModuleLib = loadModule("utilities")
-local TabSplitModuleLib = loadModule("tabSplit")
-local AnimationEngineLib = loadModule("animationEngine")
-local AnimationPublicLib = loadModule("animationPublic")
-local AnimationSequenceLib = loadModule("animationSequence")
-local AnimationUILib = loadModule("animationUI")
-local AnimationTextLib = loadModule("animationText")
-local AnimationCleanupLib = loadModule("animationCleanup")
+local function formatLoaderError(code, message)
+	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
+end
+
+local function requireModule(moduleName, hint)
+	local ok, result = loadModule(moduleName)
+	if ok then
+		return result
+	end
+	local reason = tostring(result)
+	if hint then
+		reason = tostring(hint) .. "\n" .. reason
+	end
+	error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
+end
+
+local loaderDiagnostics = {
+	optionalFailed = {},
+	notified = false,
+	performanceProfile = nil
+}
+if _G then
+	_G.__RAYFIELD_LOADER_DIAGNOSTICS = loaderDiagnostics
+end
+
+local function optionalModule(moduleName, fallbackModule, hint)
+	local ok, result = loadModule(moduleName)
+	if ok then
+		return result
+	end
+	table.insert(loaderDiagnostics.optionalFailed, {
+		module = moduleName,
+		error = tostring(result)
+	})
+	local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
+	if hint then
+		message = message .. " " .. tostring(hint)
+	end
+	warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
+	return fallbackModule
+end
+
+local function maybeNotifyLoaderFallback()
+	if loaderDiagnostics.notified or #loaderDiagnostics.optionalFailed == 0 then
+		return
+	end
+	loaderDiagnostics.notified = true
+	local moduleNames = {}
+	for _, item in ipairs(loaderDiagnostics.optionalFailed) do
+		table.insert(moduleNames, tostring(item.module))
+	end
+	local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
+	if type(RayfieldLibrary.Notify) == "function" then
+		pcall(function()
+			RayfieldLibrary:Notify({
+				Title = "Rayfield Loader",
+				Content = message,
+				Duration = 8
+			})
+		end)
+	else
+		warn(formatLoaderError("W_OPTIONAL_MODULE", message))
+	end
+end
+
+local FallbackElementSyncModule = {
+	init = function()
+		return nil
+	end
+}
+
+local FallbackOwnershipTrackerModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			createScope = function(scopeId)
+				return tostring(scopeId or "")
+			end,
+			makeScopeId = function(kind, id)
+				return tostring(kind or "scope") .. ":" .. tostring(id or "")
+			end,
+			claimInstance = noopReturnFalse,
+			trackConnection = noopReturnFalse,
+			trackTask = noopReturnFalse,
+			trackCleanup = noopReturnFalse,
+			cleanupScope = noopReturnFalse,
+			cleanupByInstance = noopReturnFalse,
+			cleanupSession = noopReturnFalse,
+			getStats = function()
+				return {
+					scopes = 0,
+					instances = 0,
+					connections = 0,
+					tasks = 0,
+					cleanups = 0
+				}
+			end,
+			getSignature = noopReturnNil
+		}
+	end
+}
+
+local FallbackDragModule = {
+	init = function()
+		local function noop() end
+		return {
+			makeElementDetachable = function()
+				return nil
+			end,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function()
+				return {}
+			end,
+			applyLayoutSnapshot = function()
+				return false
+			end
+		}
+	end
+}
+
+local FallbackTabSplitModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerTab = noop,
+			unregisterTab = noop,
+			splitTab = function() return false end,
+			dockTab = function() return false end,
+			layoutPanels = noop,
+			syncHidden = noop,
+			syncMinimized = noop,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function() return {} end,
+			applyLayoutSnapshot = function() return false end,
+			destroy = noop
+		}
+	end
+}
+
+local FallbackLayoutPersistenceModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerProvider = noop,
+			unregisterProvider = noop,
+			getLayoutSnapshot = function() return nil end,
+			applyLayoutSnapshot = function() return false end,
+			markDirty = noop,
+			flush = noop,
+			isApplying = function() return false end,
+			isDirty = function() return false end
+		}
+	end
+}
+
+local FallbackViewportVirtualizationModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			registerHost = noopReturnFalse,
+			unregisterHost = noopReturnFalse,
+			refreshHost = noopReturnFalse,
+			setHostSuppressed = noopReturnFalse,
+			registerElement = noopReturnNil,
+			unregisterElement = noopReturnFalse,
+			moveElementToHost = noopReturnFalse,
+			setElementBusy = noopReturnFalse,
+			notifyElementHostChanged = noopReturnFalse,
+			getStats = function()
+				return {
+					hosts = 0,
+					elements = 0,
+					sleeping = 0
+				}
+			end,
+			destroy = function() end
+		}
+	end
+}
+
+local ThemeModule = requireModule("theme")
+-- Load utilities early so shared helpers are registered globally before other services initialize.
+local UtilitiesModuleLib = requireModule("utilities")
+local SettingsModuleLib = requireModule("settings")
+local OwnershipTrackerModuleLib = optionalModule("ownershipTracker", FallbackOwnershipTrackerModule, "Scoped ownership cleanup will run in compatibility mode.")
+local ElementSyncModuleLib = optionalModule("elementSync", FallbackElementSyncModule, "Element state sync will run in compatibility mode.")
+local KeybindSequenceLib = requireModule("keybindSequence")
+local DragModuleLib = optionalModule("drag", FallbackDragModule, "Detach/reorder advanced drag features are disabled for this session.")
+local UIStateModuleLib = requireModule("uiState")
+local ElementsModuleLib = requireModule("elements")
+local ConfigModuleLib = requireModule("config")
+local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
+local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
+local TabSplitModuleLib = optionalModule("tabSplit", FallbackTabSplitModule, "Tab split features are disabled for this session.")
+local AnimationEngineLib = requireModule("animationEngine")
+local AnimationPublicLib = requireModule("animationPublic")
+local AnimationSequenceLib = requireModule("animationSequence")
+local AnimationUILib = requireModule("animationUI")
+local AnimationTextLib = requireModule("animationText")
+local AnimationCleanupLib = requireModule("animationCleanup")
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -758,26 +668,20 @@ until buildAttempts >= 2
 
 Rayfield.Enabled = false
 
-if gethui then
-	Rayfield.Parent = gethui()
-elseif syn and syn.protect_gui then 
-	syn.protect_gui(Rayfield)
-	Rayfield.Parent = CoreGui
-elseif not useStudio and CoreGui:FindFirstChild("RobloxGui") then
-	Rayfield.Parent = CoreGui:FindFirstChild("RobloxGui")
+local rayfieldContainer = nil
+if Compatibility and type(Compatibility.protectAndParent) == "function" then
+	rayfieldContainer = Compatibility.protectAndParent(Rayfield, nil, {
+		useStudio = useStudio
+	})
 elseif not useStudio then
 	Rayfield.Parent = CoreGui
+	rayfieldContainer = CoreGui
 end
 
-if gethui then
-	for _, Interface in ipairs(gethui():GetChildren()) do
-		if Interface.Name == Rayfield.Name and Interface ~= Rayfield then
-			Interface.Enabled = false
-			Interface.Name = "Rayfield-Old"
-		end
-	end
-elseif not useStudio then
-	for _, Interface in ipairs(CoreGui:GetChildren()) do
+if Compatibility and type(Compatibility.dedupeGuiByName) == "function" then
+	Compatibility.dedupeGuiByName(rayfieldContainer, Rayfield.Name, Rayfield, "-Old")
+elseif not useStudio and rayfieldContainer then
+	for _, Interface in ipairs(rayfieldContainer:GetChildren()) do
 		if Interface.Name == Rayfield.Name and Interface ~= Rayfield then
 			Interface.Enabled = false
 			Interface.Name = "Rayfield-Old"
@@ -788,6 +692,7 @@ end
 
 local minSize = Vector2.new(1024, 768)
 local useMobileSizing
+local useMobilePrompt = false
 
 if Rayfield.AbsoluteSize.X < minSize.X and Rayfield.AbsoluteSize.Y < minSize.Y then
 	useMobileSizing = true
@@ -843,7 +748,132 @@ local Hidden = false
 local Debounce = false
 local searchOpen = false
 local Notifications = Rayfield.Notifications
+local ElementsSystem = nil
+local ElementSyncSystem = nil
+local OwnershipSystem = nil
 local keybindConnections = {} -- For storing keybind connections to disconnect when Rayfield is destroyed
+local layoutConnections = {}
+local LayoutPersistenceSystem = nil
+local ViewportVirtualizationSystem = nil
+local layoutSavingEnabled = false
+local layoutDebounceMs = 300
+local detachPathEnabled = true
+local activePerformanceProfile = {
+	enabled = false,
+	requestedMode = "normal",
+	resolvedMode = "normal",
+	aggressive = false,
+	disableDetach = false,
+	disableTabSplit = false,
+	disableAnimations = false,
+	appliedFields = {}
+}
+local ExperienceState = {
+	uiPreset = "Comfort",
+	transitionProfile = "Smooth",
+	onboardingSuppressed = false,
+	favoritesTab = nil,
+	favoritesTabWindow = nil,
+	onboardingOverlay = nil,
+	onboardingRendered = false,
+	themeStudioState = {
+		baseTheme = "Default",
+		useCustom = false,
+		customThemePacked = {}
+	}
+}
+local experienceSuppressPromoPrompts = false
+local favoritesRegistryUnsubscribe = nil
+local uiToggleKeybindMatcher = KeybindSequenceLib.newMatcher({
+	maxSteps = 4,
+	stepTimeoutMs = 800
+})
+local cachedUiToggleKeybindRaw = nil
+local cachedUiToggleKeybindSpec = nil
+
+local function initializeOwnershipTracking()
+	local okInit, trackerOrErr = pcall(OwnershipTrackerModuleLib.init, {
+		owner = "rayfield-mod",
+		scopePrefix = "rayfield",
+		HttpService = HttpService,
+		getRootGui = function()
+			return Rayfield
+		end
+	})
+	if not okInit or type(trackerOrErr) ~= "table" then
+		warn("Rayfield Mod: [W_OWNERSHIP_INIT] Failed to initialize ownership tracker: " .. tostring(trackerOrErr))
+		return nil
+	end
+
+	local tracker = trackerOrErr
+	local runtimeScope = "runtime:root"
+	local hotkeyScope = "runtime:hotkeys"
+	local layoutScope = "runtime:layout"
+
+	if type(tracker.createScope) == "function" then
+		pcall(tracker.createScope, runtimeScope, {
+			kind = "runtime"
+		})
+		pcall(tracker.createScope, hotkeyScope, {
+			kind = "runtime_hotkeys"
+		})
+		pcall(tracker.createScope, layoutScope, {
+			kind = "runtime_layout"
+		})
+	end
+	if type(tracker.claimInstance) == "function" then
+		pcall(tracker.claimInstance, Rayfield, runtimeScope, { node = "RayfieldRoot" })
+		pcall(tracker.claimInstance, Main, runtimeScope, { node = "Main" })
+		pcall(tracker.claimInstance, Topbar, runtimeScope, { node = "Topbar" })
+		pcall(tracker.claimInstance, Elements, runtimeScope, { node = "Elements" })
+		pcall(tracker.claimInstance, TabList, runtimeScope, { node = "TabList" })
+		pcall(tracker.claimInstance, Notifications, runtimeScope, { node = "Notifications" })
+	end
+
+	if _G then
+		_G.__RayfieldOwnership = tracker
+	end
+	return tracker
+end
+
+OwnershipSystem = initializeOwnershipTracking()
+
+local function resolveUiToggleKeybindSpec(rawBinding)
+	if rawBinding == cachedUiToggleKeybindRaw and cachedUiToggleKeybindSpec then
+		return cachedUiToggleKeybindSpec
+	end
+
+	local canonical, steps = KeybindSequenceLib.normalize(rawBinding, {
+		maxSteps = 4
+	})
+	if not canonical then
+		cachedUiToggleKeybindRaw = nil
+		cachedUiToggleKeybindSpec = nil
+		return nil
+	end
+
+	cachedUiToggleKeybindRaw = rawBinding
+	cachedUiToggleKeybindSpec = {
+		canonical = canonical,
+		steps = steps
+	}
+	return cachedUiToggleKeybindSpec
+end
+
+local function cleanupLayoutConnections()
+	for _, connection in ipairs(layoutConnections) do
+		if connection then
+			connection:Disconnect()
+		end
+	end
+	table.clear(layoutConnections)
+end
+
+local function markLayoutDirty(scope, reason)
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.markDirty) == "function" then
+		LayoutPersistenceSystem.markDirty((scope or "layout") .. ":" .. (reason or "update"))
+	end
+end
 
 AnimationEngine:SetUiSuppressionProvider(function()
 	return Hidden == true or Minimised == true or rayfieldDestroyed == true
@@ -925,6 +955,7 @@ local SettingsSystem = SettingsModuleLib.init({
 -- Initialize Configuration Module
 local ConfigSystem = ConfigModuleLib.init({
 	HttpService = HttpService,
+	TweenService = TweenService,
 	RayfieldLibrary = RayfieldLibrary,
 	callSafely = callSafely,
 	ConfigurationFolder = ConfigurationFolder,
@@ -932,6 +963,22 @@ local ConfigSystem = ConfigModuleLib.init({
 	getCFileName = function() return CFileName end,
 	getCEnabled = function() return CEnabled end,
 	getGlobalLoaded = function() return globalLoaded end,
+	getLayoutSnapshot = function()
+		if LayoutPersistenceSystem and type(LayoutPersistenceSystem.getLayoutSnapshot) == "function" then
+			return LayoutPersistenceSystem.getLayoutSnapshot()
+		end
+		return nil
+	end,
+	applyLayoutSnapshot = function(layoutData)
+		if LayoutPersistenceSystem and type(LayoutPersistenceSystem.applyLayoutSnapshot) == "function" then
+			return LayoutPersistenceSystem.applyLayoutSnapshot(layoutData)
+		end
+		return false
+	end,
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	layoutKey = "__rayfield_layout",
 	useStudio = useStudio,
 	debugX = debugX
 })
@@ -972,6 +1019,13 @@ local function updateSetting(category, setting, value)
 	return SettingsSystem.updateSetting(category, setting, value)
 end
 
+local function setSettingValue(category, setting, value, persist)
+	if SettingsSystem and type(SettingsSystem.setSettingValue) == "function" then
+		return SettingsSystem.setSettingValue(category, setting, value, persist)
+	end
+	return false, "Settings system unavailable."
+end
+
 local function loadSettings()
 	return SettingsSystem.loadSettings()
 end
@@ -1010,11 +1064,33 @@ local DragSystem = DragModuleLib.init({
 	getIcon = getIcon,
 	getAssetUri = getAssetUri,
 	getSelectedTheme = function() return SelectedTheme end,
-	rayfieldDestroyed = function() return rayfieldDestroyed end
+	getSetting = getSetting,
+	useMobileSizing = useMobileSizing,
+	getDetachEnabled = function()
+		return detachPathEnabled
+	end,
+	rayfieldDestroyed = function() return rayfieldDestroyed end,
+	onLayoutDirty = function(scope, reason)
+		markLayoutDirty(scope, reason)
+	end,
+	getViewportVirtualization = function()
+		return ViewportVirtualizationSystem
+	end,
+	ElementSync = {
+		resync = function(token, reason)
+			if ElementSyncSystem and type(ElementSyncSystem.resync) == "function" then
+				return ElementSyncSystem.resync(token, reason)
+			end
+			return false
+		end
+	}
 })
 
 -- Detach helper wrapper
 local function makeElementDetachable(guiObject, elementName, elementType)
+	if detachPathEnabled == false then
+		return nil
+	end
 	return DragSystem.makeElementDetachable(guiObject, elementName, elementType)
 end
 
@@ -1064,6 +1140,7 @@ local function Hide(notify)
 		TabSplitSystem.syncHidden(Hidden)
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "hide")
 end
 
 local function Unhide()
@@ -1076,6 +1153,7 @@ local function Unhide()
 		TabSplitSystem.syncHidden(Hidden)
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "unhide")
 end
 
 local function Maximise()
@@ -1086,6 +1164,7 @@ local function Maximise()
 	if TabSplitSystem then
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "maximise")
 end
 
 local function Minimise()
@@ -1096,6 +1175,7 @@ local function Minimise()
 	if TabSplitSystem then
 		TabSplitSystem.syncMinimized(Minimised)
 	end
+	markLayoutDirty("main", "minimise")
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
@@ -1132,6 +1212,1231 @@ local function SaveConfiguration()
 	return ConfigSystem.SaveConfiguration()
 end
 
+local SHARE_CODE_PREFIX = "RFSC1:"
+local SHARE_PAYLOAD_VERSION = 1
+local SHARE_PAYLOAD_TYPE = "rayfield_share"
+local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local activeShareCode = ""
+local activeSharePayload = nil
+
+local function trimString(value)
+	value = tostring(value or "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	return value
+end
+
+local function fallbackBase64Encode(input)
+	local source = tostring(input or "")
+	local bits = source:gsub(".", function(character)
+		local byteValue = string.byte(character)
+		local chunk = ""
+		for index = 8, 1, -1 do
+			if byteValue % (2 ^ index) - byteValue % (2 ^ (index - 1)) > 0 then
+				chunk = chunk .. "1"
+			else
+				chunk = chunk .. "0"
+			end
+		end
+		return chunk
+	end)
+
+	local paddedBits = bits .. "0000"
+	local encoded = paddedBits:gsub("%d%d%d?%d?%d?%d?", function(chunk)
+		if #chunk < 6 then
+			return ""
+		end
+		local value = 0
+		for index = 1, 6 do
+			if chunk:sub(index, index) == "1" then
+				value += 2 ^ (6 - index)
+			end
+		end
+		return BASE64_ALPHABET:sub(value + 1, value + 1)
+	end)
+
+	return encoded .. ({ "", "==", "=" })[#source % 3 + 1]
+end
+
+local function fallbackBase64Decode(input)
+	local source = tostring(input or "")
+	source = source:gsub("%s+", "")
+	source = source:gsub("[^" .. BASE64_ALPHABET .. "=]", "")
+
+	local bits = source:gsub(".", function(character)
+		if character == "=" then
+			return ""
+		end
+		local index = BASE64_ALPHABET:find(character, 1, true)
+		if not index then
+			return ""
+		end
+		local value = index - 1
+		local chunk = ""
+		for bit = 6, 1, -1 do
+			if value % (2 ^ bit) - value % (2 ^ (bit - 1)) > 0 then
+				chunk = chunk .. "1"
+			else
+				chunk = chunk .. "0"
+			end
+		end
+		return chunk
+	end)
+
+	return bits:gsub("%d%d%d?%d?%d?%d?%d?%d?", function(chunk)
+		if #chunk ~= 8 then
+			return ""
+		end
+		local value = 0
+		for index = 1, 8 do
+			if chunk:sub(index, index) == "1" then
+				value += 2 ^ (8 - index)
+			end
+		end
+		return string.char(value)
+	end)
+end
+
+local function encodeBase64(input)
+	if HttpService and type(HttpService.Base64Encode) == "function" then
+		local okEncoded, encoded = pcall(HttpService.Base64Encode, HttpService, input)
+		if okEncoded and type(encoded) == "string" then
+			return true, encoded
+		end
+	end
+
+	local okFallback, encoded = pcall(fallbackBase64Encode, input)
+	if not okFallback then
+		return false, tostring(encoded)
+	end
+	return true, encoded
+end
+
+local function decodeBase64(input)
+	if HttpService and type(HttpService.Base64Decode) == "function" then
+		local okDecoded, decoded = pcall(HttpService.Base64Decode, HttpService, input)
+		if okDecoded and type(decoded) == "string" then
+			return true, decoded
+		end
+	end
+
+	local okFallback, decoded = pcall(fallbackBase64Decode, input)
+	if not okFallback then
+		return false, tostring(decoded)
+	end
+	return true, decoded
+end
+
+local function buildGeneratedAtStamp()
+	local okDate, value = pcall(function()
+		return os.date("!%Y-%m-%dT%H:%M:%SZ")
+	end)
+	if okDate and type(value) == "string" then
+		return value
+	end
+	local okTick, tickValue = pcall(function()
+		return tostring(math.floor((tick and tick() or 0) * 1000))
+	end)
+	if okTick and type(tickValue) == "string" then
+		return tickValue
+	end
+	return "unknown"
+end
+
+local function validateSharePayload(payload)
+	if type(payload) ~= "table" then
+		return false, "Share code payload is invalid."
+	end
+	if payload.type ~= SHARE_PAYLOAD_TYPE then
+		return false, "Share code payload type is invalid."
+	end
+	if tonumber(payload.version) ~= SHARE_PAYLOAD_VERSION then
+		return false, "Share code version is unsupported."
+	end
+	if type(payload.configuration) ~= "table" then
+		return false, "Share code is missing configuration data."
+	end
+	if type(payload.internalSettings) ~= "table" then
+		return false, "Share code is missing internal settings data."
+	end
+	return true
+end
+
+local function setActiveSharePayload(code, payload)
+	activeShareCode = tostring(code or "")
+	activeSharePayload = payload
+	if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+		pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+	end
+end
+
+local function encodeSharePayload(payload)
+	local okJson, jsonOrErr = pcall(function()
+		return HttpService:JSONEncode(payload)
+	end)
+	if not okJson or type(jsonOrErr) ~= "string" then
+		return nil, "Failed to encode share payload."
+	end
+
+	local okBase64, encodedOrErr = encodeBase64(jsonOrErr)
+	if not okBase64 then
+		return nil, "Failed to encode share payload as Base64."
+	end
+
+	return SHARE_CODE_PREFIX .. encodedOrErr
+end
+
+local function decodeShareCode(code)
+	local normalized = trimString(code)
+	if normalized == "" then
+		return false, "Share code cannot be empty."
+	end
+	if normalized:sub(1, #SHARE_CODE_PREFIX) ~= SHARE_CODE_PREFIX then
+		return false, "Share code prefix is invalid."
+	end
+
+	local encodedBody = normalized:sub(#SHARE_CODE_PREFIX + 1):gsub("%s+", "")
+	if encodedBody == "" then
+		return false, "Share code payload is empty."
+	end
+
+	local okDecode, decodedOrErr = decodeBase64(encodedBody)
+	if not okDecode or type(decodedOrErr) ~= "string" then
+		return false, "Share code Base64 payload is invalid."
+	end
+
+	local okJson, payloadOrErr = pcall(function()
+		return HttpService:JSONDecode(decodedOrErr)
+	end)
+	if not okJson or type(payloadOrErr) ~= "table" then
+		return false, "Share code JSON payload is invalid."
+	end
+
+	return true, SHARE_CODE_PREFIX .. encodedBody, payloadOrErr
+end
+
+local function notifyShareCodeStatus(success, message)
+	if not UIStateSystem or type(UIStateSystem.Notify) ~= "function" then
+		return
+	end
+	local content = tostring(message or "")
+	if content == "" then
+		if success then
+			content = "Share code operation completed."
+		else
+			content = "Share code operation failed."
+		end
+	end
+	pcall(UIStateSystem.Notify, {
+		Title = "Rayfield Share Code",
+		Content = content,
+		Image = success and 4483362458 or 4384402990
+	})
+end
+
+function RayfieldLibrary:ImportCode(code)
+	local okDecode, canonicalOrMessage, payload = decodeShareCode(code)
+	if not okDecode then
+		return false, tostring(canonicalOrMessage)
+	end
+
+	local validPayload, payloadMessage = validateSharePayload(payload)
+	if not validPayload then
+		return false, tostring(payloadMessage)
+	end
+
+	setActiveSharePayload(canonicalOrMessage, payload)
+	return true, "Share code imported."
+end
+
+function RayfieldLibrary:ImportSettings()
+	if type(activeSharePayload) ~= "table" then
+		return false, "No active share code. Import code first."
+	end
+
+	local validPayload, payloadMessage = validateSharePayload(activeSharePayload)
+	if not validPayload then
+		return false, tostring(payloadMessage)
+	end
+
+	if not ConfigSystem or type(ConfigSystem.ImportConfigurationData) ~= "function" then
+		return false, "Configuration import is unavailable."
+	end
+	if not SettingsSystem or type(SettingsSystem.ImportInternalSettingsData) ~= "function" then
+		return false, "Internal settings import is unavailable."
+	end
+
+	local okConfig, configSuccess, configDetail = pcall(ConfigSystem.ImportConfigurationData, activeSharePayload.configuration)
+	if not okConfig then
+		return false, "Failed to apply configuration data: " .. tostring(configSuccess)
+	end
+	if configSuccess ~= true then
+		return false, tostring(configDetail or "Failed to apply configuration data.")
+	end
+
+	local okInternal, internalSuccess, internalDetail = pcall(SettingsSystem.ImportInternalSettingsData, activeSharePayload.internalSettings)
+	if not okInternal then
+		return false, "Failed to apply internal settings: " .. tostring(internalSuccess)
+	end
+	if internalSuccess ~= true then
+		return false, tostring(internalDetail or "Failed to apply internal settings.")
+	end
+
+	local persistenceWarnings = {}
+	if ConfigSystem and type(ConfigSystem.SaveConfigurationForced) == "function" then
+		local okPersistConfig, persistedConfig = pcall(ConfigSystem.SaveConfigurationForced)
+		if not okPersistConfig or persistedConfig == false then
+			table.insert(persistenceWarnings, "configuration")
+		end
+	end
+
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		local okPersistSettings, persistedSettings = pcall(SettingsSystem.saveSettings)
+		if not okPersistSettings or persistedSettings == false then
+			table.insert(persistenceWarnings, "internal settings")
+		end
+	end
+
+	if #persistenceWarnings > 0 then
+		return true, "Share settings applied, but persistence failed for: " .. table.concat(persistenceWarnings, ", ") .. "."
+	end
+
+	local changedConfiguration = configDetail == true
+	local appliedInternalCount = tonumber(internalDetail) or 0
+	if changedConfiguration or appliedInternalCount > 0 then
+		return true, "Share settings applied."
+	end
+
+	return true, "Share settings were already up to date."
+end
+
+function RayfieldLibrary:ExportSettings()
+	if not ConfigSystem or type(ConfigSystem.ExportConfigurationData) ~= "function" then
+		return nil, "Configuration export is unavailable."
+	end
+	if not SettingsSystem or type(SettingsSystem.ExportInternalSettingsData) ~= "function" then
+		return nil, "Internal settings export is unavailable."
+	end
+
+	local okConfig, configurationData = pcall(ConfigSystem.ExportConfigurationData)
+	if not okConfig or type(configurationData) ~= "table" then
+		return nil, "Failed to collect configuration data."
+	end
+
+	local okSettings, internalSettingsData = pcall(SettingsSystem.ExportInternalSettingsData)
+	if not okSettings or type(internalSettingsData) ~= "table" then
+		return nil, "Failed to collect internal settings data."
+	end
+
+	local payload = {
+		type = SHARE_PAYLOAD_TYPE,
+		version = SHARE_PAYLOAD_VERSION,
+		configuration = configurationData,
+		internalSettings = internalSettingsData,
+		meta = {
+			generatedAt = buildGeneratedAtStamp(),
+			interfaceBuild = InterfaceBuild,
+			release = Release
+		}
+	}
+
+	local encodedCode, encodedErr = encodeSharePayload(payload)
+	if type(encodedCode) ~= "string" then
+		return nil, tostring(encodedErr or "Failed to export share code.")
+	end
+
+	setActiveSharePayload(encodedCode, payload)
+	return encodedCode, "ok"
+end
+
+function RayfieldLibrary:CopyShareCode(suppressNotify)
+	local shouldNotify = suppressNotify ~= true
+
+	if type(activeShareCode) ~= "string" or activeShareCode == "" then
+		local message = "No active share code. Export or import a code first."
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local clipboardWriter = nil
+	if type(setclipboard) == "function" then
+		clipboardWriter = setclipboard
+	elseif type(toclipboard) == "function" then
+		clipboardWriter = toclipboard
+	end
+
+	if type(clipboardWriter) ~= "function" then
+		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+		end
+		local message = "Clipboard is unavailable. Share code was placed in the Share Code input."
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local okCopy, copyErr = pcall(clipboardWriter, activeShareCode)
+	if not okCopy then
+		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
+		end
+		local message = "Failed to copy share code: " .. tostring(copyErr)
+		if shouldNotify then
+			notifyShareCodeStatus(false, message)
+		end
+		return false, message
+	end
+
+	local message = "Share code copied to clipboard."
+	if shouldNotify then
+		notifyShareCodeStatus(true, message)
+	end
+	return true, message
+end
+
+if SettingsSystem and type(SettingsSystem.setShareCodeHandlers) == "function" then
+	SettingsSystem.setShareCodeHandlers({
+		importCode = function(code)
+			local ok, message = RayfieldLibrary:ImportCode(code)
+			return ok, message
+		end,
+		importSettings = function()
+			local ok, message = RayfieldLibrary:ImportSettings()
+			return ok, message
+		end,
+		exportSettings = function()
+			local code, message = RayfieldLibrary:ExportSettings()
+			return code, message
+		end,
+		copyShareCode = function()
+			local ok, message = RayfieldLibrary:CopyShareCode(true)
+			return ok, message
+		end,
+		getActiveShareCode = function()
+			return activeShareCode
+		end,
+		notify = function(success, message)
+			notifyShareCodeStatus(success == true, message)
+		end
+	})
+end
+
+local UI_PRESET_NAMES = {
+	Compact = true,
+	Comfort = true,
+	Focus = true
+}
+local TRANSITION_PROFILE_NAMES = {
+	Minimal = true,
+	Smooth = true,
+	Snappy = true,
+	Off = true
+}
+local THEME_STUDIO_KEYS = {}
+for themeKey in pairs(ThemeModule.Themes.Default or {}) do
+	table.insert(THEME_STUDIO_KEYS, themeKey)
+end
+table.sort(THEME_STUDIO_KEYS)
+
+local function cloneValue(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, nested in pairs(value) do
+		out[cloneValue(key)] = cloneValue(nested)
+	end
+	return out
+end
+
+local function cloneArray(values)
+	local out = {}
+	if type(values) ~= "table" then
+		return out
+	end
+	for index, value in ipairs(values) do
+		out[index] = value
+	end
+	return out
+end
+
+local function normalizePresetName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "compact" then
+		return "Compact"
+	elseif normalized == "comfort" then
+		return "Comfort"
+	elseif normalized == "focus" then
+		return "Focus"
+	end
+	return nil
+end
+
+local function normalizeTransitionProfileName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local normalized = string.lower(name)
+	if normalized == "minimal" then
+		return "Minimal"
+	elseif normalized == "smooth" then
+		return "Smooth"
+	elseif normalized == "snappy" then
+		return "Snappy"
+	elseif normalized == "off" then
+		return "Off"
+	end
+	return nil
+end
+
+local function color3ToPacked(color)
+	if typeof(color) ~= "Color3" then
+		return nil
+	end
+	return {
+		R = math.floor(color.R * 255 + 0.5),
+		G = math.floor(color.G * 255 + 0.5),
+		B = math.floor(color.B * 255 + 0.5)
+	}
+end
+
+local function packedToColor3(packed)
+	if type(packed) ~= "table" then
+		return nil
+	end
+	local r = tonumber(packed.R)
+	local g = tonumber(packed.G)
+	local b = tonumber(packed.B)
+	if not (r and g and b) then
+		return nil
+	end
+	return Color3.fromRGB(math.clamp(math.floor(r + 0.5), 0, 255), math.clamp(math.floor(g + 0.5), 0, 255), math.clamp(math.floor(b + 0.5), 0, 255))
+end
+
+local function listThemeNames()
+	local names = {}
+	for themeName in pairs(ThemeModule.Themes or {}) do
+		table.insert(names, themeName)
+	end
+	table.sort(names)
+	return names
+end
+
+local function getMainScale()
+	if not Main then
+		return nil
+	end
+	local existing = Main:FindFirstChild("RayfieldMainScale")
+	if existing and existing:IsA("UIScale") then
+		return existing
+	end
+	local scale = Instance.new("UIScale")
+	scale.Name = "RayfieldMainScale"
+	scale.Scale = 1
+	scale.Parent = Main
+	return scale
+end
+
+local function setTransitionProfileInternal(name, persist)
+	local canonical = normalizeTransitionProfileName(name)
+	if not canonical then
+		return false, "Invalid transition profile."
+	end
+	if not TRANSITION_PROFILE_NAMES[canonical] then
+		return false, "Invalid transition profile."
+	end
+	if not AnimationEngine or type(AnimationEngine.SetTransitionProfile) ~= "function" then
+		return false, "Animation engine unavailable."
+	end
+
+	local okSet, resultOrErr = AnimationEngine:SetTransitionProfile(canonical)
+	if not okSet then
+		return false, tostring(resultOrErr or "Failed to apply transition profile.")
+	end
+
+	ExperienceState.transitionProfile = canonical
+	if persist ~= false then
+		setSettingValue("Appearance", "transitionProfile", canonical, true)
+	end
+	return true, "Transition profile set to " .. canonical .. "."
+end
+
+local function setUIPresetInternal(name, persist)
+	local canonical = normalizePresetName(name)
+	if not canonical then
+		return false, "Invalid UI preset."
+	end
+	if not UI_PRESET_NAMES[canonical] then
+		return false, "Invalid UI preset."
+	end
+
+	local uiScale = getMainScale()
+	if uiScale then
+		if canonical == "Compact" then
+			uiScale.Scale = 0.93
+		else
+			uiScale.Scale = 1.0
+		end
+	end
+
+	local topbarSearch = Topbar and Topbar:FindFirstChild("Search")
+	if topbarSearch then
+		topbarSearch.Visible = canonical ~= "Focus"
+		if canonical == "Focus" and searchOpen then
+			pcall(closeSearch)
+		end
+	end
+
+	experienceSuppressPromoPrompts = canonical == "Focus"
+	ExperienceState.uiPreset = canonical
+
+	local defaultTransitionByPreset = {
+		Compact = "Snappy",
+		Comfort = "Smooth",
+		Focus = "Minimal"
+	}
+	local transitionName = defaultTransitionByPreset[canonical] or "Smooth"
+	setTransitionProfileInternal(transitionName, persist ~= false)
+
+	if persist ~= false then
+		setSettingValue("Appearance", "uiPreset", canonical, true)
+	end
+
+	return true, "UI preset set to " .. canonical .. "."
+end
+
+local function buildThemeStudioTheme(baseThemeName, packedOverrides)
+	local baseTheme = ThemeModule.Themes[baseThemeName] or ThemeModule.Themes.Default or {}
+	local out = {}
+	for themeKey, value in pairs(baseTheme) do
+		out[themeKey] = value
+	end
+
+	if type(packedOverrides) == "table" then
+		for themeKey, packedColor in pairs(packedOverrides) do
+			local color = packedToColor3(packedColor)
+			if color and out[themeKey] ~= nil then
+				out[themeKey] = color
+			end
+		end
+	end
+	return out
+end
+
+local function getThemeStudioColor(themeKey)
+	if type(themeKey) ~= "string" or themeKey == "" then
+		return nil
+	end
+	local packed = ExperienceState.themeStudioState.customThemePacked[themeKey]
+	if packed then
+		local unpacked = packedToColor3(packed)
+		if unpacked then
+			return unpacked
+		end
+	end
+	local baseThemeName = ExperienceState.themeStudioState.baseTheme
+	local baseTheme = ThemeModule.Themes[baseThemeName] or ThemeModule.Themes.Default
+	return baseTheme and baseTheme[themeKey] or nil
+end
+
+local function applyThemeStudioState(persist)
+	local baseThemeName = ExperienceState.themeStudioState.baseTheme
+	local useCustom = ExperienceState.themeStudioState.useCustom == true
+	if not ThemeModule.Themes[baseThemeName] then
+		baseThemeName = "Default"
+		ExperienceState.themeStudioState.baseTheme = baseThemeName
+	end
+
+	if useCustom then
+		local customTheme = buildThemeStudioTheme(baseThemeName, ExperienceState.themeStudioState.customThemePacked)
+		ChangeTheme(customTheme)
+	else
+		ChangeTheme(baseThemeName)
+	end
+
+	if persist ~= false then
+		setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
+		setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, false)
+		setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), true)
+	end
+
+	return true, "Theme studio state applied."
+end
+
+local function setThemeStudioBaseTheme(name, persist)
+	local themeName = tostring(name or "")
+	if not ThemeModule.Themes[themeName] then
+		return false, "Theme not found."
+	end
+	ExperienceState.themeStudioState.baseTheme = themeName
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function setThemeStudioUseCustom(value, persist)
+	ExperienceState.themeStudioState.useCustom = value == true
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function setThemeStudioColor(themeKey, color)
+	if type(themeKey) ~= "string" or themeKey == "" then
+		return false, "Theme key is invalid."
+	end
+	if typeof(color) ~= "Color3" then
+		return false, "Color must be Color3."
+	end
+	if (ThemeModule.Themes.Default or {})[themeKey] == nil then
+		return false, "Unknown theme key."
+	end
+	ExperienceState.themeStudioState.customThemePacked[themeKey] = color3ToPacked(color)
+	ExperienceState.themeStudioState.useCustom = true
+	return applyThemeStudioState(false)
+end
+
+local function resetThemeStudioState(persist)
+	ExperienceState.themeStudioState.useCustom = false
+	ExperienceState.themeStudioState.customThemePacked = {}
+	return applyThemeStudioState(persist ~= false)
+end
+
+local function refreshFavoritesSettingsPersistence()
+	if ElementsSystem and type(ElementsSystem.getPinnedIds) == "function" then
+		local pinnedIds = ElementsSystem.getPinnedIds(true)
+		setSettingValue("Favorites", "pinnedIds", cloneArray(pinnedIds), true)
+	end
+end
+
+local function highlightFavoriteControl(record)
+	if not record or not record.GuiObject or not record.GuiObject.Parent then
+		return
+	end
+	local guiObject = record.GuiObject
+	local okColor, originalColor = pcall(function()
+		return guiObject.BackgroundColor3
+	end)
+	if not okColor then
+		return
+	end
+	local targetColor = (SelectedTheme and SelectedTheme.SliderProgress) or originalColor
+	Animation:Create(guiObject, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = targetColor}):Play()
+	task.delay(0.22, function()
+		if guiObject and guiObject.Parent then
+			Animation:Create(guiObject, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = originalColor}):Play()
+		end
+	end)
+end
+
+local function renderFavoritesTab()
+	local favoritesTab = ExperienceState.favoritesTab
+	if not favoritesTab or type(favoritesTab.Clear) ~= "function" then
+		return false
+	end
+
+	favoritesTab:Clear()
+	favoritesTab:CreateSection("Pinned Controls")
+
+	if not ElementsSystem or type(ElementsSystem.listControlsForFavorites) ~= "function" then
+		favoritesTab:CreateLabel("Control registry unavailable.")
+		return false
+	end
+
+	local controls = ElementsSystem.listControlsForFavorites(true)
+	local pinnedControls = {}
+	for _, control in ipairs(controls) do
+		if control.pinned == true then
+			table.insert(pinnedControls, control)
+		end
+	end
+
+	if #pinnedControls <= 0 then
+		favoritesTab:CreateLabel("No pinned controls yet.")
+		return true
+	end
+
+	for _, control in ipairs(pinnedControls) do
+		favoritesTab:CreateButton({
+			Name = string.format("[%s] %s", tostring(control.type or "Element"), tostring(control.name or control.id)),
+			Callback = function()
+				if ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+					ElementsSystem.activateTabByPersistenceId(control.tabId, true)
+				end
+				if ElementsSystem and type(ElementsSystem.getControlRecordById) == "function" then
+					local record = ElementsSystem.getControlRecordById(control.id)
+					highlightFavoriteControl(record)
+				end
+			end
+		})
+	end
+
+	return true
+end
+
+local function ensureFavoritesTab(windowRef)
+	if not windowRef then
+		return nil, "Window unavailable."
+	end
+	if ExperienceState.favoritesTab and ExperienceState.favoritesTabWindow == windowRef then
+		return ExperienceState.favoritesTab
+	end
+	ExperienceState.favoritesTabWindow = windowRef
+	ExperienceState.favoritesTab = windowRef:CreateTab("Favorites", 0)
+	renderFavoritesTab()
+	return ExperienceState.favoritesTab
+end
+
+local function openFavoritesTab(windowRef)
+	local favoritesTab, err = ensureFavoritesTab(windowRef or ExperienceState.favoritesTabWindow)
+	if not favoritesTab then
+		return false, tostring(err or "Unable to create Favorites tab.")
+	end
+	if type(favoritesTab.GetInternalRecord) == "function" and ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+		local okRecord, record = pcall(favoritesTab.GetInternalRecord, favoritesTab)
+		if okRecord and record and record.PersistenceId then
+			ElementsSystem.activateTabByPersistenceId(record.PersistenceId, true)
+		end
+	end
+	return true, "Favorites tab opened."
+end
+
+local function ensureOnboardingOverlay()
+	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
+		return ExperienceState.onboardingOverlay
+	end
+	if not Main then
+		return nil
+	end
+
+	local overlay = Instance.new("Frame")
+	overlay.Name = "ExperienceOnboardingOverlay"
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	overlay.BackgroundTransparency = 0.28
+	overlay.Visible = false
+	overlay.ZIndex = 80
+	overlay.Parent = Main
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	panel.Size = UDim2.new(0, 360, 0, 220)
+	panel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	panel.BackgroundTransparency = 0.08
+	panel.ZIndex = 81
+	panel.Parent = overlay
+
+	local panelCorner = Instance.new("UICorner")
+	panelCorner.CornerRadius = UDim.new(0, 12)
+	panelCorner.Parent = panel
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, -24, 0, 28)
+	title.Position = UDim2.new(0, 12, 0, 10)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 18
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = Color3.fromRGB(245, 245, 245)
+	title.ZIndex = 82
+	title.Parent = panel
+
+	local body = Instance.new("TextLabel")
+	body.Name = "Body"
+	body.BackgroundTransparency = 1
+	body.Size = UDim2.new(1, -24, 0, 90)
+	body.Position = UDim2.new(0, 12, 0, 46)
+	body.Font = Enum.Font.Gotham
+	body.TextSize = 14
+	body.TextWrapped = true
+	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.TextYAlignment = Enum.TextYAlignment.Top
+	body.TextColor3 = Color3.fromRGB(220, 220, 220)
+	body.ZIndex = 82
+	body.Parent = panel
+
+	local stepLabel = Instance.new("TextLabel")
+	stepLabel.Name = "Step"
+	stepLabel.BackgroundTransparency = 1
+	stepLabel.Size = UDim2.new(1, -24, 0, 20)
+	stepLabel.Position = UDim2.new(0, 12, 1, -86)
+	stepLabel.Font = Enum.Font.Gotham
+	stepLabel.TextSize = 12
+	stepLabel.TextXAlignment = Enum.TextXAlignment.Left
+	stepLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+	stepLabel.ZIndex = 82
+	stepLabel.Parent = panel
+
+	local checkbox = Instance.new("TextButton")
+	checkbox.Name = "DontShowAgain"
+	checkbox.BackgroundTransparency = 1
+	checkbox.Size = UDim2.new(1, -24, 0, 22)
+	checkbox.Position = UDim2.new(0, 12, 1, -62)
+	checkbox.Font = Enum.Font.Gotham
+	checkbox.TextSize = 13
+	checkbox.TextXAlignment = Enum.TextXAlignment.Left
+	checkbox.TextColor3 = Color3.fromRGB(220, 220, 220)
+	checkbox.ZIndex = 82
+	checkbox.AutoButtonColor = false
+	checkbox.Parent = panel
+
+	local nextButton = Instance.new("TextButton")
+	nextButton.Name = "Next"
+	nextButton.AnchorPoint = Vector2.new(1, 1)
+	nextButton.Position = UDim2.new(1, -12, 1, -12)
+	nextButton.Size = UDim2.new(0, 88, 0, 30)
+	nextButton.Font = Enum.Font.GothamBold
+	nextButton.TextSize = 13
+	nextButton.TextColor3 = Color3.fromRGB(245, 245, 245)
+	nextButton.BackgroundColor3 = Color3.fromRGB(60, 120, 210)
+	nextButton.ZIndex = 82
+	nextButton.Parent = panel
+
+	local nextCorner = Instance.new("UICorner")
+	nextCorner.CornerRadius = UDim.new(0, 8)
+	nextCorner.Parent = nextButton
+
+	local closeButton = Instance.new("TextButton")
+	closeButton.Name = "Close"
+	closeButton.AnchorPoint = Vector2.new(0, 1)
+	closeButton.Position = UDim2.new(0, 12, 1, -12)
+	closeButton.Size = UDim2.new(0, 88, 0, 30)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 13
+	closeButton.Text = "Close"
+	closeButton.TextColor3 = Color3.fromRGB(235, 235, 235)
+	closeButton.BackgroundColor3 = Color3.fromRGB(58, 58, 58)
+	closeButton.ZIndex = 82
+	closeButton.Parent = panel
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 8)
+	closeCorner.Parent = closeButton
+
+	local steps = {
+		{
+			title = "Welcome to Rayfield",
+			body = "Use the topbar to search controls, open settings, and manage window state."
+		},
+		{
+			title = "Favorites and Presets",
+			body = "Pin your frequently used controls and switch presets to quickly change UI behavior."
+		},
+		{
+			title = "Share and Theme Studio",
+			body = "Export/import share codes and use Theme Studio for live visual customization."
+		}
+	}
+	local state = {
+		step = 1,
+		dontShowAgain = false
+	}
+
+	local function render()
+		local active = steps[state.step] or steps[1]
+		title.Text = tostring(active.title or "Welcome")
+		body.Text = tostring(active.body or "")
+		stepLabel.Text = string.format("Step %d/%d", state.step, #steps)
+		checkbox.Text = string.format("%s Don't show this again", state.dontShowAgain and "[x]" or "[ ]")
+		nextButton.Text = state.step >= #steps and "Done" or "Next"
+	end
+
+	checkbox.MouseButton1Click:Connect(function()
+		state.dontShowAgain = not state.dontShowAgain
+		render()
+	end)
+	closeButton.MouseButton1Click:Connect(function()
+		overlay.Visible = false
+		if state.dontShowAgain then
+			RayfieldLibrary:SetOnboardingSuppressed(true)
+		end
+	end)
+	nextButton.MouseButton1Click:Connect(function()
+		if state.step >= #steps then
+			overlay.Visible = false
+			if state.dontShowAgain then
+				RayfieldLibrary:SetOnboardingSuppressed(true)
+			end
+			return
+		end
+		state.step += 1
+		render()
+	end)
+
+	ExperienceState.onboardingOverlay = {
+		Root = overlay,
+		State = state,
+		Render = render
+	}
+	render()
+	return ExperienceState.onboardingOverlay
+end
+
+local function restoreExperienceStateFromSettings(windowRef)
+	local transition = getSetting("Appearance", "transitionProfile") or ExperienceState.transitionProfile
+	setTransitionProfileInternal(transition, false)
+
+	local preset = getSetting("Appearance", "uiPreset") or ExperienceState.uiPreset
+	setUIPresetInternal(preset, false)
+
+	local baseTheme = getSetting("ThemeStudio", "baseTheme")
+	if type(baseTheme) == "string" and ThemeModule.Themes[baseTheme] then
+		ExperienceState.themeStudioState.baseTheme = baseTheme
+	end
+	ExperienceState.themeStudioState.useCustom = getSetting("ThemeStudio", "useCustom") == true
+
+	local packedTheme = getSetting("ThemeStudio", "customThemePacked")
+	if type(packedTheme) == "table" then
+		ExperienceState.themeStudioState.customThemePacked = cloneValue(packedTheme)
+	end
+	applyThemeStudioState(false)
+
+	if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
+		local showBadges = getSetting("Favorites", "showPinBadges")
+		ElementsSystem.setPinBadgesVisible(showBadges ~= false)
+	end
+	if ElementsSystem and type(ElementsSystem.setPinnedIds) == "function" then
+		local pinnedIds = getSetting("Favorites", "pinnedIds")
+		if type(pinnedIds) == "table" then
+			ElementsSystem.setPinnedIds(cloneArray(pinnedIds))
+		end
+	end
+
+	local pinnedControls = ElementsSystem and ElementsSystem.getPinnedIds and ElementsSystem.getPinnedIds(true) or {}
+	if type(pinnedControls) == "table" and #pinnedControls > 0 then
+		ensureFavoritesTab(windowRef)
+		renderFavoritesTab()
+	end
+
+	ExperienceState.onboardingSuppressed = getSetting("Onboarding", "suppressed") == true
+end
+
+function RayfieldLibrary:SetTransitionProfile(name)
+	return setTransitionProfileInternal(name, true)
+end
+
+function RayfieldLibrary:GetTransitionProfile()
+	return ExperienceState.transitionProfile
+end
+
+function RayfieldLibrary:SetUIPreset(name)
+	return setUIPresetInternal(name, true)
+end
+
+function RayfieldLibrary:GetUIPreset()
+	return ExperienceState.uiPreset
+end
+
+function RayfieldLibrary:ListControls()
+	if not ElementsSystem or type(ElementsSystem.listControlsForFavorites) ~= "function" then
+		return {}
+	end
+	return ElementsSystem.listControlsForFavorites(true)
+end
+
+function RayfieldLibrary:PinControl(idOrFlag)
+	if not ElementsSystem or type(ElementsSystem.pinControl) ~= "function" then
+		return false, "Control registry unavailable."
+	end
+	local ok, message = ElementsSystem.pinControl(tostring(idOrFlag or ""))
+	if ok then
+		refreshFavoritesSettingsPersistence()
+		if ExperienceState.favoritesTabWindow then
+			ensureFavoritesTab(ExperienceState.favoritesTabWindow)
+		end
+		renderFavoritesTab()
+	end
+	return ok, message
+end
+
+function RayfieldLibrary:UnpinControl(idOrFlag)
+	if not ElementsSystem or type(ElementsSystem.unpinControl) ~= "function" then
+		return false, "Control registry unavailable."
+	end
+	local ok, message = ElementsSystem.unpinControl(tostring(idOrFlag or ""))
+	if ok then
+		refreshFavoritesSettingsPersistence()
+		renderFavoritesTab()
+	end
+	return ok, message
+end
+
+function RayfieldLibrary:GetPinnedControls()
+	if not ElementsSystem or type(ElementsSystem.getPinnedIds) ~= "function" then
+		return {}
+	end
+	return ElementsSystem.getPinnedIds(true)
+end
+
+function RayfieldLibrary:SetOnboardingSuppressed(value)
+	ExperienceState.onboardingSuppressed = value == true
+	setSettingValue("Onboarding", "suppressed", ExperienceState.onboardingSuppressed, true)
+	return true, ExperienceState.onboardingSuppressed and "Onboarding suppressed." or "Onboarding enabled."
+end
+
+function RayfieldLibrary:IsOnboardingSuppressed()
+	return ExperienceState.onboardingSuppressed == true
+end
+
+function RayfieldLibrary:ShowOnboarding(force)
+	if ExperienceState.onboardingSuppressed and force ~= true then
+		return false, "Onboarding is suppressed."
+	end
+	local overlayRef = ensureOnboardingOverlay()
+	if not overlayRef or not overlayRef.Root then
+		return false, "Onboarding UI unavailable."
+	end
+	overlayRef.State.step = 1
+	overlayRef.State.dontShowAgain = false
+	overlayRef.Render()
+	overlayRef.Root.Visible = true
+	ExperienceState.onboardingRendered = true
+	return true, "Onboarding shown."
+end
+
+function RayfieldLibrary:GetThemeStudioState()
+	return {
+		baseTheme = ExperienceState.themeStudioState.baseTheme,
+		useCustom = ExperienceState.themeStudioState.useCustom == true,
+		customThemePacked = cloneValue(ExperienceState.themeStudioState.customThemePacked)
+	}
+end
+
+function RayfieldLibrary:ApplyThemeStudioTheme(themeOrName)
+	if type(themeOrName) == "string" then
+		return setThemeStudioBaseTheme(themeOrName, true)
+	end
+	if type(themeOrName) ~= "table" then
+		return false, "Theme input must be a theme name or table."
+	end
+
+	local nextPacked = {}
+	for _, key in ipairs(THEME_STUDIO_KEYS) do
+		local value = themeOrName[key]
+		if typeof(value) == "Color3" then
+			nextPacked[key] = color3ToPacked(value)
+		elseif type(value) == "table" then
+			local packed = packedToColor3(value)
+			if packed then
+				nextPacked[key] = color3ToPacked(packed)
+			end
+		end
+	end
+	ExperienceState.themeStudioState.customThemePacked = nextPacked
+	ExperienceState.themeStudioState.useCustom = true
+	return applyThemeStudioState(true)
+end
+
+function RayfieldLibrary:ResetThemeStudio()
+	return resetThemeStudioState(true)
+end
+
+local function notifyExperienceStatus(success, message)
+	if UIStateSystem and type(UIStateSystem.Notify) == "function" then
+		pcall(UIStateSystem.Notify, {
+			Title = "Rayfield Experience",
+			Content = tostring(message or ""),
+			Image = success and 4483362458 or 4384402990
+		})
+	elseif success ~= true then
+		warn("Rayfield | " .. tostring(message or "UI experience operation failed."))
+	end
+end
+
+if SettingsSystem and type(SettingsSystem.setExperienceHandlers) == "function" then
+	SettingsSystem.setExperienceHandlers({
+		setUIPreset = function(name)
+			return RayfieldLibrary:SetUIPreset(name)
+		end,
+		setTransitionProfile = function(name)
+			return RayfieldLibrary:SetTransitionProfile(name)
+		end,
+		listControls = function(pruneMissing)
+			if ElementsSystem and type(ElementsSystem.listControlsForFavorites) == "function" then
+				return ElementsSystem.listControlsForFavorites(pruneMissing == true)
+			end
+			return {}
+		end,
+		pinControl = function(id)
+			return RayfieldLibrary:PinControl(id)
+		end,
+		unpinControl = function(id)
+			return RayfieldLibrary:UnpinControl(id)
+		end,
+		setPinBadgesVisible = function(visible)
+			if ElementsSystem and type(ElementsSystem.setPinBadgesVisible) == "function" then
+				ElementsSystem.setPinBadgesVisible(visible ~= false)
+				setSettingValue("Favorites", "showPinBadges", visible ~= false, true)
+				return true, "Pin badge visibility updated."
+			end
+			return false, "Pin badge controller unavailable."
+		end,
+		openFavoritesTab = function()
+			return openFavoritesTab(ExperienceState.favoritesTabWindow)
+		end,
+		showOnboarding = function(force)
+			return RayfieldLibrary:ShowOnboarding(force == true)
+		end,
+		getThemeNames = function()
+			return listThemeNames()
+		end,
+		getThemeStudioKeys = function()
+			return cloneArray(THEME_STUDIO_KEYS)
+		end,
+		getThemeStudioColor = function(themeKey)
+			return getThemeStudioColor(themeKey)
+		end,
+		setThemeStudioBaseTheme = function(themeName)
+			local ok, message = setThemeStudioBaseTheme(themeName, true)
+			if ok then
+				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, true)
+			end
+			return ok, message
+		end,
+		setThemeStudioUseCustom = function(value)
+			local ok, message = setThemeStudioUseCustom(value == true, true)
+			if ok then
+				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, true)
+			end
+			return ok, message
+		end,
+		setThemeStudioColor = function(themeKey, color)
+			local ok, message = setThemeStudioColor(themeKey, color)
+			if ok then
+				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), false)
+				setSettingValue("ThemeStudio", "useCustom", true, true)
+			end
+			return ok, message
+		end,
+		applyThemeStudioDraft = function()
+			local ok, message = applyThemeStudioState(true)
+			if ok then
+				setSettingValue("ThemeStudio", "baseTheme", ExperienceState.themeStudioState.baseTheme, false)
+				setSettingValue("ThemeStudio", "useCustom", ExperienceState.themeStudioState.useCustom == true, false)
+				setSettingValue("ThemeStudio", "customThemePacked", cloneValue(ExperienceState.themeStudioState.customThemePacked), true)
+			end
+			return ok, message
+		end,
+		resetThemeStudio = function()
+			local ok, message = resetThemeStudioState(true)
+			if ok then
+				setSettingValue("ThemeStudio", "useCustom", false, false)
+				setSettingValue("ThemeStudio", "customThemePacked", {}, true)
+			end
+			return ok, message
+		end,
+		notify = function(success, message)
+			notifyExperienceStatus(success == true, message)
+		end
+	})
+end
+
 -- Note: UI State Management (Notify, Search, Hide/Minimize) moved to rayfield-ui-state.lua module
 
 -- Wrapper for RayfieldLibrary:Notify
@@ -1139,9 +2444,497 @@ function RayfieldLibrary:Notify(data)
 	return UIStateSystem.Notify(data)
 end
 
+local function ensureOwnershipSystem()
+	if not OwnershipSystem then
+		return false, "Ownership tracker is unavailable."
+	end
+	return true
+end
+
+local function sanitizeScopeName(rawName)
+	local value = tostring(rawName or "")
+	value = value:gsub("^%s+", "")
+	value = value:gsub("%s+$", "")
+	value = value:gsub("[%s/\\]+", "_")
+	value = value:gsub("[^%w_%-:]", "")
+	if value == "" then
+		local okGuid, guid = pcall(function()
+			return HttpService:GenerateGUID(false)
+		end)
+		if okGuid and type(guid) == "string" and guid ~= "" then
+			value = guid
+		else
+			value = tostring(math.floor(os.clock() * 100000))
+		end
+	end
+	return value
+end
+
+function RayfieldLibrary:CreateFeatureScope(name)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return nil, ownershipErr
+	end
+
+	local normalizedName = sanitizeScopeName(name or "feature")
+	local scopeId = "feature:" .. normalizedName
+	if type(OwnershipSystem.createScope) == "function" then
+		pcall(OwnershipSystem.createScope, scopeId, {
+			kind = "feature",
+			name = normalizedName
+		})
+	end
+	return scopeId, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureConnection(scopeId, connection)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if not connection then
+		return false, "Invalid connection."
+	end
+	if type(OwnershipSystem.trackConnection) ~= "function" then
+		return false, "Ownership tracker does not support connection tracking."
+	end
+	local okTrack, tracked = pcall(OwnershipSystem.trackConnection, connection, scopeId)
+	if not okTrack then
+		return false, tostring(tracked)
+	end
+	if tracked ~= true then
+		return false, "Failed to track connection."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureTask(scopeId, taskHandle)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if taskHandle == nil then
+		return false, "Invalid task handle."
+	end
+	if type(OwnershipSystem.trackTask) ~= "function" then
+		return false, "Ownership tracker does not support task tracking."
+	end
+	local okTrack, tracked = pcall(OwnershipSystem.trackTask, taskHandle, scopeId)
+	if not okTrack then
+		return false, tostring(tracked)
+	end
+	if tracked ~= true then
+		return false, "Failed to track task."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureInstance(scopeId, instance, metadata)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if typeof(instance) ~= "Instance" then
+		return false, "Invalid instance."
+	end
+	if type(OwnershipSystem.claimInstance) ~= "function" then
+		return false, "Ownership tracker does not support instance tracking."
+	end
+	local okClaim, claimResult = pcall(OwnershipSystem.claimInstance, instance, scopeId, metadata)
+	if not okClaim then
+		return false, tostring(claimResult)
+	end
+	if claimResult ~= true then
+		return false, "Failed to track instance."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:TrackFeatureCleanup(scopeId, cleanupFn)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if type(cleanupFn) ~= "function" then
+		return false, "cleanupFn must be a function."
+	end
+	if type(OwnershipSystem.trackCleanup) ~= "function" then
+		return false, "Ownership tracker does not support cleanup callbacks."
+	end
+	local okTrack, trackResult = pcall(OwnershipSystem.trackCleanup, cleanupFn, scopeId)
+	if not okTrack then
+		return false, tostring(trackResult)
+	end
+	if trackResult ~= true then
+		return false, "Failed to track cleanup callback."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:CleanupFeatureScope(scopeId, destroyInstances)
+	local okOwnership, ownershipErr = ensureOwnershipSystem()
+	if not okOwnership then
+		return false, ownershipErr
+	end
+	if type(scopeId) ~= "string" or scopeId == "" then
+		return false, "Invalid scopeId."
+	end
+	if type(OwnershipSystem.cleanupScope) ~= "function" then
+		return false, "Ownership tracker does not support scope cleanup."
+	end
+	local okCleanup, cleanupResult = pcall(OwnershipSystem.cleanupScope, scopeId, {
+		destroyInstances = destroyInstances == true,
+		clearAttributes = true
+	})
+	if not okCleanup then
+		return false, tostring(cleanupResult)
+	end
+	if cleanupResult ~= true then
+		return false, "Scope was not found."
+	end
+	return true, "ok"
+end
+
+function RayfieldLibrary:GetFeatureCleanupStats()
+	local okOwnership, _ = ensureOwnershipSystem()
+	if not okOwnership then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	if type(OwnershipSystem.getStats) ~= "function" then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	local okStats, stats = pcall(OwnershipSystem.getStats)
+	if not okStats or type(stats) ~= "table" then
+		return {
+			scopes = 0,
+			instances = 0,
+			connections = 0,
+			tasks = 0,
+			cleanups = 0
+		}
+	end
+	return stats
+end
+
+function RayfieldLibrary:GetRuntimeDiagnostics()
+	local animationStats = {}
+	if AnimationEngine and type(AnimationEngine.GetRuntimeStats) == "function" then
+		local ok, stats = pcall(function()
+			return AnimationEngine:GetRuntimeStats()
+		end)
+		if ok and type(stats) == "table" then
+			animationStats = stats
+		end
+	end
+
+	local activeTweens = animationStats.activeTweens
+	if type(activeTweens) ~= "number" and AnimationEngine and type(AnimationEngine.GetActiveAnimationCount) == "function" then
+		local ok, value = pcall(function()
+			return AnimationEngine:GetActiveAnimationCount()
+		end)
+		activeTweens = ok and value or 0
+	end
+
+	local activeTextHandles = animationStats.activeTextHandles
+	if type(activeTextHandles) ~= "number" and AnimationEngine and type(AnimationEngine.GetTextHandleCount) == "function" then
+		local ok, value = pcall(function()
+			return AnimationEngine:GetTextHandleCount()
+		end)
+		activeTextHandles = ok and value or 0
+	end
+
+	local themeBindings = { objectsBound = 0, propertiesBound = 0 }
+	if ThemeSystem and type(ThemeSystem.GetBindingStats) == "function" then
+		local ok, stats = pcall(function()
+			return ThemeSystem.GetBindingStats()
+		end)
+		if ok and type(stats) == "table" then
+			themeBindings = {
+				objectsBound = tonumber(stats.objectsBound) or 0,
+				propertiesBound = tonumber(stats.propertiesBound) or 0
+			}
+		end
+	end
+
+	local ownershipStats = {
+		scopes = 0,
+		instances = 0,
+		connections = 0,
+		tasks = 0,
+		cleanups = 0
+	}
+	if OwnershipSystem and type(OwnershipSystem.getStats) == "function" then
+		local okOwnershipStats, stats = pcall(OwnershipSystem.getStats)
+		if okOwnershipStats and type(stats) == "table" then
+			ownershipStats = {
+				scopes = tonumber(stats.scopes) or 0,
+				instances = tonumber(stats.instances) or 0,
+				connections = tonumber(stats.connections) or 0,
+				tasks = tonumber(stats.tasks) or 0,
+				cleanups = tonumber(stats.cleanups) or 0
+			}
+		end
+	end
+
+	return {
+		activeTweens = tonumber(activeTweens) or 0,
+		activeTextHandles = tonumber(activeTextHandles) or 0,
+		themeBindings = themeBindings,
+		ownership = ownershipStats,
+		rayfieldVisible = not Hidden,
+		rayfieldMinimized = Minimised == true,
+		rayfieldDestroyed = rayfieldDestroyed == true,
+		performanceProfile = {
+			enabled = activePerformanceProfile.enabled == true,
+			requestedMode = activePerformanceProfile.requestedMode,
+			resolvedMode = activePerformanceProfile.resolvedMode,
+			aggressive = activePerformanceProfile.aggressive == true,
+			disableDetach = activePerformanceProfile.disableDetach == true,
+			disableTabSplit = activePerformanceProfile.disableTabSplit == true,
+			disableAnimations = activePerformanceProfile.disableAnimations == true
+		}
+	}
+end
+
+local function shallowArrayCopy(input)
+	local out = {}
+	if type(input) ~= "table" then
+		return out
+	end
+	for index, value in ipairs(input) do
+		out[index] = value
+	end
+	return out
+end
+
+local function normalizeProfileMode(mode)
+	if type(mode) ~= "string" then
+		return "auto"
+	end
+	local normalized = string.lower(mode)
+	if normalized == "auto" or normalized == "potato" or normalized == "mobile" or normalized == "normal" then
+		return normalized
+	end
+	return "auto"
+end
+
+local function mergeTable(target, source)
+	if type(source) ~= "table" then
+		return
+	end
+	if type(target) ~= "table" then
+		return
+	end
+	for key, value in pairs(source) do
+		if type(value) == "table" then
+			if type(target[key]) ~= "table" then
+				target[key] = {}
+			end
+			mergeTable(target[key], value)
+		else
+			target[key] = value
+		end
+	end
+end
+
+local function applyPresetFillNil(target, preset, appliedFields, pathPrefix)
+	if type(target) ~= "table" or type(preset) ~= "table" then
+		return
+	end
+	for key, value in pairs(preset) do
+		local path = pathPrefix and (pathPrefix .. "." .. tostring(key)) or tostring(key)
+		if type(value) == "table" then
+			local existing = target[key]
+			if existing == nil then
+				target[key] = {}
+				existing = target[key]
+			end
+			if type(existing) == "table" then
+				applyPresetFillNil(existing, value, appliedFields, path)
+			end
+		else
+			if target[key] == nil then
+				target[key] = value
+				table.insert(appliedFields, path)
+			end
+		end
+	end
+end
+
+local function buildLowSpecPreset(resolvedMode, aggressive, profileSettings)
+	local isLowSpecMode = resolvedMode == "potato" or resolvedMode == "mobile"
+	local disableDetach = profileSettings.DisableDetach
+	if disableDetach == nil then
+		disableDetach = aggressive and isLowSpecMode
+	end
+	local disableTabSplit = profileSettings.DisableTabSplit
+	if disableTabSplit == nil then
+		disableTabSplit = aggressive and isLowSpecMode
+	end
+	local disableAnimations = profileSettings.DisableAnimations
+	if disableAnimations == nil then
+		disableAnimations = aggressive and isLowSpecMode
+	end
+
+	local preset = {}
+	if isLowSpecMode then
+		preset.DisableRayfieldPrompts = true
+		preset.DisableBuildWarnings = true
+		preset.ViewportVirtualization = {
+			Enabled = true,
+			AlwaysOn = true,
+			FullSuspend = true,
+			FadeOnScroll = false,
+			DisableFadeDuringResize = true
+		}
+
+		if resolvedMode == "potato" then
+			preset.ViewportVirtualization.OverscanPx = 80
+			preset.ViewportVirtualization.UpdateHz = 20
+			preset.ViewportVirtualization.ResizeDebounceMs = 120
+		elseif resolvedMode == "mobile" then
+			preset.ViewportVirtualization.OverscanPx = 100
+			preset.ViewportVirtualization.UpdateHz = 24
+			preset.ViewportVirtualization.ResizeDebounceMs = 100
+		end
+	end
+
+	if disableAnimations then
+		preset.ViewportVirtualization = preset.ViewportVirtualization or {}
+		preset.ViewportVirtualization.FadeOnScroll = false
+		preset.ViewportVirtualization.DisableFadeDuringResize = true
+	end
+
+	if disableTabSplit then
+		preset.EnableTabSplit = false
+	end
+
+	if type(profileSettings.ViewportVirtualization) == "table" then
+		preset.ViewportVirtualization = preset.ViewportVirtualization or {}
+		mergeTable(preset.ViewportVirtualization, profileSettings.ViewportVirtualization)
+	end
+
+	return preset, {
+		disableDetach = disableDetach == true,
+		disableTabSplit = disableTabSplit == true,
+		disableAnimations = disableAnimations == true,
+		aggressive = aggressive == true
+	}
+end
+
+local function resolvePerformanceProfile(Settings, runtimeCtx)
+	local resolved = {
+		enabled = false,
+		requestedMode = "normal",
+		resolvedMode = "normal",
+		aggressive = false,
+		disableDetach = false,
+		disableTabSplit = false,
+		disableAnimations = false,
+		appliedFields = {}
+	}
+	local profile = Settings and Settings.PerformanceProfile
+	if type(profile) ~= "table" or profile.Enabled ~= true then
+		return resolved
+	end
+
+	resolved.enabled = true
+	local requestedMode = normalizeProfileMode(profile.Mode or "auto")
+	resolved.requestedMode = requestedMode
+
+	local resolvedMode = requestedMode
+	if requestedMode == "auto" then
+		if runtimeCtx and runtimeCtx.touchEnabled == true then
+			resolvedMode = "mobile"
+		else
+			resolvedMode = "potato"
+		end
+	end
+	resolved.resolvedMode = resolvedMode
+
+	local aggressive = profile.Aggressive ~= false
+	local preset, flags = buildLowSpecPreset(resolvedMode, aggressive, profile)
+	applyPresetFillNil(Settings, preset, resolved.appliedFields)
+
+	resolved.aggressive = flags.aggressive
+	resolved.disableDetach = flags.disableDetach
+	resolved.disableTabSplit = flags.disableTabSplit
+	resolved.disableAnimations = flags.disableAnimations
+	if type(Settings.EnableTabSplit) == "boolean" then
+		resolved.disableTabSplit = Settings.EnableTabSplit == false
+	end
+
+	return resolved
+end
+
+local function applySystemOverridesForProfile(profile)
+	local lowSpecActive = type(profile) == "table" and profile.enabled == true and profile.resolvedMode ~= "normal"
+	local disableAnimations = type(profile) == "table" and profile.disableAnimations == true
+	if lowSpecActive or disableAnimations then
+		overrideSetting("System", "reducedEffects", true)
+		overrideSetting("System", "performanceMode", true)
+	else
+		overrideSetting("System", "reducedEffects", nil)
+		overrideSetting("System", "performanceMode", nil)
+	end
+
+	if lowSpecActive then
+		overrideSetting("System", "usageAnalytics", false)
+	elseif not requestsDisabled then
+		overrideSetting("System", "usageAnalytics", nil)
+	end
+end
+
 -- Note: saveSettings, updateSetting, and createSettings are now handled by SettingsModule
 
 function RayfieldLibrary:CreateWindow(Settings)
+	Settings = type(Settings) == "table" and Settings or {}
+	local runtimeCtx = {
+		touchEnabled = UserInputService and UserInputService.TouchEnabled == true
+	}
+	local resolvedPerformanceProfile = resolvePerformanceProfile(Settings, runtimeCtx)
+	activePerformanceProfile = resolvedPerformanceProfile
+	detachPathEnabled = resolvedPerformanceProfile.disableDetach ~= true
+	applySystemOverridesForProfile(resolvedPerformanceProfile)
+	ExperienceState.onboardingRendered = false
+
+	if type(loaderDiagnostics) == "table" then
+		loaderDiagnostics.performanceProfile = {
+			enabled = resolvedPerformanceProfile.enabled == true,
+			requestedMode = resolvedPerformanceProfile.requestedMode,
+			resolvedMode = resolvedPerformanceProfile.resolvedMode,
+			aggressive = resolvedPerformanceProfile.aggressive == true,
+			disableDetach = resolvedPerformanceProfile.disableDetach == true,
+			disableTabSplit = resolvedPerformanceProfile.disableTabSplit == true,
+			disableAnimations = resolvedPerformanceProfile.disableAnimations == true,
+			appliedFields = shallowArrayCopy(resolvedPerformanceProfile.appliedFields)
+		}
+	end
+
 	if Rayfield:FindFirstChild('Loading') then
 		if getgenv and not getgenv().rayfieldCached then
 			Rayfield.Enabled = true
@@ -1161,20 +2954,15 @@ function RayfieldLibrary:CreateWindow(Settings)
 			end)
 	end
 
-	if Settings.ToggleUIKeybind then -- Can either be a string or an Enum.KeyCode
-		local keybind = Settings.ToggleUIKeybind
-		if type(keybind) == "string" then
-			keybind = string.upper(keybind)
-			assert(pcall(function()
-				return Enum.KeyCode[keybind]
-			end), "ToggleUIKeybind must be a valid KeyCode")
-			overrideSetting("General", "rayfieldOpen", keybind)
-		elseif typeof(keybind) == "EnumItem" then
-			assert(keybind.EnumType == Enum.KeyCode, "ToggleUIKeybind must be a KeyCode enum")
-			overrideSetting("General", "rayfieldOpen", keybind.Name)
-		else
-			error("ToggleUIKeybind must be a string or KeyCode enum")
-		end
+	if Settings.ToggleUIKeybind then -- Can either be a string, sequence, or an Enum.KeyCode
+		local canonical, _, normalizeErr = KeybindSequenceLib.normalize(Settings.ToggleUIKeybind, {
+			maxSteps = 4
+		})
+		assert(canonical, "ToggleUIKeybind must be a valid keybind/sequence: " .. tostring(normalizeErr))
+		overrideSetting("General", "rayfieldOpen", canonical)
+		cachedUiToggleKeybindRaw = nil
+		cachedUiToggleKeybindSpec = nil
+		uiToggleKeybindMatcher:reset()
 	end
 
 	ensureFolder(RayfieldFolder)
@@ -1275,10 +3063,45 @@ function RayfieldLibrary:CreateWindow(Settings)
 		end
 	end
 
+	if type(Settings.ViewportVirtualization) ~= "table" then
+		Settings.ViewportVirtualization = {}
+	end
+	local viewportSettings = Settings.ViewportVirtualization
+	if viewportSettings.Enabled == nil then
+		viewportSettings.Enabled = true
+	end
+	if viewportSettings.AlwaysOn == nil then
+		viewportSettings.AlwaysOn = true
+	end
+	if viewportSettings.FullSuspend == nil then
+		viewportSettings.FullSuspend = true
+	end
+	if viewportSettings.OverscanPx == nil then
+		viewportSettings.OverscanPx = 120
+	end
+	if viewportSettings.UpdateHz == nil then
+		viewportSettings.UpdateHz = 30
+	end
+	if viewportSettings.FadeOnScroll == nil then
+		viewportSettings.FadeOnScroll = true
+	end
+	if viewportSettings.DisableFadeDuringResize == nil then
+		viewportSettings.DisableFadeDuringResize = true
+	end
+	if viewportSettings.ResizeDebounceMs == nil then
+		viewportSettings.ResizeDebounceMs = 100
+	end
+	if viewportSettings.MinElementsToActivate == nil then
+		viewportSettings.MinElementsToActivate = 0
+	end
+
 	if not Settings.DisableRayfieldPrompts then
 		task.spawn(function()
 			while true do
 				task.wait(math.random(180, 600))
+				if experienceSuppressPromoPrompts then
+					continue
+				end
 				RayfieldLibrary:Notify({
 					Title = "Rayfield Interface",
 					Content = "Enjoying this UI library? Find it at sirius.menu/discord",
@@ -1290,6 +3113,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 	end
 
 	pcall(function()
+		if type(Settings.ConfigurationSaving) ~= "table" then
+			Settings.ConfigurationSaving = {}
+		end
 		if not Settings.ConfigurationSaving.FileName then
 			Settings.ConfigurationSaving.FileName = tostring(game.PlaceId)
 		end
@@ -1301,6 +3127,23 @@ function RayfieldLibrary:CreateWindow(Settings)
 		CFileName = Settings.ConfigurationSaving.FileName
 		ConfigurationFolder = Settings.ConfigurationSaving.FolderName or ConfigurationFolder
 		CEnabled = Settings.ConfigurationSaving.Enabled
+		if type(Settings.ConfigurationSaving.Layout) ~= "table" then
+			Settings.ConfigurationSaving.Layout = {}
+		end
+		local layoutConfig = Settings.ConfigurationSaving.Layout
+		if layoutConfig.Enabled == nil then
+			layoutSavingEnabled = CEnabled == true
+		else
+			layoutSavingEnabled = layoutConfig.Enabled == true and CEnabled == true
+		end
+		local configuredDebounce = tonumber(layoutConfig.DebounceMs)
+		if configuredDebounce and configuredDebounce >= 50 then
+			layoutDebounceMs = math.floor(configuredDebounce)
+		else
+			layoutDebounceMs = 300
+		end
+		layoutConfig.Enabled = layoutSavingEnabled
+		layoutConfig.DebounceMs = layoutDebounceMs
 
 		if Settings.ConfigurationSaving.Enabled then
 			ensureFolder(ConfigurationFolder)
@@ -1410,26 +3253,20 @@ function RayfieldLibrary:CreateWindow(Settings)
 
 			KeyUI.Enabled = true
 
-			if gethui then
-				KeyUI.Parent = gethui()
-			elseif syn and syn.protect_gui then 
-				syn.protect_gui(KeyUI)
-				KeyUI.Parent = CoreGui
-			elseif not useStudio and CoreGui:FindFirstChild("RobloxGui") then
-				KeyUI.Parent = CoreGui:FindFirstChild("RobloxGui")
+			local keyUiContainer = nil
+			if Compatibility and type(Compatibility.protectAndParent) == "function" then
+				keyUiContainer = Compatibility.protectAndParent(KeyUI, nil, {
+					useStudio = useStudio
+				})
 			elseif not useStudio then
 				KeyUI.Parent = CoreGui
+				keyUiContainer = CoreGui
 			end
 
-			if gethui then
-				for _, Interface in ipairs(gethui():GetChildren()) do
-					if Interface.Name == KeyUI.Name and Interface ~= KeyUI then
-						Interface.Enabled = false
-						Interface.Name = "KeyUI-Old"
-					end
-				end
-			elseif not useStudio then
-				for _, Interface in ipairs(CoreGui:GetChildren()) do
+			if Compatibility and type(Compatibility.dedupeGuiByName) == "function" then
+				Compatibility.dedupeGuiByName(keyUiContainer, KeyUI.Name, KeyUI, "-Old")
+			elseif not useStudio and keyUiContainer then
+				for _, Interface in ipairs(keyUiContainer:GetChildren()) do
 					if Interface.Name == KeyUI.Name and Interface ~= KeyUI then
 						Interface.Enabled = false
 						Interface.Name = "KeyUI-Old"
@@ -1589,6 +3426,8 @@ function RayfieldLibrary:CreateWindow(Settings)
 	-- Tab
 	local FirstTab = false
 	local Window = {}
+	ExperienceState.favoritesTabWindow = Window
+	ExperienceState.favoritesTab = nil
 
 	-- Recreate tab split system per-window setup to keep references fresh
 	if TabSplitSystem and TabSplitSystem.destroy then
@@ -1596,8 +3435,35 @@ function RayfieldLibrary:CreateWindow(Settings)
 		TabSplitSystem = nil
 	end
 
+	if ViewportVirtualizationSystem and type(ViewportVirtualizationSystem.destroy) == "function" then
+		pcall(ViewportVirtualizationSystem.destroy)
+	end
+	ViewportVirtualizationSystem = ViewportVirtualizationModuleLib.init({
+		Settings = Settings.ViewportVirtualization,
+		RunService = RunService,
+		TweenService = TweenService,
+		UserInputService = UserInputService,
+		AnimationEngine = AnimationEngine,
+		RootGui = Rayfield,
+		warn = function(message)
+			warn("Rayfield | ViewportVirtualization " .. tostring(message))
+		end
+	})
+	if _G then
+		_G.__RayfieldViewportVirtualization = ViewportVirtualizationSystem
+	end
+
 	-- Initialize Elements Module
-	local ElementsSystem = ElementsModuleLib.init({
+	if ElementSyncSystem and ElementSyncSystem.destroy then
+		ElementSyncSystem.destroy()
+	end
+	ElementSyncSystem = ElementSyncModuleLib.init({
+		warn = function(message)
+			warn("Rayfield | ElementSync " .. tostring(message))
+		end
+	})
+
+	ElementsSystem = ElementsModuleLib.init({
 		TweenService = TweenService,
 		Animation = Animation,
 		RunService = RunService,
@@ -1616,15 +3482,40 @@ function RayfieldLibrary:CreateWindow(Settings)
 		rayfieldDestroyed = function() return rayfieldDestroyed end,
 		getMinimised = function() return Minimised end,
 		getSetting = getSetting,
+		getInternalSetting = function(category, setting)
+			return getSetting(category, setting)
+		end,
+		setInternalSetting = function(category, setting, value, persist)
+			return setSettingValue(category, setting, value, persist)
+		end,
 		bindTheme = bindTheme,
 		SaveConfiguration = SaveConfiguration,
 		makeElementDetachable = makeElementDetachable,
+		KeybindSequence = KeybindSequenceLib,
 		keybindConnections = keybindConnections,
 		getDebounce = function() return Debounce end,
 		setDebounce = function(val) Debounce = val end,
 		useMobileSizing = useMobileSizing,
+		ElementSync = ElementSyncSystem,
+		ViewportVirtualization = ViewportVirtualizationSystem,
+		ResourceOwnership = OwnershipSystem,
 		Settings = Settings
 	})
+	if favoritesRegistryUnsubscribe then
+		pcall(favoritesRegistryUnsubscribe)
+		favoritesRegistryUnsubscribe = nil
+	end
+	if ElementsSystem and type(ElementsSystem.subscribeControlRegistry) == "function" then
+		favoritesRegistryUnsubscribe = ElementsSystem.subscribeControlRegistry(function(reason)
+			if reason == "pin" or reason == "unpin" or reason == "set_pinned_ids" or reason == "control_removed" then
+				refreshFavoritesSettingsPersistence()
+			end
+			if reason == "pin" and ExperienceState.favoritesTabWindow then
+				ensureFavoritesTab(ExperienceState.favoritesTabWindow)
+			end
+			renderFavoritesTab()
+		end)
+	end
 
 	TabSplitSystem = TabSplitModuleLib.init({
 		UserInputService = UserInputService,
@@ -1646,6 +3537,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		getBlockedState = function()
 			return Debounce or searchOpen
 		end,
+		onLayoutDirty = function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end,
+		ViewportVirtualization = ViewportVirtualizationSystem,
 		enabled = Settings.EnableTabSplit,
 		holdDuration = Settings.TabSplitHoldDuration,
 		allowSettingsSplit = Settings.AllowSettingsTabSplit,
@@ -1653,6 +3548,113 @@ function RayfieldLibrary:CreateWindow(Settings)
 	})
 	TabSplitSystem.syncHidden(Hidden)
 	TabSplitSystem.syncMinimized(Minimised)
+
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.flush) == "function" then
+		LayoutPersistenceSystem.flush("window_recreate")
+	end
+	LayoutPersistenceSystem = LayoutPersistenceModuleLib.init({
+		layoutKey = "__rayfield_layout",
+		version = 1,
+		getEnabled = function()
+			return layoutSavingEnabled == true and CEnabled == true
+		end,
+		getDebounceMs = function()
+			return layoutDebounceMs
+		end,
+		requestSave = function()
+			return SaveConfiguration()
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("main", {
+		order = 10,
+		snapshot = function()
+			if UIStateSystem and type(UIStateSystem.getLayoutSnapshot) == "function" then
+				return UIStateSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if UIStateSystem and type(UIStateSystem.applyLayoutSnapshot) == "function" then
+				UIStateSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("split", {
+		order = 20,
+		snapshot = function()
+			if TabSplitSystem and type(TabSplitSystem.getLayoutSnapshot) == "function" then
+				return TabSplitSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if TabSplitSystem and type(TabSplitSystem.applyLayoutSnapshot) == "function" then
+				TabSplitSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+	LayoutPersistenceSystem.registerProvider("floating", {
+		order = 30,
+		snapshot = function()
+			if DragSystem and type(DragSystem.getLayoutSnapshot) == "function" then
+				return DragSystem.getLayoutSnapshot()
+			end
+			return nil
+		end,
+		apply = function(section)
+			if DragSystem and type(DragSystem.applyLayoutSnapshot) == "function" then
+				DragSystem.applyLayoutSnapshot(section)
+			end
+		end
+	})
+
+	if type(ConfigSystem.setLayoutHandlers) == "function" then
+		ConfigSystem.setLayoutHandlers(
+			function()
+				if LayoutPersistenceSystem and type(LayoutPersistenceSystem.getLayoutSnapshot) == "function" then
+					return LayoutPersistenceSystem.getLayoutSnapshot()
+				end
+				return nil
+			end,
+			function(layoutData)
+				if LayoutPersistenceSystem and type(LayoutPersistenceSystem.applyLayoutSnapshot) == "function" then
+					return LayoutPersistenceSystem.applyLayoutSnapshot(layoutData)
+				end
+				return false
+			end,
+			"__rayfield_layout"
+		)
+	end
+
+	if DragSystem and type(DragSystem.setLayoutDirtyCallback) == "function" then
+		DragSystem.setLayoutDirtyCallback(function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end)
+	end
+
+	if TabSplitSystem and type(TabSplitSystem.setLayoutDirtyCallback) == "function" then
+		TabSplitSystem.setLayoutDirtyCallback(function(scope, reason)
+			markLayoutDirty(scope, reason)
+		end)
+	end
+
+	cleanupLayoutConnections()
+	if layoutSavingEnabled and CEnabled then
+		table.insert(layoutConnections, Main:GetPropertyChangedSignal("Position"):Connect(function()
+			markLayoutDirty("main", "position")
+		end))
+		table.insert(layoutConnections, Main:GetPropertyChangedSignal("Size"):Connect(function()
+			if UIStateSystem
+				and type(UIStateSystem.setExpandedSize) == "function"
+				and type(UIStateSystem.getMinimised) == "function"
+				and type(UIStateSystem.getHidden) == "function"
+				and not UIStateSystem.getMinimised()
+				and not UIStateSystem.getHidden() then
+				UIStateSystem.setExpandedSize(Main.Size)
+			end
+			markLayoutDirty("main", "size")
+		end))
+	end
 
 	-- Wrapper for Window:CreateTab
 	function Window:CreateTab(Name, Image, Ext)
@@ -1771,6 +3773,17 @@ function RayfieldLibrary:CreateWindow(Settings)
 
 	if not success then warn('Rayfield had an issue creating settings.') end
 
+	local function restoreExperienceStateSafely()
+		local okRestore, restoreErr = pcall(function()
+			restoreExperienceStateFromSettings(Window)
+		end)
+		if not okRestore then
+			warn("Rayfield | Failed to restore experience settings: " .. tostring(restoreErr))
+		end
+	end
+	restoreExperienceStateSafely()
+	task.delay(0.9, restoreExperienceStateSafely)
+
 	local startupSuccess, startupResult = pcall(function()
 		playStartupAnimation()
 	end)
@@ -1782,6 +3795,14 @@ function RayfieldLibrary:CreateWindow(Settings)
 		Elements.Visible = true
 	end
 
+	maybeNotifyLoaderFallback()
+
+	task.delay(1.1, function()
+		if not ExperienceState.onboardingRendered and not ExperienceState.onboardingSuppressed then
+			RayfieldLibrary:ShowOnboarding(false)
+		end
+	end)
+
 	return Window
 end
 
@@ -1792,6 +3813,7 @@ local function setVisibility(visibility: boolean, notify: boolean?)
 		if TabSplitSystem then
 			TabSplitSystem.syncHidden(Hidden)
 		end
+		markLayoutDirty("main", visibility and "set_visible_true" or "set_visible_false")
 	end
 end
 
@@ -1806,6 +3828,21 @@ end
 local hideHotkeyConnection -- Has to be initialized here since the connection is made later in the script
 function RayfieldLibrary:Destroy()
 	AnimationEngine:SetUiSuppressed(true)
+	detachPathEnabled = true
+	activePerformanceProfile = {
+		enabled = false,
+		requestedMode = "normal",
+		resolvedMode = "normal",
+		aggressive = false,
+		disableDetach = false,
+		disableTabSplit = false,
+		disableAnimations = false,
+		appliedFields = {}
+	}
+	cleanupLayoutConnections()
+	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.flush) == "function" then
+		pcall(LayoutPersistenceSystem.flush, "destroy")
+	end
 	-- Cleanup theme connections to prevent memory leaks on reload
 	if ThemeSystem and ThemeSystem.cleanup then
 		ThemeSystem.cleanup()
@@ -1814,12 +3851,44 @@ function RayfieldLibrary:Destroy()
 		TabSplitSystem.destroy()
 		TabSplitSystem = nil
 	end
+	if favoritesRegistryUnsubscribe then
+		pcall(favoritesRegistryUnsubscribe)
+		favoritesRegistryUnsubscribe = nil
+	end
+	if OwnershipSystem and type(OwnershipSystem.cleanupSession) == "function" then
+		pcall(OwnershipSystem.cleanupSession, {
+			destroyInstances = false,
+			clearAttributes = true,
+			sweepRoot = false
+		})
+	end
 	if UtilitiesSystem then
 		UtilitiesSystem.destroy(hideHotkeyConnection)
 	end
 	if AnimationEngine and AnimationEngine.Destroy then
 		AnimationEngine:Destroy()
 	end
+	if ElementSyncSystem and ElementSyncSystem.destroy then
+		ElementSyncSystem.destroy()
+		ElementSyncSystem = nil
+	end
+	if ViewportVirtualizationSystem and type(ViewportVirtualizationSystem.destroy) == "function" then
+		pcall(ViewportVirtualizationSystem.destroy)
+		ViewportVirtualizationSystem = nil
+	end
+	if _G then
+		_G.__RayfieldViewportVirtualization = nil
+		_G.__RayfieldOwnership = nil
+	end
+	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
+		ExperienceState.onboardingOverlay.Root:Destroy()
+	end
+	ExperienceState.onboardingOverlay = nil
+	ExperienceState.favoritesTab = nil
+	ExperienceState.favoritesTabWindow = nil
+	ExperienceState.onboardingRendered = false
+	experienceSuppressPromoPrompts = false
+	LayoutPersistenceSystem = nil
 
 	-- Reset global runtime/cache flags so the next execution reloads a fresh UI tree.
 	pcall(function()
@@ -1837,6 +3906,7 @@ function RayfieldLibrary:Destroy()
 	if type(_G.__RayfieldApiModuleCache) == "table" then
 		table.clear(_G.__RayfieldApiModuleCache)
 	end
+	OwnershipSystem = nil
 end
 
 function RayfieldLibrary:IsDestroyed(): boolean
@@ -1950,7 +4020,18 @@ Topbar.Hide.MouseButton1Click:Connect(function()
 end)
 
 hideHotkeyConnection = UserInputService.InputBegan:Connect(function(input, processed)
-	if (input.KeyCode == Enum.KeyCode[getSetting("General", "rayfieldOpen")]) and not processed then
+	if processed then
+		return
+	end
+
+	local currentBinding = getSetting("General", "rayfieldOpen")
+	local uiBindingSpec = resolveUiToggleKeybindSpec(currentBinding)
+	if not uiBindingSpec then
+		return
+	end
+
+	local matched = uiToggleKeybindMatcher:consume(input, uiBindingSpec, UserInputService, processed)
+	if matched then
 		if Debounce then return end
 		if Hidden then
 			Hidden = false
@@ -1961,6 +4042,9 @@ hideHotkeyConnection = UserInputService.InputBegan:Connect(function(input, proce
 		end
 	end
 end)
+if OwnershipSystem and type(OwnershipSystem.trackConnection) == "function" then
+	pcall(OwnershipSystem.trackConnection, hideHotkeyConnection, "runtime:hotkeys")
+end
 
 if MPrompt then
 	MPrompt.Interact.MouseButton1Click:Connect(function()

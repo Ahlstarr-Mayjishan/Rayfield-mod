@@ -51,7 +51,22 @@ ThemeModule.Themes = {
 
 		InputBackground = Color3.fromRGB(30, 30, 30),
 		InputStroke = Color3.fromRGB(65, 65, 65),
-		PlaceholderColor = Color3.fromRGB(178, 178, 178)
+		PlaceholderColor = Color3.fromRGB(178, 178, 178),
+
+		TooltipBackground = Color3.fromRGB(20, 20, 20),
+		TooltipTextColor = Color3.fromRGB(240, 240, 240),
+		TooltipStroke = Color3.fromRGB(55, 55, 55),
+
+		ChartLine = Color3.fromRGB(70, 160, 255),
+		ChartGrid = Color3.fromRGB(55, 55, 55),
+		ChartFill = Color3.fromRGB(45, 110, 180),
+
+		LogInfo = Color3.fromRGB(210, 220, 235),
+		LogWarn = Color3.fromRGB(255, 210, 120),
+		LogError = Color3.fromRGB(255, 120, 120),
+
+		ConfirmArmed = Color3.fromRGB(180, 110, 40),
+		SectionChevron = Color3.fromRGB(220, 220, 220)
 	},
 
 	Ocean = {
@@ -389,6 +404,68 @@ ThemeModule.Themes = {
 	},
 }
 
+local THEME_FALLBACK_KEYS = {
+	TooltipBackground = {"SecondaryElementBackground", "ElementBackground", "Background"},
+	TooltipTextColor = {"TextColor"},
+	TooltipStroke = {"SecondaryElementStroke", "ElementStroke"},
+	ChartLine = {"SliderProgress", "SliderBackground"},
+	ChartGrid = {"ElementStroke", "SecondaryElementStroke"},
+	ChartFill = {"SliderBackground", "ChartLine"},
+	LogInfo = {"TextColor"},
+	LogWarn = {"SliderStroke", "SliderProgress"},
+	LogError = {"ToggleEnabled", "SliderStroke"},
+	ConfirmArmed = {"ToggleEnabled", "SliderProgress"},
+	SectionChevron = {"TextColor", "TabTextColor"}
+}
+
+local function cloneThemeTable(theme)
+	local out = {}
+	if type(theme) ~= "table" then
+		return out
+	end
+	for key, value in pairs(theme) do
+		out[key] = value
+	end
+	return out
+end
+
+local function resolveThemeWithFallback(theme)
+	local defaultTheme = ThemeModule.Themes.Default or {}
+	local resolved = cloneThemeTable(theme)
+
+	for key, fallbackChain in pairs(THEME_FALLBACK_KEYS) do
+		if resolved[key] == nil then
+			local fallbackValue = nil
+			if type(fallbackChain) == "table" then
+				for _, fallbackKey in ipairs(fallbackChain) do
+					if resolved[fallbackKey] ~= nil then
+						fallbackValue = resolved[fallbackKey]
+						break
+					end
+					if defaultTheme[fallbackKey] ~= nil then
+						fallbackValue = defaultTheme[fallbackKey]
+						break
+					end
+				end
+			end
+			if fallbackValue == nil then
+				fallbackValue = defaultTheme[key]
+			end
+			if fallbackValue ~= nil then
+				resolved[key] = fallbackValue
+			end
+		end
+	end
+
+	for key, defaultValue in pairs(defaultTheme) do
+		if resolved[key] == nil then
+			resolved[key] = defaultValue
+		end
+	end
+
+	return resolved
+end
+
 -- Initialize module with dependencies
 function ThemeModule.init(ctx)
 	local self = {}
@@ -402,15 +479,88 @@ function ThemeModule.init(ctx)
 	self.Icons = ctx.Icons
 
 	-- Current selected theme
-	self.SelectedTheme = ThemeModule.Themes.Default
+	self.SelectedTheme = resolveThemeWithFallback(ThemeModule.Themes.Default)
 
 	-- Reactive Theme System
 	local ThemeValues = Instance.new("Folder")
 	ThemeValues.Name = "ThemeValues"
 	ThemeValues.Parent = self.Main
 
-	local themeConnections = {}
+	local activeBindings = setmetatable({}, {__mode = "k"}) -- [object] = { [property] = record }
+	local objectWatchers = setmetatable({}, {__mode = "k"}) -- [object] = { destroyConn?, ancestryConn? }
 	local values = {}
+
+	local function disconnectConnection(connection)
+		if connection and typeof(connection) == "RBXScriptConnection" and connection.Connected then
+			connection:Disconnect()
+		end
+	end
+
+	local function cleanupObjectBindings(object)
+		local bindingMap = activeBindings[object]
+		if bindingMap then
+			for _, record in pairs(bindingMap) do
+				disconnectConnection(record.connection)
+			end
+			activeBindings[object] = nil
+		end
+
+		local watcher = objectWatchers[object]
+		if watcher then
+			disconnectConnection(watcher.destroying)
+			disconnectConnection(watcher.ancestry)
+			objectWatchers[object] = nil
+		end
+	end
+
+	local function ensureObjectWatcher(object)
+		if not object or objectWatchers[object] then
+			return
+		end
+
+		local watcher = {}
+		local okDestroying, destroyingSignal = pcall(function()
+			return object.Destroying
+		end)
+		if okDestroying and destroyingSignal and destroyingSignal.Connect then
+			watcher.destroying = destroyingSignal:Connect(function()
+				cleanupObjectBindings(object)
+			end)
+		else
+			watcher.ancestry = object.AncestryChanged:Connect(function(_, parent)
+				if parent == nil then
+					cleanupObjectBindings(object)
+				end
+			end)
+		end
+
+		objectWatchers[object] = watcher
+	end
+
+	local function unbindTheme(object, property)
+		if not object then
+			return
+		end
+
+		local bindingMap = activeBindings[object]
+		if not bindingMap then
+			return
+		end
+
+		if property then
+			local record = bindingMap[property]
+			if record then
+				disconnectConnection(record.connection)
+				bindingMap[property] = nil
+			end
+			if next(bindingMap) == nil then
+				cleanupObjectBindings(object)
+			end
+			return
+		end
+
+		cleanupObjectBindings(object)
+	end
 
 	-- Initialize ValueObjects for all theme properties
 	for key, value in pairs(ThemeModule.Themes.Default) do
@@ -426,6 +576,8 @@ function ThemeModule.init(ctx)
 		if not object then
 			return
 		end
+
+		unbindTheme(object, property)
 
 		local valueObj = values[themeKey]
 		if not valueObj then
@@ -453,8 +605,39 @@ function ThemeModule.init(ctx)
 			end)
 		end)
 
-		table.insert(themeConnections, connection)
+		activeBindings[object] = activeBindings[object] or {}
+		activeBindings[object][property] = {
+			connection = connection,
+			themeKey = themeKey
+		}
+		ensureObjectWatcher(object)
+
 		return connection
+	end
+
+	function self.unbindTheme(object, property)
+		unbindTheme(object, property)
+	end
+
+	function self.cleanupObjectBindings(object)
+		cleanupObjectBindings(object)
+	end
+
+	function self.GetBindingStats()
+		local objectsBound = 0
+		local propertiesBound = 0
+		for _, bindingMap in pairs(activeBindings) do
+			if type(bindingMap) == "table" and next(bindingMap) ~= nil then
+				objectsBound = objectsBound + 1
+				for _ in pairs(bindingMap) do
+					propertiesBound = propertiesBound + 1
+				end
+			end
+		end
+		return {
+			objectsBound = objectsBound,
+			propertiesBound = propertiesBound
+		}
 	end
 
 	-- Get icon from Lucide icon library
@@ -482,13 +665,16 @@ function ThemeModule.init(ctx)
 
 	-- Change theme function
 	function self.ChangeTheme(Theme)
+		local selected = nil
 		if typeof(Theme) == 'string' then
-			self.SelectedTheme = ThemeModule.Themes[Theme]
+			selected = ThemeModule.Themes[Theme]
 		elseif typeof(Theme) == 'table' then
-			self.SelectedTheme = Theme
+			selected = Theme
 		end
 
-		if not self.SelectedTheme then return end
+		if not selected then return end
+
+		self.SelectedTheme = resolveThemeWithFallback(selected)
 
 		-- Update all ValueObjects - this triggers listeners in all elements
 		for key, value in pairs(self.SelectedTheme) do
@@ -505,12 +691,14 @@ function ThemeModule.init(ctx)
 
 	-- Cleanup function to prevent memory leaks on Rayfield:Destroy() + reload
 	function self.cleanup()
-		for _, connection in ipairs(themeConnections) do
-			if connection and typeof(connection) == "RBXScriptConnection" and connection.Connected then
-				connection:Disconnect()
-			end
+		for object in pairs(activeBindings) do
+			cleanupObjectBindings(object)
 		end
-		table.clear(themeConnections)
+		for object, watcher in pairs(objectWatchers) do
+			disconnectConnection(watcher.destroying)
+			disconnectConnection(watcher.ancestry)
+			objectWatchers[object] = nil
+		end
 
 		-- Destroy the ThemeValues folder
 		if ThemeValues and ThemeValues.Parent then

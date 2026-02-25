@@ -12,6 +12,14 @@ local Rayfield = loadstring(game:HttpGet(
 ))()
 ```
 
+Production bundle load (ít request HTTP hơn):
+
+```lua
+local Rayfield = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/dist/rayfield-production.bootstrap.lua"
+))()
+```
+
 Main methods:
 - `Rayfield:Notify(data)`
 - `Rayfield:CreateWindow(settings)`
@@ -19,7 +27,97 @@ Main methods:
 - `Rayfield:IsVisible() -> boolean`
 - `Rayfield:Destroy()`
 - `Rayfield:LoadConfiguration()`
+- `Rayfield:ImportCode(code) -> (boolean, string)`
+- `Rayfield:ImportSettings() -> (boolean, string)`
+- `Rayfield:ExportSettings() -> (string|nil, string)`
+- `Rayfield:CopyShareCode() -> (boolean, string)`
+- `Rayfield:SetUIPreset(name) -> (boolean, string)`
+- `Rayfield:GetUIPreset() -> string`
+- `Rayfield:SetTransitionProfile(name) -> (boolean, string)`
+- `Rayfield:GetTransitionProfile() -> string`
+- `Rayfield:ListControls() -> {id, tabId, name, type, flag, pinned}[]`
+- `Rayfield:PinControl(idOrFlag) -> (boolean, string)`
+- `Rayfield:UnpinControl(idOrFlag) -> (boolean, string)`
+- `Rayfield:GetPinnedControls() -> string[]`
+- `Rayfield:ShowOnboarding(force?) -> (boolean, string)`
+- `Rayfield:SetOnboardingSuppressed(boolean) -> (boolean, string)`
+- `Rayfield:IsOnboardingSuppressed() -> boolean`
+- `Rayfield:GetThemeStudioState() -> table`
+- `Rayfield:ApplyThemeStudioTheme(themeOrName) -> (boolean, string)`
+- `Rayfield:ResetThemeStudio() -> (boolean, string)`
+- `Rayfield:CreateFeatureScope(name?) -> (string|nil, string)`
+- `Rayfield:TrackFeatureConnection(scopeId, connection) -> (boolean, string)`
+- `Rayfield:TrackFeatureTask(scopeId, taskHandle) -> (boolean, string)`
+- `Rayfield:TrackFeatureInstance(scopeId, instance, metadata?) -> (boolean, string)`
+- `Rayfield:TrackFeatureCleanup(scopeId, cleanupFn) -> (boolean, string)`
+- `Rayfield:CleanupFeatureScope(scopeId, destroyInstances?) -> (boolean, string)`
+- `Rayfield:GetFeatureCleanupStats() -> table`
+- `Rayfield:GetRuntimeDiagnostics() -> table`
 - `Rayfield:GetAnimationEngine()`
+
+### Share Code API
+
+- Share code format: `RFSC1:<base64(json)>`
+- Payload contract:
+  - `type = "rayfield_share"`
+  - `version = 1`
+  - `configuration = table`
+  - `internalSettings = table`
+  - `meta = { generatedAt, interfaceBuild, release }`
+- Import is strict and requires full payload (`configuration` + `internalSettings`).
+- `ImportCode` only validates and stores active code.
+- `ImportSettings` applies the active code payload and then auto-persists both config + internal settings.
+- `ExportSettings` works even when `ConfigurationSaving.Enabled = false`.
+
+### UI Experience API
+
+- UI presets:
+  - `SetUIPreset("Compact"|"Comfort"|"Focus")`
+  - Non-destructive: preset does not overwrite script business flags.
+- Transition profiles:
+  - `SetTransitionProfile("Minimal"|"Smooth"|"Snappy"|"Off")`
+  - Applied globally through animation engine.
+- Favorites:
+  - `ListControls()` returns control metadata.
+  - `PinControl/UnpinControl` accepts either favorite ID or raw `Flag`.
+  - Element API also supports `GetFavoriteId/Pin/Unpin/IsPinned`.
+- Theme Studio:
+  - `GetThemeStudioState()` returns `{ baseTheme, useCustom, customThemePacked }`.
+  - `ApplyThemeStudioTheme("ThemeName")` applies built-in theme.
+  - `ApplyThemeStudioTheme({ key = Color3|{R,G,B}, ... })` applies custom palette.
+- Onboarding:
+  - `ShowOnboarding(true)` bypasses suppression.
+  - Checkbox label in onboarding UI: `Don't show this again`.
+
+`CreateWindow` setting note:
+- `ToggleUIKeybind` hỗ trợ key đơn (`"K"`) hoặc sequence canonical (`"LeftControl+K>LeftShift+M"`).
+- `ConfigurationSaving.Layout` (optional):
+  - `Enabled` (default: follow `ConfigurationSaving.Enabled`)
+  - `DebounceMs` (default: `300`)
+  - layout is stored internally under config key `__rayfield_layout`.
+- `ViewportVirtualization` (optional, non-breaking):
+  - `Enabled` (default: `true`)
+  - `AlwaysOn` (default: `true`)
+  - `FullSuspend` (default: `true`)
+  - `OverscanPx` (default: `120`)
+  - `UpdateHz` (default: `30`)
+  - `FadeOnScroll` (default: `true`)
+  - `DisableFadeDuringResize` (default: `true`)
+  - `ResizeDebounceMs` (default: `100`)
+  - `MinElementsToActivate` (default: `0`)
+  - scope: main tab, split tab panels, detached floating windows, mini-window scrolling hosts.
+- `PerformanceProfile` (optional, non-breaking, opt-in):
+  - `Enabled` (default: `false`)
+  - `Mode` = `"auto" | "potato" | "mobile" | "normal"` (default: `"auto"`)
+  - `Aggressive` (default: `true`)
+  - `DisableDetach` (optional override)
+  - `DisableTabSplit` (optional override)
+  - `DisableAnimations` (optional override)
+  - `ViewportVirtualization` (optional override block for low-spec tuning)
+  - behavior rules:
+    - if `Enabled ~= true`: no behavior changes from legacy/default flow
+    - if `Enabled == true`: profile only fills missing fields; explicit user settings win
+    - `Mode="auto"` uses performance-first rule: touch device => `mobile`, non-touch => `potato`
 
 ### Unified Animation API
 
@@ -49,13 +147,22 @@ Tab element factories:
 - `Tab:CreateButton(settings)`
 - `Tab:CreateColorPicker(settings)`
 - `Tab:CreateSection(sectionName)`
+- `Tab:CreateCollapsibleSection(settings)`
 - `Tab:CreateDivider()`
 - `Tab:CreateLabel(text, icon?, color?, ignoreTheme?)`
 - `Tab:CreateParagraph(settings)`
 - `Tab:CreateInput(settings)`
 - `Tab:CreateDropdown(settings)`
+- `Tab:CreateNumberStepper(settings)`
+- `Tab:CreateConfirmButton(settings)`
+- `Tab:CreateImage(settings)`
+- `Tab:CreateGallery(settings)`
+- `Tab:CreateChart(settings)`
+- `Tab:CreateLogConsole(settings)`
 - `Tab:CreateKeybind(settings)`
 - `Tab:CreateToggle(settings)`
+- `Tab:CreateToggleBind(settings)` (wrapper bật keybind cho toggle)
+- `Tab:CreateHotToggle(settings)` (alias của `CreateToggleBind`)
 - `Tab:CreateSlider(settings)`
 - `Tab:CreateTrackBar(settings)`
 - `Tab:CreateStatusBar(settings)`
@@ -76,6 +183,35 @@ Tab element factories:
 - Supports `TextFormatter(current, max, percent)`.
 - Default `Draggable = false`.
 
+### Dynamic Sequence Keybind
+
+`CreateKeybind` hỗ trợ sequence canonical (tối đa 4 bước, timeout mặc định 800ms):
+
+- `CurrentKeybind = "LeftControl+A>LeftShift+K"`
+- vẫn hỗ trợ key đơn cũ, ví dụ `"Q"`
+- custom:
+  - `DisplayFormatter(canonical, steps)` để đổi text hiển thị
+  - `ParseInput(text)` để parse text nhập tay
+  - `MaxSteps` (mặc định `4`)
+  - `StepTimeoutMs` (mặc định `800`)
+
+### Toggle With Keybind
+
+`CreateToggle` hỗ trợ keybind riêng:
+
+- `Keybind = {`
+- `Enabled = true,`
+- `CurrentKeybind = "LeftControl+T",`
+- `DisplayFormatter = function(canonical, steps) ... end,`
+- `ParseInput = function(text) ... end,`
+- `MaxSteps = 4,`
+- `StepTimeoutMs = 800,`
+- `Flag = "MyToggleKeybindFlag" -- optional, để lưu config riêng`
+- `}`
+
+Khi `Keybind.Enabled = true`, toggle hiển thị ô keybind ở bên trái switch.
+Keybind của toggle vẫn hoạt động khi UI đang hidden/minimized.
+
 Tab utility methods:
 - `Tab:GetElements()`
 - `Tab:FindElement(name)`
@@ -89,6 +225,12 @@ Each created element is extended with:
 - `:Hide()`
 - `:SetVisible(boolean)`
 - `:GetParent()`
+- `:SetTooltip(textOrOptions)`
+- `:ClearTooltip()`
+- `:GetFavoriteId()`
+- `:Pin()`
+- `:Unpin()`
+- `:IsPinned()`
 - `.Name`
 - `.Type`
 
@@ -100,6 +242,76 @@ If detach system is active, elements also expose:
 
 Dropdown special method:
 - `Dropdown:Clear()`
+- `Dropdown:SetSearchQuery(text)` (khi `SearchEnabled = true`)
+- `Dropdown:GetSearchQuery()`
+- `Dropdown:ClearSearch()`
+
+Dropdown searchable mode:
+- `SearchEnabled` (default: `false`)
+- `SearchPlaceholder` (default: `"Search..."`)
+- `ResetSearchOnRefresh` (default: `true`)
+- search matcher: case-insensitive contains
+
+Dropdown state normalization:
+- `CurrentOption` is normalized internally as a table (including single-select).
+- `DefaultSelection` (optional):
+  - used as fallback when selection is cleared/invalid and `ClearBehavior` allows fallback.
+- `ClearBehavior` (optional):
+  - `"default"` (default): clear invalid/empty selection to `DefaultSelection` if valid, otherwise `None`.
+  - `"none"`: clear to empty selection (`None`) without default fallback.
+- `OnSelectionNormalized(selection, meta)` (optional callback):
+  - receives normalized selection and metadata (`reason`, `fallbackApplied`, `changed`).
+
+Element state sync contract (core stateful elements):
+- `CreateDropdown`, `CreateToggle`, `CreateInput`, `CreateSlider`, `CreateTrackBar`, `CreateStatusBar`
+  now run internal pipeline:
+  - `normalize -> applyVisual -> emitCallback -> persist`
+- auto-normalize/fallback paths emit callback and persist normalized value (unless `Ext`).
+
+### Element Expansion Pack v1
+
+`CreateNumberStepper(settings)`:
+- `Name, Flag?, CurrentValue, Min, Max, Step, Precision, Callback`
+- methods: `Set, Get, Increment, Decrement`
+- persist: numeric value (`Flag` required)
+
+`CreateConfirmButton(settings)`:
+- `Name, Callback`
+- `ConfirmMode = "hold" | "double" | "either"` (default: `hold`)
+- `HoldDuration` default `1.2`
+- `DoubleWindow` default `0.4`
+- `Timeout` default `2.0`
+- methods: `Arm, Cancel, SetMode, SetHoldDuration, SetDoubleWindow`
+
+`CreateCollapsibleSection(settings)`:
+- `Name, Id?, Collapsed?, PersistState?, ImplicitScope?`
+- methods: `Collapse, Expand, Toggle, IsCollapsed, Set`
+- hybrid grouping:
+  - implicit: element tạo sau section sẽ vào section đó
+  - explicit override: truyền `ParentSection = sectionObject` vào element settings
+- collapsed state lưu ở internal settings: `Layout.collapsedSections`
+
+`CreateImage(settings)`:
+- `Name?, Flag?, Source, FitMode("fill"|"fit"), Height, CornerRadius, Caption?`
+- methods: `SetSource, GetSource, SetFitMode, SetCaption`
+- source hỗ trợ `rbxassetid://` + URL (best-effort theo executor)
+
+`CreateGallery(settings)`:
+- `Name, Flag?, Items, SelectionMode("single"|"multi"), Columns("auto"|number), Callback`
+- methods: `SetItems, AddItem, RemoveItem, Select, Deselect, ClearSelection, SetSelection, GetSelection`
+- persist: selected id(s)
+
+`CreateChart(settings)`:
+- `Name, Flag?, MaxPoints=300, UpdateHz=10, Preset?, ShowAreaFill=true`
+- methods: `AddPoint(y, x?), SetData(points), GetData(), Clear(), SetPreset(name|nil), Zoom(factor), Pan(delta)`
+- supports zoom buttons + drag pan
+- persist: full retained snapshot (`points + viewport`, capped by `MaxPoints`)
+
+`CreateLogConsole(settings)`:
+- `Name, Flag?, CaptureMode("manual"|"global"|"both"), MaxEntries=500, AutoScroll=true, ShowTimestamp=true`
+- methods: `Log(level,text), Info, Warn, Error, Clear, SetCaptureMode, GetEntries`
+- global mode uses `LogService.MessageOut` (all output)
+- persist: full retained entries (`MaxEntries` cap)
 
 ## Enhanced Wrapper (`rayfield-enhanced.lua`)
 
@@ -139,8 +351,28 @@ Added methods on `EnhancedRayfield`:
 - `GetErrorLog()`
 - `ForceCleanup()`
 - `GetMemoryReport()`
+- `GetAttributionReport()`
 - `GetPerformanceReport()`
 - `GetAuditLog()`
+
+Memory leak detector scan control:
+- `detector:setScanMode("ui" | "mixed" | "game")`
+- `detector:setScanRoots({instance1, instance2, ...})` (or `nil` to reset)
+- default mode: `"ui"` (quét UI roots của Rayfield)
+- `detector:setAttributionPolicy(policy)`
+  - `mode = "weighted"` (default)
+  - `triggerScore = 70` (default)
+  - `confirmCycles = 2` (default)
+  - `unknownNotifyOncePerSession = true` (default)
+- `detector:getAttributionReport()`
+  - `lastScore`
+  - `lastClassification` (`"rayfield_ui"` | `"unknown"`)
+  - `confirmStreak`
+  - `lastEvidence`
+
+Attribution behavior:
+- Emergency cleanup chỉ được phép trigger khi leak được phân loại `rayfield_ui` và đạt confirm streak theo policy.
+- Nếu phân loại `unknown`, hệ thống chỉ thông báo qua notification (throttle theo policy), không emergency.
 
 Compatibility:
 - Backward-compat animation API (`RayfieldAdvanced.AnimationAPI.new()`) is no longer part of canonical runtime.
@@ -176,7 +408,12 @@ Canonical test paths:
 - `tests/smoke/rayfield-smoke-test.lua`
 - `tests/regression/test-animation-api.lua`
 - `tests/regression/test-unified-animation-api.lua`
+- `tests/regression/test-keybind-sequence.lua`
+- `tests/regression/test-element-sync-consistency.lua`
+- `tests/regression/test-share-code-workflow.lua`
+- `tests/regression/test-element-expansion-pack.lua`
 
 Root wrapper scripts:
 - `rayfield-smoke-test.lua`
 - `test-animation-api.lua`
+- `test-keybind-sequence.lua`

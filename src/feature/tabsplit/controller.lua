@@ -36,6 +36,7 @@ end
 local TabSplitStateLib = loadSubmodule("state", "src/feature/tabsplit/state.lua")
 local TabSplitPanelLib = loadSubmodule("panel", "src/feature/tabsplit/panel.lua")
 local TabSplitDragDockLib = loadSubmodule("dragdock", "src/feature/tabsplit/dragdock.lua")
+local TabSplitReorderLib = loadSubmodule("reorder_tab_split", "src/feature/tabsplit/reorder_tab_split.lua")
 
 function TabSplitModule.init(ctx)
 	local self = {}
@@ -77,6 +78,8 @@ function TabSplitModule.init(ctx)
 	local splitHidden = false
 	local splitMinimized = false
 	local splitIndex = 0
+	local layoutDirtyCallback = type(ctx.onLayoutDirty) == "function" and ctx.onLayoutDirty or nil
+	local viewportVirtualization = ctx.ViewportVirtualization
 
 	local rootConnections = {}
 	local tabZIndexState = setmetatable({}, { __mode = "k" })
@@ -91,6 +94,14 @@ function TabSplitModule.init(ctx)
 	local TAB_CUE_HOVER_THICKNESS = 1.35
 	local TAB_CUE_HOLD_THICKNESS = 1.9
 	local TAB_CUE_READY_THICKNESS = 2.2
+	local REDUCED_EFFECTS = self.useMobileSizing == true
+
+	local function notifyLayoutDirty(reason)
+		if type(layoutDirtyCallback) ~= "function" then
+			return
+		end
+		pcall(layoutDirtyCallback, "tabsplit", reason or "tabsplit_layout_changed")
+	end
 
 	local stateManager = TabSplitStateLib.create({
 		UserInputService = self.UserInputService,
@@ -405,7 +416,7 @@ function TabSplitModule.init(ctx)
 			return false, "Tab split is temporarily blocked while UI is busy."
 		end
 		if not tabRecord then
-			return false, "Invalid tab."
+			return false, "Rayfield Mod: Invalid Tab ID in Splitter"
 		end
 		if tabRecord.IsSplit then
 			return false, "This tab is already split."
@@ -435,6 +446,72 @@ function TabSplitModule.init(ctx)
 			end
 		end
 		return nil
+	end
+
+	local function getTabPersistenceId(tabRecord)
+		if not tabRecord then
+			return nil
+		end
+		if type(tabRecord.PersistenceId) == "string" and tabRecord.PersistenceId ~= "" then
+			return tabRecord.PersistenceId
+		end
+		if type(tabRecord.Name) == "string" and tabRecord.Name ~= "" then
+			return tabRecord.Name
+		end
+		return nil
+	end
+
+	local function getVirtualHostId(tabRecord)
+		local persistenceId = getTabPersistenceId(tabRecord)
+		if not persistenceId then
+			return nil
+		end
+		return "tab:" .. tostring(persistenceId)
+	end
+
+	local function virtualRegisterHost(tabRecord)
+		if not (viewportVirtualization and type(viewportVirtualization.registerHost) == "function") then
+			return
+		end
+		local hostId = getVirtualHostId(tabRecord)
+		if hostId and tabRecord and tabRecord.TabPage and tabRecord.TabPage.Parent then
+			pcall(viewportVirtualization.registerHost, hostId, tabRecord.TabPage, {
+				mode = "auto"
+			})
+		end
+	end
+
+	local function virtualUnregisterHost(tabRecord)
+		if not (viewportVirtualization and type(viewportVirtualization.unregisterHost) == "function") then
+			return
+		end
+		local hostId = getVirtualHostId(tabRecord)
+		if hostId then
+			pcall(viewportVirtualization.unregisterHost, hostId)
+		end
+	end
+
+	local function virtualRefreshHost(tabRecord, reason)
+		if not (viewportVirtualization and type(viewportVirtualization.refreshHost) == "function") then
+			return
+		end
+		local hostId = getVirtualHostId(tabRecord)
+		if hostId then
+			pcall(viewportVirtualization.refreshHost, hostId, reason or "tabsplit_refresh")
+		end
+	end
+
+	local function virtualSetHostSuppressed(tabRecord, suppressed, reason)
+		if not (viewportVirtualization and type(viewportVirtualization.setHostSuppressed) == "function") then
+			return
+		end
+		local hostId = getVirtualHostId(tabRecord)
+		if hostId then
+			pcall(viewportVirtualization.setHostSuppressed, hostId, suppressed == true)
+			if suppressed ~= true then
+				pcall(viewportVirtualization.refreshHost, hostId, reason or "tabsplit_unsuppress")
+			end
+		end
 	end
 
 	setPanelHoverState = function(panelData, active, instant)
@@ -496,13 +573,38 @@ function TabSplitModule.init(ctx)
 		setPanelHoverState(panelData, panelData.HoverActive or panelData.Dragging, true)
 	end
 
-	local function removePanelRecord(panelId)
+	local function removePanelOrderEntry(panelId)
+		if type(TabSplitReorderLib) == "table" and type(TabSplitReorderLib.removePanel) == "function" then
+			local ok, removed = pcall(TabSplitReorderLib.removePanel, panelOrder, panelId)
+			if ok then
+				return removed == true
+			end
+		end
+
 		for i = #panelOrder, 1, -1 do
 			if panelOrder[i] == panelId then
 				table.remove(panelOrder, i)
-				break
+				return true
 			end
 		end
+		return false
+	end
+
+	local function appendPanelOrderEntry(panelId)
+		if type(TabSplitReorderLib) == "table" and type(TabSplitReorderLib.appendPanel) == "function" then
+			local ok, appended = pcall(TabSplitReorderLib.appendPanel, panelOrder, panelId)
+			if ok and appended then
+				return true
+			end
+		end
+
+		removePanelOrderEntry(panelId)
+		table.insert(panelOrder, panelId)
+		return true
+	end
+
+	local function removePanelRecord(panelId)
+		removePanelOrderEntry(panelId)
 		splitPanels[panelId] = nil
 	end
 
@@ -532,13 +634,14 @@ function TabSplitModule.init(ctx)
 			return
 		end
 
-		for i = #panelOrder, 1, -1 do
-			if panelOrder[i] == panelData.Id then
-				table.remove(panelOrder, i)
-				break
+		if type(TabSplitReorderLib) == "table" and type(TabSplitReorderLib.bringToFront) == "function" then
+			local ok, moved = pcall(TabSplitReorderLib.bringToFront, panelOrder, panelData.Id)
+			if not ok or not moved then
+				appendPanelOrderEntry(panelData.Id)
 			end
+		else
+			appendPanelOrderEntry(panelData.Id)
 		end
-		table.insert(panelOrder, panelData.Id)
 		self.layoutPanels()
 	end
 
@@ -636,6 +739,8 @@ function TabSplitModule.init(ctx)
 				end
 			end
 		end
+
+		notifyLayoutDirty("layout_panels")
 	end
 
 	function self.splitTab(tabRecord, dropPoint)
@@ -668,7 +773,7 @@ function TabSplitModule.init(ctx)
 
 		local panelData = createPanelShell(tabRecord)
 		splitPanels[panelData.Id] = panelData
-		table.insert(panelOrder, panelData.Id)
+		appendPanelOrderEntry(panelData.Id)
 		tabToPanel[tabRecord] = panelData.Id
 
 		local root = ensureSplitRoot()
@@ -698,24 +803,27 @@ function TabSplitModule.init(ctx)
 		tabRecord.TabPage.Active = true
 		panelData.Content.Active = true
 		panelData.Content.ClipsDescendants = true
+		virtualSetHostSuppressed(tabRecord, splitHidden or splitMinimized, "tab_split")
+		virtualRefreshHost(tabRecord, "tab_split")
 
 		captureOriginalZIndex(tabRecord)
 		bringPanelToFront(panelData)
 		self.layoutPanels()
 		refreshRootVisibility()
 		self.syncMinimized(splitMinimized)
+		notifyLayoutDirty("tab_split")
 
 		return true
 	end
 
 	function self.dockTab(tabRecord)
 		if not tabRecord then
-			return false
+			return false, "Rayfield Mod: Invalid Tab ID in Splitter"
 		end
 
 		local panelId = tabToPanel[tabRecord] or tabRecord.SplitPanelId
 		if not panelId then
-			return false
+			return false, "Rayfield Mod: Tab is not currently split"
 		end
 
 		local panelData = splitPanels[panelId]
@@ -724,7 +832,7 @@ function TabSplitModule.init(ctx)
 			tabRecord.SplitPanelId = nil
 			tabToPanel[tabRecord] = nil
 			restoreOriginalZIndex(tabRecord)
-			return false
+			return false, "Rayfield Mod: Invalid Tab ID in Splitter (stale split panel)"
 		end
 
 		if tabRecord.TabPage then
@@ -734,6 +842,8 @@ function TabSplitModule.init(ctx)
 			tabRecord.TabPage.Size = UDim2.new(1, 0, 1, 0)
 			tabRecord.TabPage.Visible = true
 			tabRecord.TabPage.Active = true
+			virtualSetHostSuppressed(tabRecord, false, "tab_dock")
+			virtualRefreshHost(tabRecord, "tab_dock")
 		end
 
 		restoreOriginalZIndex(tabRecord)
@@ -762,6 +872,7 @@ function TabSplitModule.init(ctx)
 		end
 
 		self.layoutPanels()
+		notifyLayoutDirty("tab_dock")
 		return true
 	end
 
@@ -793,6 +904,7 @@ function TabSplitModule.init(ctx)
 				break
 			end
 		end
+		virtualUnregisterHost(tabRecord)
 	end
 
 	function self.registerTab(tabRecord)
@@ -807,6 +919,9 @@ function TabSplitModule.init(ctx)
 		tabRecord.IsSplit = false
 		tabRecord.SplitPanelId = nil
 		tabRecord.SuppressNextClick = false
+		virtualRegisterHost(tabRecord)
+		virtualSetHostSuppressed(tabRecord, splitHidden or splitMinimized, "tab_register")
+		virtualRefreshHost(tabRecord, "tab_register")
 		captureOriginalZIndex(tabRecord)
 
 		local interact = tabRecord.TabButton:FindFirstChild("Interact")
@@ -844,7 +959,12 @@ function TabSplitModule.init(ctx)
 				return false
 			end
 
-			if state.cueFrame and state.cueFrame.Parent and state.cueStroke and state.cueGlowStroke and state.cueBlurStroke then
+			if state.cueFrame
+				and state.cueFrame.Parent
+				and state.cueStroke
+				and state.cueGlowStroke
+				and (REDUCED_EFFECTS or state.cueBlurStroke)
+			then
 				return true
 			end
 
@@ -884,12 +1004,16 @@ function TabSplitModule.init(ctx)
 			state.cueGlowStroke.Transparency = 1
 			state.cueGlowStroke.Parent = state.cueFrame
 
-			state.cueBlurStroke = Instance.new("UIStroke")
-			state.cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-			state.cueBlurStroke.Color = getCueColor()
-			state.cueBlurStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 3.2
-			state.cueBlurStroke.Transparency = 1
-			state.cueBlurStroke.Parent = state.cueFrame
+			if not REDUCED_EFFECTS then
+				state.cueBlurStroke = Instance.new("UIStroke")
+				state.cueBlurStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+				state.cueBlurStroke.Color = getCueColor()
+				state.cueBlurStroke.Thickness = TAB_CUE_IDLE_THICKNESS + 3.2
+				state.cueBlurStroke.Transparency = 1
+				state.cueBlurStroke.Parent = state.cueFrame
+			else
+				state.cueBlurStroke = nil
+			end
 
 			state.cueThemeConnection = self.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
 				local cueColor = getCueColor()
@@ -928,7 +1052,7 @@ function TabSplitModule.init(ctx)
 					state.cueGlowStroke.Transparency = glowTransparency
 					state.cueGlowStroke.Thickness = glowThickness
 				end
-				if state.cueBlurStroke and state.cueBlurStroke.Parent then
+				if (not REDUCED_EFFECTS) and state.cueBlurStroke and state.cueBlurStroke.Parent then
 					state.cueBlurStroke.Transparency = blurTransparency
 					state.cueBlurStroke.Thickness = blurThickness
 				end
@@ -946,7 +1070,7 @@ function TabSplitModule.init(ctx)
 					Thickness = glowThickness
 				}):Play()
 			end
-			if state.cueBlurStroke and state.cueBlurStroke.Parent then
+			if (not REDUCED_EFFECTS) and state.cueBlurStroke and state.cueBlurStroke.Parent then
 				self.Animation:Create(state.cueBlurStroke, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 					Transparency = blurTransparency,
 					Thickness = blurThickness
@@ -1174,9 +1298,98 @@ function TabSplitModule.init(ctx)
 		}
 	end
 
+	function self.setLayoutDirtyCallback(callback)
+		layoutDirtyCallback = type(callback) == "function" and callback or nil
+	end
+
+	function self.getLayoutSnapshot()
+		local snapshot = {
+			version = 1,
+			panels = {}
+		}
+
+		for tabRecord, panelId in pairs(tabToPanel) do
+			local persistenceId = getTabPersistenceId(tabRecord)
+			local panelData = panelId and splitPanels[panelId] or nil
+			if persistenceId and panelData and panelData.Frame and panelData.Frame.Parent then
+				local frame = panelData.Frame
+				local pos = frame.Position
+				local size = frame.Size
+				snapshot.panels[persistenceId] = {
+					position = {
+						x = pos.X.Offset,
+						y = pos.Y.Offset
+					},
+					size = {
+						x = size.X.Offset,
+						y = size.Y.Offset
+					}
+				}
+			end
+		end
+
+		return snapshot
+	end
+
+	function self.applyLayoutSnapshot(snapshot)
+		if type(snapshot) ~= "table" then
+			return false
+		end
+
+		local panels = snapshot.panels
+		if type(panels) ~= "table" then
+			return false
+		end
+
+		for _, tabRecord in ipairs(tabRecords) do
+			local persistenceId = getTabPersistenceId(tabRecord)
+			local panelLayout = persistenceId and panels[persistenceId] or nil
+			if type(panelLayout) == "table" and panelLayout.position and not tabRecord.IsSplit then
+				local size = panelLayout.size or {}
+				local width = tonumber(size.x) or 300
+				local height = tonumber(size.y) or 220
+				local x = tonumber(panelLayout.position.x) or 0
+				local y = tonumber(panelLayout.position.y) or 0
+				local dropPoint = Vector2.new(
+					x + math.floor(width * 0.5),
+					y + 16
+				)
+				local splitOk = self.splitTab(tabRecord, dropPoint)
+				if splitOk then
+					local panelId = tabToPanel[tabRecord]
+					local panelData = panelId and splitPanels[panelId] or nil
+					if panelData and panelData.Frame and panelData.Frame.Parent then
+						local root = ensureSplitRoot()
+						local targetWidth = math.max(math.floor(width), 250)
+						local targetHeight = math.max(math.floor(height), 180)
+						local targetSize = Vector2.new(targetWidth, targetHeight)
+						local clamped = clampPositionToViewport(root, Vector2.new(x, y), targetSize)
+						panelData.ManualPosition = clamped
+						panelData.Frame.Size = UDim2.fromOffset(targetWidth, targetHeight)
+						panelData.Frame.Position = UDim2.fromOffset(clamped.X, clamped.Y)
+					end
+				end
+			elseif panelLayout == nil and tabRecord.IsSplit then
+				self.dockTab(tabRecord)
+			end
+		end
+
+		self.layoutPanels()
+		refreshRootVisibility()
+		return true
+	end
+
 	function self.syncHidden(isHidden)
 		splitHidden = isHidden and true or false
 		refreshRootVisibility()
+		for tabRecord, panelId in pairs(tabToPanel) do
+			if panelId then
+				virtualSetHostSuppressed(tabRecord, splitHidden or splitMinimized, "sync_hidden")
+				if not splitHidden and not splitMinimized then
+					virtualRefreshHost(tabRecord, "sync_hidden_visible")
+				end
+			end
+		end
 	end
 
 	function self.syncMinimized(isMinimized)
@@ -1195,6 +1408,14 @@ function TabSplitModule.init(ctx)
 				end
 			end
 		end
+		for tabRecord, panelId in pairs(tabToPanel) do
+			if panelId then
+				virtualSetHostSuppressed(tabRecord, splitHidden or splitMinimized, "sync_minimized")
+				if not splitHidden and not splitMinimized then
+					virtualRefreshHost(tabRecord, "sync_minimized_visible")
+				end
+			end
+		end
 	end
 
 	function self.destroy()
@@ -1210,6 +1431,10 @@ function TabSplitModule.init(ctx)
 
 		for _, panelData in pairs(splitPanels) do
 			cleanupPanel(panelData)
+		end
+
+		for _, tabRecord in ipairs(tabRecords) do
+			virtualUnregisterHost(tabRecord)
 		end
 
 		table.clear(splitPanels)

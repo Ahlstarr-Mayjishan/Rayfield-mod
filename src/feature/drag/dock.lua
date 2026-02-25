@@ -39,7 +39,13 @@ local function parentUsesLayoutOrder(parent)
 		return false
 	end
 	local listLayout = parent:FindFirstChildOfClass("UIListLayout")
-	return listLayout ~= nil and listLayout.SortOrder == Enum.SortOrder.LayoutOrder
+	if not listLayout then
+		return false
+	end
+	if listLayout.SortOrder ~= Enum.SortOrder.LayoutOrder then
+		listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	end
+	return true
 end
 
 local function resolveInsertIndexFromState(parent, state, ordered)
