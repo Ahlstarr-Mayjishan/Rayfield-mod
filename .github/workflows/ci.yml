@@ -247,7 +247,7 @@ jobs:
         run: stylua .
 
       - name: Commit formatted files
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore(ci): auto-format lua files with stylua"
           file_pattern: "**/*.lua"
