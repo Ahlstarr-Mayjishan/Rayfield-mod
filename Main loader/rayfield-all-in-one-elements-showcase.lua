@@ -200,14 +200,21 @@ local function getBootTimeoutSeconds()
 	return 12
 end
 
-local function tryFetchAndRun(url, label)
+local function getQuickSetupTimeoutSeconds()
+	local configured = type(_G) == "table" and tonumber(_G.__RAYFIELD_SHOWCASE_QUICKSETUP_TIMEOUT_SEC) or nil
+	if configured and configured > 0 then
+		return configured
+	end
+	local bootTimeout = getBootTimeoutSeconds()
+	return math.max(20, bootTimeout * 3)
+end
+
+local function callWithTimeout(timeoutSeconds, workFn)
 	local finished = false
 	local ok = false
 	local resultOrErr = nil
-	local timeoutSeconds = getBootTimeoutSeconds()
-	logLine("BOOT", "tryFetchAndRun start | label=" .. tostring(label) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
 	local worker = task.spawn(function()
-		ok, resultOrErr = pcall(fetchAndRun, url, label)
+		ok, resultOrErr = pcall(workFn)
 		finished = true
 	end)
 
@@ -218,17 +225,31 @@ local function tryFetchAndRun(url, label)
 
 	if not finished then
 		pcall(task.cancel, worker)
-		local timeoutMsg = "timeout after " .. tostring(timeoutSeconds) .. "s"
-		logLine("ERROR", "tryFetchAndRun timeout | label=" .. tostring(label) .. " | url=" .. tostring(url))
-		return false, timeoutMsg
+		return false, "timeout after " .. tostring(timeoutSeconds) .. "s", "timeout"
 	end
+	if not ok then
+		return false, resultOrErr, "error"
+	end
+	return true, resultOrErr, "ok"
+end
 
-	if ok then
-		logLine("BOOT", "tryFetchAndRun success | label=" .. tostring(label) .. " | resultType=" .. tostring(type(resultOrErr)))
-		return true, resultOrErr
+local function tryFetchAndRun(url, label)
+	local timeoutSeconds = getBootTimeoutSeconds()
+	logLine("BOOT", "tryFetchAndRun start | label=" .. tostring(label) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
+	local okCall, resultOrErr, status = callWithTimeout(timeoutSeconds, function()
+		return fetchAndRun(url, label)
+	end)
+	if not okCall then
+		if status == "timeout" then
+			local timeoutMsg = "timeout after " .. tostring(timeoutSeconds) .. "s"
+			logLine("ERROR", "tryFetchAndRun timeout | label=" .. tostring(label) .. " | url=" .. tostring(url))
+			return false, timeoutMsg
+		end
+		logLine("ERROR", "tryFetchAndRun failed | label=" .. tostring(label) .. " | error=" .. tostring(resultOrErr))
+		return false, resultOrErr
 	end
-	logLine("ERROR", "tryFetchAndRun failed | label=" .. tostring(label) .. " | error=" .. tostring(resultOrErr))
-	return false, resultOrErr
+	logLine("BOOT", "tryFetchAndRun success | label=" .. tostring(label) .. " | resultType=" .. tostring(type(resultOrErr)))
+	return true, resultOrErr
 end
 
 local function isReadyUI(candidate)
@@ -392,6 +413,15 @@ local function tryBootstrapFromAllInOne(reasons)
 	end
 
 	if type(loadedOrErr) == "table" and type(loadedOrErr.quickSetup) == "function" then
+		bootLog("all-in-one returned loader table; entering quickSetup path")
+		if type(loadedOrErr.configure) == "function" then
+			local okConfigure, configureErr = pcall(loadedOrErr.configure, {
+				autoReload = false,
+				autoReloadEnabled = false
+			})
+			bootLog("all-in-one configure(autoReload=false) => " .. tostring(okConfigure and "ok" or configureErr))
+		end
+
 		local commonConfig = {
 			mode = "enhanced",
 			errorThreshold = 5,
@@ -399,29 +429,54 @@ local function tryBootstrapFromAllInOne(reasons)
 			autoCleanup = true
 		}
 
-		local okQuick, uiOrErr = pcall(loadedOrErr.quickSetup, {
-			mode = commonConfig.mode,
-			errorThreshold = commonConfig.errorThreshold,
-			rateLimit = commonConfig.rateLimit,
-			autoCleanup = commonConfig.autoCleanup,
-			forceReload = false
-		})
-		if okQuick and isReadyUI(uiOrErr) then
-			return uiOrErr
+		local function runQuickSetup(forceReload)
+			local timeoutSeconds = getQuickSetupTimeoutSeconds()
+			bootLog("quickSetup start | forceReload=" .. tostring(forceReload) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
+			local okQuick, uiOrErr, quickStatus = callWithTimeout(timeoutSeconds, function()
+				return loadedOrErr.quickSetup({
+					mode = commonConfig.mode,
+					errorThreshold = commonConfig.errorThreshold,
+					rateLimit = commonConfig.rateLimit,
+					autoCleanup = commonConfig.autoCleanup,
+					forceReload = forceReload
+				})
+			end)
+			if okQuick and isReadyUI(uiOrErr) then
+				bootLog("quickSetup success | forceReload=" .. tostring(forceReload))
+				return true, uiOrErr
+			end
+			if isReadyUI(_G and _G.RayfieldUI) then
+				bootLog("quickSetup produced global _G.RayfieldUI")
+				return true, _G.RayfieldUI
+			end
+			if isReadyRayfield(_G and _G.Rayfield) then
+				bootLog("quickSetup produced global _G.Rayfield")
+				return true, wrapRayfieldAsUI(_G.Rayfield, "global")
+			end
+			local reason = nil
+			if not okQuick then
+				if quickStatus == "timeout" then
+					reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") timeout after " .. tostring(timeoutSeconds) .. "s"
+				else
+					reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") failed: " .. tostring(uiOrErr)
+				end
+			else
+				reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") returned unusable value: " .. tostring(type(uiOrErr))
+			end
+			return false, reason
 		end
-		table.insert(reasons, "quickSetup(forceReload=false) failed: " .. tostring(uiOrErr))
 
-		okQuick, uiOrErr = pcall(loadedOrErr.quickSetup, {
-			mode = commonConfig.mode,
-			errorThreshold = commonConfig.errorThreshold,
-			rateLimit = commonConfig.rateLimit,
-			autoCleanup = commonConfig.autoCleanup,
-			forceReload = true
-		})
-		if okQuick and isReadyUI(uiOrErr) then
-			return uiOrErr
+		local okQuick, uiOrReason = runQuickSetup(false)
+		if okQuick then
+			return uiOrReason
 		end
-		table.insert(reasons, "quickSetup(forceReload=true) failed: " .. tostring(uiOrErr))
+		table.insert(reasons, tostring(uiOrReason))
+
+		okQuick, uiOrReason = runQuickSetup(true)
+		if okQuick then
+			return uiOrReason
+		end
+		table.insert(reasons, tostring(uiOrReason))
 		return nil
 	end
 
