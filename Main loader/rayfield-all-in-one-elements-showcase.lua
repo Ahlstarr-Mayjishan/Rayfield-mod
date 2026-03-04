@@ -3,6 +3,200 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+local function ensureExecPolicyEngine()
+	local globalEnv = type(_G) == "table" and _G or nil
+	local policyVersion = 2
+	if globalEnv
+		and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_VERSION) == policyVersion
+		and type(globalEnv.__RAYFIELD_EXEC_POLICY) == "table"
+		and type(globalEnv.__RAYFIELD_EXEC_POLICY.decideExecutionMode) == "function"
+		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markTimeout) == "function"
+		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markSuccess) == "function" then
+		return globalEnv.__RAYFIELD_EXEC_POLICY
+	end
+
+	local state = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_STATE or nil
+	if type(state) ~= "table" then
+		state = {}
+	end
+	if type(state.ops) ~= "table" then
+		state.ops = {}
+	end
+	if type(state.history) ~= "table" then
+		state.history = {}
+	end
+
+	local function pushHistory(entry)
+		table.insert(state.history, entry)
+		if #state.history > 240 then
+			table.remove(state.history, 1)
+		end
+	end
+
+	local function resolveConfig()
+		local configTable = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_CONFIG or nil
+		if type(configTable) ~= "table" then
+			configTable = {}
+		end
+
+		local mode = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_MODE or configTable.mode or "auto"
+		mode = string.lower(tostring(mode))
+		if mode ~= "auto" and mode ~= "soft" and mode ~= "hard" then
+			mode = "auto"
+		end
+
+		local escalateAfter = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER)
+			or tonumber(configTable.escalateAfter)
+			or tonumber(configTable.escalate_after)
+			or 2
+		escalateAfter = math.max(1, math.floor(escalateAfter))
+
+		local windowSec = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC)
+			or tonumber(configTable.windowSec)
+			or tonumber(configTable.window_sec)
+			or tonumber(configTable.timeoutWindowSec)
+			or 90
+		windowSec = math.max(1, windowSec)
+
+		return {
+			mode = mode,
+			escalateAfter = escalateAfter,
+			windowSec = windowSec
+		}
+	end
+
+	local function ensureOp(opKey)
+		local key = tostring(opKey or "default")
+		local op = state.ops[key]
+		if type(op) ~= "table" then
+			op = {
+				consecutiveTimeouts = 0,
+				lastTimeoutAt = nil,
+				lastSuccessAt = nil
+			}
+			state.ops[key] = op
+		end
+		return key, op
+	end
+
+	local policy = {}
+
+	function policy.decideExecutionMode(opKey, isBlocking, timeoutSeconds, now)
+		local cfg = resolveConfig()
+		local current = tonumber(now) or os.clock()
+		local key, op = ensureOp(opKey)
+		local mode = "soft"
+		local reason = "default-soft"
+
+		if cfg.mode == "hard" then
+			mode = "hard"
+			reason = "forced-hard"
+		elseif cfg.mode == "soft" then
+			mode = "soft"
+			reason = "forced-soft"
+		else
+			local streak = tonumber(op.consecutiveTimeouts) or 0
+			local withinWindow = type(op.lastTimeoutAt) == "number" and (current - op.lastTimeoutAt) <= cfg.windowSec
+			if streak >= math.max(1, cfg.escalateAfter - 1) and withinWindow then
+				mode = "hard"
+				reason = string.format("auto-escalated:%d/%d<=%ss", streak + 1, cfg.escalateAfter, tostring(cfg.windowSec))
+			elseif streak > 0 and withinWindow then
+				mode = "soft"
+				reason = string.format("auto-soft-streak:%d/%d", streak, cfg.escalateAfter)
+			else
+				mode = "soft"
+				reason = "auto-soft-reset"
+			end
+		end
+
+		op.lastDecision = mode
+		op.lastReason = reason
+		op.lastIsBlocking = isBlocking == true
+		op.lastTimeoutSeconds = timeoutSeconds
+		op.lastUpdatedAt = current
+		state.lastDecision = {
+			op = key,
+			mode = mode,
+			reason = reason,
+			at = current,
+			isBlocking = isBlocking == true,
+			timeoutSeconds = timeoutSeconds
+		}
+		pushHistory({
+			type = "decision",
+			op = key,
+			mode = mode,
+			reason = reason,
+			at = current
+		})
+
+		return {
+			mode = mode,
+			cancelOnTimeout = mode == "hard",
+			reason = reason
+		}
+	end
+
+	function policy.markTimeout(opKey, now, meta)
+		local cfg = resolveConfig()
+		local current = tonumber(now) or os.clock()
+		local key, op = ensureOp(opKey)
+		local withinWindow = type(op.lastTimeoutAt) == "number" and (current - op.lastTimeoutAt) <= cfg.windowSec
+		if withinWindow then
+			op.consecutiveTimeouts = (tonumber(op.consecutiveTimeouts) or 0) + 1
+		else
+			op.consecutiveTimeouts = 1
+		end
+		op.lastTimeoutAt = current
+		op.lastUpdatedAt = current
+		state.lastTimeout = {
+			op = key,
+			at = current,
+			consecutive = op.consecutiveTimeouts,
+			meta = meta
+		}
+		pushHistory({
+			type = "timeout",
+			op = key,
+			at = current,
+			consecutive = op.consecutiveTimeouts
+		})
+		return op.consecutiveTimeouts
+	end
+
+	function policy.markSuccess(opKey, now, meta)
+		local current = tonumber(now) or os.clock()
+		local key, op = ensureOp(opKey)
+		op.consecutiveTimeouts = 0
+		op.lastSuccessAt = current
+		op.lastUpdatedAt = current
+		state.lastSuccess = {
+			op = key,
+			at = current,
+			meta = meta
+		}
+		pushHistory({
+			type = "success",
+			op = key,
+			at = current
+		})
+	end
+
+	function policy.getState()
+		return state
+	end
+	policy.version = policyVersion
+
+	if globalEnv then
+		globalEnv.__RAYFIELD_EXEC_POLICY_STATE = state
+		globalEnv.__RAYFIELD_EXEC_POLICY = policy
+		globalEnv.__RAYFIELD_EXEC_POLICY_VERSION = policyVersion
+	end
+	return policy
+end
+
+local ExecPolicy = ensureExecPolicyEngine()
+
 local function createShowcaseLogger()
 	local logger = {
 		enabled = true,
@@ -211,6 +405,22 @@ end
 
 local function callWithTimeout(timeoutSeconds, workFn, options)
 	options = options or {}
+	local opKey = tostring(options.opKey or "showcase:unknown")
+	local isBlocking = options.isBlocking == true
+	local decision = ExecPolicy.decideExecutionMode(opKey, isBlocking, timeoutSeconds, os.clock())
+	local cancelOnTimeout = decision.cancelOnTimeout == true
+	if options.cancelOnTimeout ~= nil then
+		cancelOnTimeout = options.cancelOnTimeout == true
+		decision = {
+			mode = cancelOnTimeout and "hard" or "soft",
+			cancelOnTimeout = cancelOnTimeout,
+			reason = "override:options.cancelOnTimeout"
+		}
+	end
+	if type(options.onPolicyDecision) == "function" then
+		pcall(options.onPolicyDecision, decision, opKey, isBlocking, timeoutSeconds)
+	end
+
 	local finished = false
 	local ok = false
 	local resultOrErr = nil
@@ -225,24 +435,42 @@ local function callWithTimeout(timeoutSeconds, workFn, options)
 	end
 
 	if not finished then
-		if options.cancelOnTimeout == true then
+		if cancelOnTimeout then
 			pcall(task.cancel, worker)
 		end
-		return false, "timeout after " .. tostring(timeoutSeconds) .. "s", "timeout"
+		ExecPolicy.markTimeout(opKey, os.clock(), {
+			mode = decision.mode,
+			reason = decision.reason,
+			isBlocking = isBlocking,
+			timeoutSeconds = timeoutSeconds,
+			canceled = cancelOnTimeout
+		})
+		return false, "timeout after " .. tostring(timeoutSeconds) .. "s", "timeout", decision
 	end
 	if not ok then
-		return false, resultOrErr, "error"
+		return false, resultOrErr, "error", decision
 	end
-	return true, resultOrErr, "ok"
+	ExecPolicy.markSuccess(opKey, os.clock(), {
+		mode = decision.mode,
+		reason = decision.reason,
+		isBlocking = isBlocking,
+		timeoutSeconds = timeoutSeconds
+	})
+	return true, resultOrErr, "ok", decision
 end
 
 local function tryFetchAndRun(url, label)
 	local timeoutSeconds = getBootTimeoutSeconds()
 	logLine("BOOT", "tryFetchAndRun start | label=" .. tostring(label) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
+	local opKey = "showcase:fetch:" .. tostring(label or url)
 	local okCall, resultOrErr, status = callWithTimeout(timeoutSeconds, function()
 		return fetchAndRun(url, label)
 	end, {
-		cancelOnTimeout = false
+		opKey = opKey,
+		isBlocking = false,
+		onPolicyDecision = function(policyDecision, resolvedOpKey)
+			logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
+		end
 	end)
 	if not okCall then
 		if status == "timeout" then
@@ -447,6 +675,7 @@ local function tryBootstrapFromAllInOne(reasons)
 		local function runQuickSetup(forceReload)
 			local timeoutSeconds = getQuickSetupTimeoutSeconds()
 			bootLog("quickSetup start | forceReload=" .. tostring(forceReload) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
+			local opKey = "showcase:quickSetup:" .. tostring(forceReload)
 			local okQuick, uiOrErr, quickStatus = callWithTimeout(timeoutSeconds, function()
 				return loadedOrErr.quickSetup({
 					mode = commonConfig.mode,
@@ -456,7 +685,11 @@ local function tryBootstrapFromAllInOne(reasons)
 					forceReload = forceReload
 				})
 			end, {
-				cancelOnTimeout = false
+				opKey = opKey,
+				isBlocking = true,
+				onPolicyDecision = function(policyDecision, resolvedOpKey)
+					logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
+				end
 			end)
 			if okQuick and isReadyUI(uiOrErr) then
 				bootLog("quickSetup success | forceReload=" .. tostring(forceReload))
