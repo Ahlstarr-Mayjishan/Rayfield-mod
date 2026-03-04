@@ -21,8 +21,34 @@ local function fetchAndRun(url, label)
 	return compileChunk(source, label or url)()
 end
 
+local function getBootTimeoutSeconds()
+	local configured = type(_G) == "table" and tonumber(_G.__RAYFIELD_SHOWCASE_BOOT_TIMEOUT_SEC) or nil
+	if configured and configured > 0 then
+		return configured
+	end
+	return 12
+end
+
 local function tryFetchAndRun(url, label)
-	local ok, resultOrErr = pcall(fetchAndRun, url, label)
+	local finished = false
+	local ok = false
+	local resultOrErr = nil
+	local worker = task.spawn(function()
+		ok, resultOrErr = pcall(fetchAndRun, url, label)
+		finished = true
+	end)
+
+	local startedAt = os.clock()
+	local timeoutSeconds = getBootTimeoutSeconds()
+	while not finished and (os.clock() - startedAt) < timeoutSeconds do
+		task.wait()
+	end
+
+	if not finished then
+		pcall(task.cancel, worker)
+		return false, "timeout after " .. tostring(timeoutSeconds) .. "s"
+	end
+
 	if ok then
 		return true, resultOrErr
 	end
