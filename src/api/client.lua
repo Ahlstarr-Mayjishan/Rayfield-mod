@@ -1,6 +1,21 @@
 local Client = {}
 
-local DEFAULT_TIMEOUT = 8
+local DEFAULT_TIMEOUT = 25
+
+local function resolveDefaultTimeout()
+	local configured = type(_G) == "table" and tonumber(_G.__RAYFIELD_HTTP_TIMEOUT_SEC) or nil
+	if configured and configured > 0 then
+		return configured
+	end
+	return DEFAULT_TIMEOUT
+end
+
+local function shouldCancelOnTimeout(opts)
+	if opts.cancelOnTimeout ~= nil then
+		return opts.cancelOnTimeout == true
+	end
+	return type(_G) == "table" and _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT == true
+end
 
 local function getBundleTable()
 	if type(_G) ~= "table" or type(_G.__RAYFIELD_BUNDLE_SOURCES) ~= "table" then
@@ -113,13 +128,20 @@ end
 function Client.request(url, opts)
 	url = normalizeUrl(url)
 	opts = opts or {}
-	local timeout = tonumber(opts.timeout) or DEFAULT_TIMEOUT
+	local timeout = tonumber(opts.timeout)
+	if not timeout or timeout <= 0 then
+		timeout = resolveDefaultTimeout()
+	end
+	local cancelOnTimeout = shouldCancelOnTimeout(opts)
 	local completed = false
 	local okResult = false
 	local payload = nil
 
 	local worker = task.spawn(function()
 		local ok, result = pcall(game.HttpGet, game, url)
+		if completed then
+			return
+		end
 		okResult = ok
 		payload = result
 		completed = true
@@ -132,7 +154,9 @@ function Client.request(url, opts)
 		completed = true
 		okResult = false
 		payload = "Request timed out after " .. tostring(timeout) .. " seconds"
-		pcall(task.cancel, worker)
+		if cancelOnTimeout then
+			pcall(task.cancel, worker)
+		end
 	end)
 
 	while not completed do

@@ -197,7 +197,7 @@ local function getBootTimeoutSeconds()
 	if configured and configured > 0 then
 		return configured
 	end
-	return 12
+	return 30
 end
 
 local function getQuickSetupTimeoutSeconds()
@@ -206,10 +206,11 @@ local function getQuickSetupTimeoutSeconds()
 		return configured
 	end
 	local bootTimeout = getBootTimeoutSeconds()
-	return math.max(20, bootTimeout * 3)
+	return math.max(60, bootTimeout * 3)
 end
 
-local function callWithTimeout(timeoutSeconds, workFn)
+local function callWithTimeout(timeoutSeconds, workFn, options)
+	options = options or {}
 	local finished = false
 	local ok = false
 	local resultOrErr = nil
@@ -224,7 +225,9 @@ local function callWithTimeout(timeoutSeconds, workFn)
 	end
 
 	if not finished then
-		pcall(task.cancel, worker)
+		if options.cancelOnTimeout == true then
+			pcall(task.cancel, worker)
+		end
 		return false, "timeout after " .. tostring(timeoutSeconds) .. "s", "timeout"
 	end
 	if not ok then
@@ -238,6 +241,8 @@ local function tryFetchAndRun(url, label)
 	logLine("BOOT", "tryFetchAndRun start | label=" .. tostring(label) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
 	local okCall, resultOrErr, status = callWithTimeout(timeoutSeconds, function()
 		return fetchAndRun(url, label)
+	end, {
+		cancelOnTimeout = false
 	end)
 	if not okCall then
 		if status == "timeout" then
@@ -362,6 +367,10 @@ local function tryFetchAndRunPath(path, label)
 		end
 		lastErr = resultOrErr
 		bootLog("Failed " .. tostring(path) .. " from " .. tostring(candidateRoot) .. " => " .. tostring(resultOrErr))
+		if type(resultOrErr) == "string" and string.find(resultOrErr, "^timeout", 1, false) then
+			bootLog("Timeout detected, skip mirror retries for " .. tostring(path))
+			break
+		end
 	end
 	return false, lastErr, nil
 end
@@ -422,8 +431,14 @@ local function tryBootstrapFromAllInOne(reasons)
 			bootLog("all-in-one configure(autoReload=false) => " .. tostring(okConfigure and "ok" or configureErr))
 		end
 
+		local requestedMode = type(_G) == "table" and tostring(_G.__RAYFIELD_SHOWCASE_QUICKSETUP_MODE or "enhanced") or "enhanced"
+		requestedMode = string.lower(requestedMode)
+		if requestedMode ~= "base" and requestedMode ~= "enhanced" and requestedMode ~= "advanced" then
+			requestedMode = "enhanced"
+		end
+
 		local commonConfig = {
-			mode = "enhanced",
+			mode = requestedMode,
 			errorThreshold = 5,
 			rateLimit = 10,
 			autoCleanup = true
@@ -440,18 +455,20 @@ local function tryBootstrapFromAllInOne(reasons)
 					autoCleanup = commonConfig.autoCleanup,
 					forceReload = forceReload
 				})
+			end, {
+				cancelOnTimeout = false
 			end)
 			if okQuick and isReadyUI(uiOrErr) then
 				bootLog("quickSetup success | forceReload=" .. tostring(forceReload))
-				return true, uiOrErr
+				return true, uiOrErr, "ok"
 			end
 			if isReadyUI(_G and _G.RayfieldUI) then
 				bootLog("quickSetup produced global _G.RayfieldUI")
-				return true, _G.RayfieldUI
+				return true, _G.RayfieldUI, "ok"
 			end
 			if isReadyRayfield(_G and _G.Rayfield) then
 				bootLog("quickSetup produced global _G.Rayfield")
-				return true, wrapRayfieldAsUI(_G.Rayfield, "global")
+				return true, wrapRayfieldAsUI(_G.Rayfield, "global"), "ok"
 			end
 			local reason = nil
 			if not okQuick then
@@ -462,17 +479,24 @@ local function tryBootstrapFromAllInOne(reasons)
 				end
 			else
 				reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") returned unusable value: " .. tostring(type(uiOrErr))
+				quickStatus = "unusable"
 			end
-			return false, reason
+			return false, reason, quickStatus
 		end
 
-		local okQuick, uiOrReason = runQuickSetup(false)
+		local okQuick, uiOrReason, quickStatus = runQuickSetup(false)
 		if okQuick then
 			return uiOrReason
 		end
 		table.insert(reasons, tostring(uiOrReason))
 
-		okQuick, uiOrReason = runQuickSetup(true)
+		local allowForceReloadRetry = not (quickStatus == "timeout")
+		if not allowForceReloadRetry then
+			table.insert(reasons, "Skip forceReload retry because first quickSetup timed out.")
+			return nil
+		end
+
+		okQuick, uiOrReason, quickStatus = runQuickSetup(true)
 		if okQuick then
 			return uiOrReason
 		end
@@ -498,8 +522,19 @@ local function bootstrapUI()
 		return wrapRayfieldAsUI(_G.Rayfield, "global")
 	end
 
-	local preferAllInOne = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_PREFER_AIO == true
+	local preferAllInOne = true
+	if type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_PREFER_AIO == false then
+		preferAllInOne = false
+	end
 	local ui = nil
+	local function hasTimeoutReason()
+		for _, reason in ipairs(reasons) do
+			if type(reason) == "string" and string.find(reason, "timeout", 1, true) then
+				return true
+			end
+		end
+		return false
+	end
 
 	if preferAllInOne then
 		bootLog("Bootstrap order: all-in-one -> base")
@@ -507,9 +542,14 @@ local function bootstrapUI()
 		if isReadyUI(ui) then
 			return ui
 		end
-		ui = tryBootstrapFromBase(reasons)
-		if ui and isReadyUI(ui) then
-			return ui
+		local allowBaseAfterAioTimeout = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT == true
+		if hasTimeoutReason() and not allowBaseAfterAioTimeout then
+			bootLog("Skip base fallback after all-in-one timeout (set _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT=true to override)")
+		else
+			ui = tryBootstrapFromBase(reasons)
+			if ui and isReadyUI(ui) then
+				return ui
+			end
 		end
 	else
 		bootLog("Bootstrap order: base -> all-in-one")
