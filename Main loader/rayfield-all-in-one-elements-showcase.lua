@@ -80,17 +80,63 @@ local function sortedThemeNames(rayfield)
 	return names
 end
 
-local function resolveRuntimeRoot()
-	local configuredRoot = type(_G) == "table" and _G.__RAYFIELD_RUNTIME_ROOT_URL or nil
-	if type(configuredRoot) == "string" and configuredRoot ~= "" then
-		return configuredRoot
+local function ensureTrailingSlash(url)
+	if type(url) ~= "string" or url == "" then
+		return nil
 	end
-	return "https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/"
+	if string.sub(url, -1) ~= "/" then
+		return url .. "/"
+	end
+	return url
 end
 
-local root = resolveRuntimeRoot()
-if type(_G) == "table" and (type(_G.__RAYFIELD_RUNTIME_ROOT_URL) ~= "string" or _G.__RAYFIELD_RUNTIME_ROOT_URL == "") then
+local function resolveRuntimeRoots()
+	local roots = {}
+	local seen = {}
+	local function add(url)
+		local normalized = ensureTrailingSlash(url)
+		if normalized and not seen[normalized] then
+			seen[normalized] = true
+			table.insert(roots, normalized)
+		end
+	end
+
+	if type(_G) == "table" then
+		add(_G.__RAYFIELD_RUNTIME_ROOT_URL)
+	end
+
+	add("https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/")
+	add("https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/")
+	return roots
+end
+
+local runtimeRoots = resolveRuntimeRoots()
+local root = runtimeRoots[1] or "https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/"
+
+if type(_G) == "table" then
 	_G.__RAYFIELD_RUNTIME_ROOT_URL = root
+end
+
+local DEBUG_BOOT = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_DEBUG == true
+local function bootLog(message)
+	if DEBUG_BOOT and type(warn) == "function" then
+		warn("[Elements-Showcase][Boot] " .. tostring(message))
+	end
+end
+
+local function tryFetchAndRunPath(path, label)
+	local lastErr = nil
+	for _, candidateRoot in ipairs(runtimeRoots) do
+		local fullUrl = candidateRoot .. path
+		local ok, resultOrErr = tryFetchAndRun(fullUrl, label)
+		if ok then
+			bootLog("Loaded " .. tostring(path) .. " from " .. tostring(candidateRoot))
+			return true, resultOrErr, candidateRoot
+		end
+		lastErr = resultOrErr
+		bootLog("Failed " .. tostring(path) .. " from " .. tostring(candidateRoot) .. " => " .. tostring(resultOrErr))
+	end
+	return false, lastErr, nil
 end
 
 local function wrapRayfieldAsUI(rayfield, mode)
@@ -101,9 +147,15 @@ local function wrapRayfieldAsUI(rayfield, mode)
 end
 
 local function tryBootstrapFromBase(reasons)
-	local baseUrl = root .. "Main%20loader/rayfield-modified.lua"
-	local okBase, baseOrErr = tryFetchAndRun(baseUrl, "Main loader/rayfield-modified.lua")
+	local okBase, baseOrErr, selectedRoot = tryFetchAndRunPath(
+		"Main%20loader/rayfield-modified.lua",
+		"Main loader/rayfield-modified.lua"
+	)
 	if okBase and isReadyRayfield(baseOrErr) then
+		root = selectedRoot or root
+		if type(_G) == "table" then
+			_G.__RAYFIELD_RUNTIME_ROOT_URL = root
+		end
 		return wrapRayfieldAsUI(baseOrErr, "base")
 	end
 	table.insert(reasons, "base loader failed: " .. tostring(baseOrErr))
@@ -111,13 +163,18 @@ local function tryBootstrapFromBase(reasons)
 end
 
 local function tryBootstrapFromAllInOne(reasons)
-	local allInOneUrl = root .. "Main%20loader/rayfield-all-in-one.lua"
-	local allInOneLabel = "Main loader/rayfield-all-in-one.lua"
-	local okAllInOne, loadedOrErr = tryFetchAndRun(allInOneUrl, allInOneLabel)
+	local okAllInOne, loadedOrErr, selectedRoot = tryFetchAndRunPath(
+		"Main%20loader/rayfield-all-in-one.lua",
+		"Main loader/rayfield-all-in-one.lua"
+	)
 
 	if not okAllInOne then
 		table.insert(reasons, "all-in-one fetch/execute failed: " .. tostring(loadedOrErr))
 		return nil
+	end
+	root = selectedRoot or root
+	if type(_G) == "table" then
+		_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 	end
 
 	if isReadyUI(loadedOrErr) then
