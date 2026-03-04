@@ -8,8 +8,10 @@ local function createShowcaseLogger()
 		enabled = true,
 		fileEnabled = false,
 		folder = "Rayfield/Logs",
+		activeFolder = nil,
 		path = nil,
-		latestPath = nil
+		latestPath = nil,
+		reason = "init"
 	}
 
 	if type(_G) == "table" then
@@ -27,8 +29,56 @@ local function createShowcaseLogger()
 	local makeFolderFn = type(makefolder) == "function" and makefolder or nil
 	local ring = {}
 	local runId = tostring(type(os.time) == "function" and os.time() or math.floor(os.clock() * 1000))
-	logger.path = logger.folder .. "/elements-showcase-" .. runId .. ".log"
-	logger.latestPath = logger.folder .. "/elements-showcase-latest.log"
+
+	local function setTargets(folderPath)
+		local fileName = "elements-showcase-" .. runId .. ".log"
+		local latestName = "elements-showcase-latest.log"
+		if type(folderPath) == "string" and folderPath ~= "" then
+			logger.activeFolder = folderPath
+			logger.path = folderPath .. "/" .. fileName
+			logger.latestPath = folderPath .. "/" .. latestName
+		else
+			logger.activeFolder = nil
+			logger.path = fileName
+			logger.latestPath = latestName
+		end
+	end
+
+	setTargets(logger.folder)
+
+	local function ensureFolderPath(path)
+		if type(path) ~= "string" or path == "" then
+			return true, nil
+		end
+		if not makeFolderFn then
+			return false, "makefolder_unavailable"
+		end
+
+		local normalized = string.gsub(path, "\\", "/")
+		local current = ""
+		for part in string.gmatch(normalized, "[^/]+") do
+			current = current == "" and part or (current .. "/" .. part)
+			local exists = false
+			if isFolderFn then
+				local okExists, result = pcall(isFolderFn, current)
+				exists = okExists and result == true
+			end
+			if not exists then
+				local okMake = pcall(makeFolderFn, current)
+				if not okMake then
+					if isFolderFn then
+						local okExistsAfter, resultAfter = pcall(isFolderFn, current)
+						if not (okExistsAfter and resultAfter == true) then
+							return false, "makefolder_failed:" .. tostring(current)
+						end
+					else
+						return false, "makefolder_failed:" .. tostring(current)
+					end
+				end
+			end
+		end
+		return true, nil
+	end
 
 	local function flushWholeFile(path)
 		if not writeFn then
@@ -37,9 +87,9 @@ local function createShowcaseLogger()
 		pcall(writeFn, path, table.concat(ring, "\n") .. "\n")
 	end
 
-	local function appendLine(path, line)
+	local function appendLine(path, lineText)
 		if appendFn then
-			local ok = pcall(appendFn, path, line .. "\n")
+			local ok = pcall(appendFn, path, lineText .. "\n")
 			return ok
 		end
 		if writeFn then
@@ -50,17 +100,18 @@ local function createShowcaseLogger()
 	end
 
 	if logger.enabled and (appendFn or writeFn) then
-		if makeFolderFn then
-			local exists = false
-			if isFolderFn then
-				local okExists, result = pcall(isFolderFn, logger.folder)
-				exists = okExists and result == true
-			end
-			if not exists then
-				pcall(makeFolderFn, logger.folder)
-			end
+		local folderOk, folderErr = ensureFolderPath(logger.folder)
+		if folderOk then
+			logger.fileEnabled = true
+			logger.reason = "folder_ready"
+		else
+			-- Fallback to root workspace when nested folder creation fails.
+			setTargets(nil)
+			logger.fileEnabled = true
+			logger.reason = "root_fallback:" .. tostring(folderErr)
 		end
-		logger.fileEnabled = true
+	else
+		logger.reason = logger.enabled and "file_api_unavailable" or "file_log_disabled"
 	end
 
 	function logger.log(level, message)
@@ -73,15 +124,35 @@ local function createShowcaseLogger()
 		if type(_G) == "table" then
 			_G.__RAYFIELD_SHOWCASE_LOG_BUFFER = ring
 			_G.__RAYFIELD_SHOWCASE_LOG_FILE = logger.path
+			_G.__RAYFIELD_SHOWCASE_LOG_INFO = {
+				enabled = logger.enabled,
+				fileEnabled = logger.fileEnabled,
+				requestedFolder = logger.folder,
+				activeFolder = logger.activeFolder,
+				path = logger.path,
+				latestPath = logger.latestPath,
+				reason = logger.reason
+			}
 		end
 		if not logger.fileEnabled then
 			return
 		end
-		local ok = appendLine(logger.path, line)
-		if not ok then
-			flushWholeFile(logger.path)
+		local okWrite = appendLine(logger.path, line)
+		if not okWrite and logger.activeFolder ~= nil then
+			-- Runtime fallback in case folder writes fail unexpectedly.
+			setTargets(nil)
+			logger.reason = "runtime_root_fallback"
+			if type(_G) == "table" then
+				_G.__RAYFIELD_SHOWCASE_LOG_FILE = logger.path
+			end
+			okWrite = appendLine(logger.path, line)
 		end
-		if writeFn then
+		if not okWrite then
+			logger.fileEnabled = false
+			logger.reason = "write_failed_all_targets"
+			return
+		end
+		if writeFn and logger.latestPath then
 			flushWholeFile(logger.latestPath)
 		end
 	end
@@ -1207,7 +1278,8 @@ if compactReturn then
 		RuntimeState = runtimeState,
 		SettingsState = settingsState,
 		LogPath = ShowcaseLogger.path,
-		LatestLogPath = ShowcaseLogger.latestPath
+		LatestLogPath = ShowcaseLogger.latestPath,
+		LogInfo = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_LOG_INFO or nil
 	}
 end
 
@@ -1263,5 +1335,6 @@ return {
 	RuntimeState = runtimeState,
 	SettingsState = settingsState,
 	LogPath = ShowcaseLogger.path,
-	LatestLogPath = ShowcaseLogger.latestPath
+	LatestLogPath = ShowcaseLogger.latestPath,
+	LogInfo = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_LOG_INFO or nil
 }
