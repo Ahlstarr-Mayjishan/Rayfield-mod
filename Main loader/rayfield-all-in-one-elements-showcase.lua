@@ -3,21 +3,121 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+local function createShowcaseLogger()
+	local logger = {
+		enabled = true,
+		fileEnabled = false,
+		folder = "Rayfield/Logs",
+		path = nil,
+		latestPath = nil
+	}
+
+	if type(_G) == "table" then
+		if _G.__RAYFIELD_SHOWCASE_FILE_LOG == false then
+			logger.enabled = false
+		end
+		if type(_G.__RAYFIELD_SHOWCASE_LOG_FOLDER) == "string" and _G.__RAYFIELD_SHOWCASE_LOG_FOLDER ~= "" then
+			logger.folder = _G.__RAYFIELD_SHOWCASE_LOG_FOLDER
+		end
+	end
+
+	local appendFn = type(appendfile) == "function" and appendfile or nil
+	local writeFn = type(writefile) == "function" and writefile or nil
+	local isFolderFn = type(isfolder) == "function" and isfolder or nil
+	local makeFolderFn = type(makefolder) == "function" and makefolder or nil
+	local ring = {}
+	local runId = tostring(type(os.time) == "function" and os.time() or math.floor(os.clock() * 1000))
+	logger.path = logger.folder .. "/elements-showcase-" .. runId .. ".log"
+	logger.latestPath = logger.folder .. "/elements-showcase-latest.log"
+
+	local function flushWholeFile(path)
+		if not writeFn then
+			return
+		end
+		pcall(writeFn, path, table.concat(ring, "\n") .. "\n")
+	end
+
+	local function appendLine(path, line)
+		if appendFn then
+			local ok = pcall(appendFn, path, line .. "\n")
+			return ok
+		end
+		if writeFn then
+			flushWholeFile(path)
+			return true
+		end
+		return false
+	end
+
+	if logger.enabled and (appendFn or writeFn) then
+		if makeFolderFn then
+			local exists = false
+			if isFolderFn then
+				local okExists, result = pcall(isFolderFn, logger.folder)
+				exists = okExists and result == true
+			end
+			if not exists then
+				pcall(makeFolderFn, logger.folder)
+			end
+		end
+		logger.fileEnabled = true
+	end
+
+	function logger.log(level, message)
+		local stamp = type(os.date) == "function" and os.date("%Y-%m-%d %H:%M:%S") or tostring(os.clock())
+		local line = string.format("[%s][%s] %s", stamp, tostring(level or "INFO"), tostring(message or ""))
+		table.insert(ring, line)
+		if #ring > 1200 then
+			table.remove(ring, 1)
+		end
+		if type(_G) == "table" then
+			_G.__RAYFIELD_SHOWCASE_LOG_BUFFER = ring
+			_G.__RAYFIELD_SHOWCASE_LOG_FILE = logger.path
+		end
+		if not logger.fileEnabled then
+			return
+		end
+		local ok = appendLine(logger.path, line)
+		if not ok then
+			flushWholeFile(logger.path)
+		end
+		if writeFn then
+			flushWholeFile(logger.latestPath)
+		end
+	end
+
+	return logger
+end
+
+local ShowcaseLogger = createShowcaseLogger()
+
+local function logLine(level, message)
+	ShowcaseLogger.log(level, message)
+end
+
+logLine("BOOT", "showcase loader start")
+
 local function compileChunk(source, label)
 	if type(source) ~= "string" then
-		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
+		local message = "Invalid Lua source for " .. tostring(label) .. ": " .. type(source)
+		logLine("ERROR", message)
+		error(message)
 	end
 	source = source:gsub("^\239\187\191", "")
 	source = source:gsub("^\0+", "")
 	local chunk, err = compileString(source)
 	if not chunk then
-		error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
+		local message = "Failed to compile " .. tostring(label) .. ": " .. tostring(err)
+		logLine("ERROR", message)
+		error(message)
 	end
 	return chunk
 end
 
 local function fetchAndRun(url, label)
+	logLine("FETCH", "HttpGet " .. tostring(url))
 	local source = game:HttpGet(url)
+	logLine("FETCH", "HttpGet OK " .. tostring(label or url) .. " | bytes=" .. tostring(type(source) == "string" and #source or 0))
 	return compileChunk(source, label or url)()
 end
 
@@ -33,25 +133,30 @@ local function tryFetchAndRun(url, label)
 	local finished = false
 	local ok = false
 	local resultOrErr = nil
+	local timeoutSeconds = getBootTimeoutSeconds()
+	logLine("BOOT", "tryFetchAndRun start | label=" .. tostring(label) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
 	local worker = task.spawn(function()
 		ok, resultOrErr = pcall(fetchAndRun, url, label)
 		finished = true
 	end)
 
 	local startedAt = os.clock()
-	local timeoutSeconds = getBootTimeoutSeconds()
 	while not finished and (os.clock() - startedAt) < timeoutSeconds do
 		task.wait()
 	end
 
 	if not finished then
 		pcall(task.cancel, worker)
-		return false, "timeout after " .. tostring(timeoutSeconds) .. "s"
+		local timeoutMsg = "timeout after " .. tostring(timeoutSeconds) .. "s"
+		logLine("ERROR", "tryFetchAndRun timeout | label=" .. tostring(label) .. " | url=" .. tostring(url))
+		return false, timeoutMsg
 	end
 
 	if ok then
+		logLine("BOOT", "tryFetchAndRun success | label=" .. tostring(label) .. " | resultType=" .. tostring(type(resultOrErr)))
 		return true, resultOrErr
 	end
+	logLine("ERROR", "tryFetchAndRun failed | label=" .. tostring(label) .. " | error=" .. tostring(resultOrErr))
 	return false, resultOrErr
 end
 
@@ -143,8 +248,12 @@ if type(_G) == "table" then
 	_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 end
 
+logLine("BOOT", "runtime root seed = " .. tostring(root))
+logLine("BOOT", "file log path = " .. tostring(ShowcaseLogger.path))
+
 local DEBUG_BOOT = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_DEBUG == true
 local function bootLog(message)
+	logLine("BOOT", message)
 	if DEBUG_BOOT and type(warn) == "function" then
 		warn("[Elements-Showcase][Boot] " .. tostring(message))
 	end
@@ -251,12 +360,15 @@ end
 
 local function bootstrapUI()
 	local reasons = {}
+	bootLog("bootstrapUI begin")
 
 	if isReadyUI(_G and _G.RayfieldUI) then
+		bootLog("Using existing _G.RayfieldUI")
 		return _G.RayfieldUI
 	end
 
 	if isReadyRayfield(_G and _G.Rayfield) then
+		bootLog("Using existing _G.Rayfield")
 		return wrapRayfieldAsUI(_G.Rayfield, "global")
 	end
 
@@ -264,6 +376,7 @@ local function bootstrapUI()
 	local ui = nil
 
 	if preferAllInOne then
+		bootLog("Bootstrap order: all-in-one -> base")
 		ui = tryBootstrapFromAllInOne(reasons)
 		if isReadyUI(ui) then
 			return ui
@@ -273,6 +386,7 @@ local function bootstrapUI()
 			return ui
 		end
 	else
+		bootLog("Bootstrap order: base -> all-in-one")
 		ui = tryBootstrapFromBase(reasons)
 		if ui and isReadyUI(ui) then
 			return ui
@@ -283,10 +397,13 @@ local function bootstrapUI()
 		end
 	end
 
-	error("UI bootstrap failed | " .. table.concat(reasons, " | "))
+	local message = "UI bootstrap failed | " .. table.concat(reasons, " | ")
+	logLine("ERROR", message)
+	error(message)
 end
 
 local UI = bootstrapUI()
+logLine("BOOT", "bootstrapUI success | mode=" .. tostring(UI and UI.mode or "unknown"))
 
 local Rayfield = UI.Rayfield
 
@@ -299,10 +416,14 @@ local checkState = {
 local function report(pass, name, message)
 	if pass then
 		checkState.pass = checkState.pass + 1
-		table.insert(checkState.logs, "[PASS] " .. tostring(name))
+		local line = "[PASS] " .. tostring(name)
+		table.insert(checkState.logs, line)
+		logLine("CHECK", line)
 	else
 		checkState.fail = checkState.fail + 1
-		table.insert(checkState.logs, "[FAIL] " .. tostring(name) .. " -> " .. tostring(message or "unknown"))
+		local line = "[FAIL] " .. tostring(name) .. " -> " .. tostring(message or "unknown")
+		table.insert(checkState.logs, line)
+		logLine("CHECK", line)
 	end
 end
 
@@ -361,7 +482,7 @@ do
 	end
 end
 
-local window = Rayfield:CreateWindow({
+local okWindow, windowOrErr = pcall(Rayfield.CreateWindow, Rayfield, {
 	Name = "Rayfield Mod | Elements Showcase",
 	LoadingTitle = "Rayfield Mod Bundle",
 	LoadingSubtitle = "Basic to Advanced Element Gallery",
@@ -371,6 +492,13 @@ local window = Rayfield:CreateWindow({
 	DisableRayfieldPrompts = true,
 	DisableBuildWarnings = true
 })
+if not okWindow then
+	local message = "CreateWindow failed: " .. tostring(windowOrErr)
+	logLine("ERROR", message)
+	error(message)
+end
+local window = windowOrErr
+logLine("BOOT", "CreateWindow success")
 
 local tabCore = window:CreateTab("Basic Elements", 4483362458)
 local tabAdvanced = window:CreateTab("Advanced Elements", 4483362458)
@@ -381,6 +509,7 @@ local sampleLogConsole = nil
 local function sampleLog(level, message)
 	local safeLevel = tostring(level or "info")
 	local safeMessage = tostring(message or "")
+	logLine("LOG/" .. string.upper(safeLevel), safeMessage)
 	print("[Elements-Showcase][" .. safeLevel .. "] " .. safeMessage)
 	if sampleLogConsole then
 		if safeLevel == "warn" and type(sampleLogConsole.Warn) == "function" then
@@ -906,6 +1035,7 @@ tabSystem:CreateButton({
 })
 
 local function runShowcaseChecks()
+	logLine("BOOT", "runShowcaseChecks begin")
 	runCheck("All-in-one services ready", function()
 		if UI.mode == "base" or UI.mode == "global" then
 			return true
@@ -1040,6 +1170,7 @@ local function runShowcaseChecks()
 	end)
 
 	local summary = string.format("Checks: %d pass / %d fail", checkState.pass, checkState.fail)
+	logLine("CHECK", summary)
 	Rayfield:Notify({
 		Title = "Elements Showcase",
 		Content = checkState.fail == 0 and summary or (summary .. " (see console)"),
@@ -1054,12 +1185,14 @@ end
 task.spawn(function()
 	local ok, err = pcall(runShowcaseChecks)
 	if not ok then
+		logLine("ERROR", "checks failed: " .. tostring(err))
 		warn("[Elements-Showcase] checks failed: " .. tostring(err))
 	end
 end)
 
 local compactReturn = type(_G) ~= "table" or _G.__RAYFIELD_SHOWCASE_RETURN_FULL ~= true
 if compactReturn then
+	logLine("BOOT", "return compact payload")
 	return {
 		UI = UI,
 		Rayfield = Rayfield,
@@ -1072,10 +1205,13 @@ if compactReturn then
 		},
 		CheckState = checkState,
 		RuntimeState = runtimeState,
-		SettingsState = settingsState
+		SettingsState = settingsState,
+		LogPath = ShowcaseLogger.path,
+		LatestLogPath = ShowcaseLogger.latestPath
 	}
 end
 
+logLine("BOOT", "return full payload")
 return {
 	UI = UI,
 	Rayfield = Rayfield,
@@ -1125,5 +1261,7 @@ return {
 	},
 	CheckState = checkState,
 	RuntimeState = runtimeState,
-	SettingsState = settingsState
+	SettingsState = settingsState,
+	LogPath = ShowcaseLogger.path,
+	LatestLogPath = ShowcaseLogger.latestPath
 }
