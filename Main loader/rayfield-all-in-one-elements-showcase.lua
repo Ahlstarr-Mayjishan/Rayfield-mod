@@ -21,12 +21,33 @@ local function fetchAndRun(url, label)
 	return compileChunk(source, label or url)()
 end
 
+local function tryFetchAndRun(url, label)
+	local ok, resultOrErr = pcall(fetchAndRun, url, label)
+	if ok then
+		return true, resultOrErr
+	end
+	return false, resultOrErr
+end
+
 local function isReadyUI(candidate)
 	if type(candidate) ~= "table" or type(candidate.Rayfield) ~= "table" then
 		return false
 	end
 	if type(candidate.Rayfield.IsDestroyed) == "function" then
 		local okDestroyed, destroyed = pcall(candidate.Rayfield.IsDestroyed, candidate.Rayfield)
+		if okDestroyed and destroyed then
+			return false
+		end
+	end
+	return true
+end
+
+local function isReadyRayfield(candidate)
+	if type(candidate) ~= "table" or type(candidate.CreateWindow) ~= "function" then
+		return false
+	end
+	if type(candidate.IsDestroyed) == "function" then
+		local okDestroyed, destroyed = pcall(candidate.IsDestroyed, candidate)
 		if okDestroyed and destroyed then
 			return false
 		end
@@ -59,29 +80,130 @@ local function sortedThemeNames(rayfield)
 	return names
 end
 
-local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local loaded = fetchAndRun(root .. "Main%20loader/rayfield-all-in-one.lua", "Main loader/rayfield-all-in-one.lua")
-
-local UI = nil
-if isReadyUI(loaded) then
-	UI = loaded
-elseif isReadyUI(_G and _G.RayfieldUI) then
-	UI = _G.RayfieldUI
-elseif type(loaded) == "table" and type(loaded.quickSetup) == "function" then
-	UI = loaded.quickSetup({
-		mode = "enhanced",
-		errorThreshold = 5,
-		rateLimit = 10,
-		autoCleanup = true,
-		forceReload = false
-	})
-else
-	error("All-in-one loader returned unexpected value: " .. type(loaded))
+local function resolveRuntimeRoot()
+	local configuredRoot = type(_G) == "table" and _G.__RAYFIELD_RUNTIME_ROOT_URL or nil
+	if type(configuredRoot) == "string" and configuredRoot ~= "" then
+		return configuredRoot
+	end
+	return "https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/"
 end
 
-if not isReadyUI(UI) then
-	error("All-in-one UI bootstrap failed: Rayfield not available")
+local root = resolveRuntimeRoot()
+if type(_G) == "table" and (type(_G.__RAYFIELD_RUNTIME_ROOT_URL) ~= "string" or _G.__RAYFIELD_RUNTIME_ROOT_URL == "") then
+	_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 end
+
+local function wrapRayfieldAsUI(rayfield, mode)
+	return {
+		Rayfield = rayfield,
+		mode = mode or "base"
+	}
+end
+
+local function tryBootstrapFromBase(reasons)
+	local baseUrl = root .. "Main%20loader/rayfield-modified.lua"
+	local okBase, baseOrErr = tryFetchAndRun(baseUrl, "Main loader/rayfield-modified.lua")
+	if okBase and isReadyRayfield(baseOrErr) then
+		return wrapRayfieldAsUI(baseOrErr, "base")
+	end
+	table.insert(reasons, "base loader failed: " .. tostring(baseOrErr))
+	return nil
+end
+
+local function tryBootstrapFromAllInOne(reasons)
+	local allInOneUrl = root .. "Main%20loader/rayfield-all-in-one.lua"
+	local allInOneLabel = "Main loader/rayfield-all-in-one.lua"
+	local okAllInOne, loadedOrErr = tryFetchAndRun(allInOneUrl, allInOneLabel)
+
+	if not okAllInOne then
+		table.insert(reasons, "all-in-one fetch/execute failed: " .. tostring(loadedOrErr))
+		return nil
+	end
+
+	if isReadyUI(loadedOrErr) then
+		return loadedOrErr
+	end
+
+	if isReadyUI(_G and _G.RayfieldUI) then
+		return _G.RayfieldUI
+	end
+
+	if type(loadedOrErr) == "table" and type(loadedOrErr.quickSetup) == "function" then
+		local commonConfig = {
+			mode = "enhanced",
+			errorThreshold = 5,
+			rateLimit = 10,
+			autoCleanup = true
+		}
+
+		local okQuick, uiOrErr = pcall(loadedOrErr.quickSetup, {
+			mode = commonConfig.mode,
+			errorThreshold = commonConfig.errorThreshold,
+			rateLimit = commonConfig.rateLimit,
+			autoCleanup = commonConfig.autoCleanup,
+			forceReload = false
+		})
+		if okQuick and isReadyUI(uiOrErr) then
+			return uiOrErr
+		end
+		table.insert(reasons, "quickSetup(forceReload=false) failed: " .. tostring(uiOrErr))
+
+		okQuick, uiOrErr = pcall(loadedOrErr.quickSetup, {
+			mode = commonConfig.mode,
+			errorThreshold = commonConfig.errorThreshold,
+			rateLimit = commonConfig.rateLimit,
+			autoCleanup = commonConfig.autoCleanup,
+			forceReload = true
+		})
+		if okQuick and isReadyUI(uiOrErr) then
+			return uiOrErr
+		end
+		table.insert(reasons, "quickSetup(forceReload=true) failed: " .. tostring(uiOrErr))
+		return nil
+	end
+
+	table.insert(reasons, "all-in-one return type unsupported: " .. tostring(type(loadedOrErr)))
+	return nil
+end
+
+local function bootstrapUI()
+	local reasons = {}
+
+	if isReadyUI(_G and _G.RayfieldUI) then
+		return _G.RayfieldUI
+	end
+
+	if isReadyRayfield(_G and _G.Rayfield) then
+		return wrapRayfieldAsUI(_G.Rayfield, "global")
+	end
+
+	local preferAllInOne = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_PREFER_AIO == true
+	local ui = nil
+
+	if preferAllInOne then
+		ui = tryBootstrapFromAllInOne(reasons)
+		if isReadyUI(ui) then
+			return ui
+		end
+		ui = tryBootstrapFromBase(reasons)
+		if ui and isReadyUI(ui) then
+			return ui
+		end
+	else
+		ui = tryBootstrapFromBase(reasons)
+		if ui and isReadyUI(ui) then
+			return ui
+		end
+		ui = tryBootstrapFromAllInOne(reasons)
+		if isReadyUI(ui) then
+			return ui
+		end
+	end
+
+	error("UI bootstrap failed | " .. table.concat(reasons, " | "))
+end
+
+local UI = bootstrapUI()
 
 local Rayfield = UI.Rayfield
 
@@ -702,6 +824,9 @@ tabSystem:CreateButton({
 
 local function runShowcaseChecks()
 	runCheck("All-in-one services ready", function()
+		if UI.mode == "base" or UI.mode == "global" then
+			return true
+		end
 		return type(UI.ErrorManager) == "table"
 			and type(UI.GarbageCollector) == "table"
 			and type(UI.RemoteProtection) == "table"
