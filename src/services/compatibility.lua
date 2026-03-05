@@ -63,6 +63,23 @@ local function getCompatFlags()
 	return _G.__RAYFIELD_COMPAT_FLAGS
 end
 
+local function isUsableContainer(container)
+	if not container then
+		return false
+	end
+	if type(typeof) == "function" and typeof(container) == "Instance" then
+		return true
+	end
+	local valueType = type(container)
+	if valueType ~= "userdata" then
+		return false
+	end
+	local okParentRead = pcall(function()
+		return container.Parent
+	end)
+	return okParentRead
+end
+
 local function getPlayerGui()
 	local players = Compatibility.getService("Players")
 	if players and players.LocalPlayer then
@@ -82,6 +99,8 @@ local function shouldDisableHuiAfterError(errText)
 	end
 	local lowered = string.lower(errText)
 	return string.find(lowered, "locked parent", 1, true) ~= nil
+		or string.find(lowered, "parent_assignment_rejected", 1, true) ~= nil
+		or string.find(lowered, "cannot set parent", 1, true) ~= nil
 end
 
 local function tryAssignParent(guiObject, container)
@@ -129,16 +148,31 @@ function Compatibility.getGuiContainer(useStudio, preferredContainer)
 	end
 
 	local flags = getCompatFlags()
+	if flags.resetParentingCircuit == true then
+		flags.parentingCircuitOpen = false
+		flags.parentingCircuitReason = nil
+		flags.parentingFailureCount = 0
+		flags.resetParentingCircuit = nil
+	end
+
+	if not useStudio and isUsableContainer(flags.cachedContainer) then
+		return flags.cachedContainer
+	end
+
 	local coreGui = Compatibility.getService("CoreGui")
 	if useStudio then
 		return coreGui
 	end
 
-	if flags.disableHui ~= true then
-		local hui = Compatibility.tryGetHui()
-		if hui then
-			return hui
+	if flags.parentingCircuitOpen == true then
+		if coreGui then
+			return coreGui
 		end
+		local playerGui = getPlayerGui()
+		if playerGui then
+			return playerGui
+		end
+		return nil
 	end
 
 	if coreGui then
@@ -148,6 +182,13 @@ function Compatibility.getGuiContainer(useStudio, preferredContainer)
 	local playerGui = getPlayerGui()
 	if playerGui then
 		return playerGui
+	end
+
+	if flags.disableHui ~= true then
+		local hui = Compatibility.tryGetHui()
+		if hui then
+			return hui
+		end
 	end
 
 	return nil
@@ -162,6 +203,19 @@ function Compatibility.protectAndParent(guiObject, preferredContainer, options)
 	local useStudio = options.useStudio == true
 	local flags = getCompatFlags()
 	local container = nil
+	if flags.resetParentingCircuit == true then
+		flags.parentingCircuitOpen = false
+		flags.parentingCircuitReason = nil
+		flags.parentingFailureCount = 0
+		flags.resetParentingCircuit = nil
+	end
+
+	if not useStudio and preferredContainer == nil and flags.parentingCircuitOpen == true then
+		if isUsableContainer(flags.cachedContainer) then
+			return flags.cachedContainer
+		end
+		return nil
+	end
 
 	if not useStudio and not Compatibility.tryGetHui() then
 		Compatibility.protectGui(guiObject)
@@ -182,25 +236,55 @@ function Compatibility.protectAndParent(guiObject, preferredContainer, options)
 	end
 
 	addCandidate(preferredContainer)
+	if not useStudio then
+		if isUsableContainer(flags.cachedContainer) then
+			addCandidate(flags.cachedContainer)
+		else
+			flags.cachedContainer = nil
+		end
+	end
 	if useStudio then
 		addCandidate(Compatibility.getService("CoreGui"))
 	else
+		addCandidate(Compatibility.getService("CoreGui"))
+		addCandidate(getPlayerGui())
 		if flags.disableHui ~= true then
 			huiCandidate = Compatibility.tryGetHui()
 			addCandidate(huiCandidate)
 		end
-		addCandidate(Compatibility.getService("CoreGui"))
-		addCandidate(getPlayerGui())
 	end
 
+	local lastParentErr = nil
+	local attemptedCount = 0
 	for _, candidate in ipairs(candidates) do
+		attemptedCount = attemptedCount + 1
 		local okParent, parentErr = tryAssignParent(guiObject, candidate)
 		if okParent then
 			container = candidate
 			break
 		end
+		lastParentErr = parentErr
 		if candidate == huiCandidate and shouldDisableHuiAfterError(parentErr) then
 			flags.disableHui = true
+		end
+	end
+
+	if container then
+		flags.cachedContainer = container
+		flags.parentingCircuitOpen = false
+		flags.parentingCircuitReason = nil
+		flags.parentingFailureCount = 0
+		return container
+	end
+
+	if not useStudio and preferredContainer == nil then
+		flags.parentingFailureCount = (tonumber(flags.parentingFailureCount) or 0) + 1
+		if attemptedCount == 0 then
+			flags.parentingCircuitOpen = true
+			flags.parentingCircuitReason = "parent_no_candidate"
+		elseif flags.parentingFailureCount >= 1 then
+			flags.parentingCircuitOpen = true
+			flags.parentingCircuitReason = tostring(lastParentErr or "parent_all_candidates_failed")
 		end
 	end
 
