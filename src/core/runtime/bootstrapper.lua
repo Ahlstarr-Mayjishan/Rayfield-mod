@@ -65,7 +65,16 @@ function RuntimeBootstrapper.create(options)
 	local AnalyticsProviderServiceLib = loadService(serviceLoadContext, "src/services/analytics/analytics-provider.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
+	local AnalyticsManagerServiceLib = loadService(serviceLoadContext, "src/services/analytics-manager.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
 	local RuntimeLoaderHelpersServiceLib = loadService(serviceLoadContext, "src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+	local LoaderHelpersFallbackServiceLib = loadService(serviceLoadContext, "src/services/loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.createFallback) == "function"
+	end)
+	local CompatibilityInitServiceLib = loadService(serviceLoadContext, "src/services/compatibility-init.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
 
@@ -184,7 +193,10 @@ function RuntimeBootstrapper.create(options)
 		HttpLoaderServiceLib = HttpLoaderServiceLib,
 		AnalyticsReporterServiceLib = AnalyticsReporterServiceLib,
 		AnalyticsProviderServiceLib = AnalyticsProviderServiceLib,
+		AnalyticsManagerServiceLib = AnalyticsManagerServiceLib,
 		RuntimeLoaderHelpersServiceLib = RuntimeLoaderHelpersServiceLib,
+		LoaderHelpersFallbackServiceLib = LoaderHelpersFallbackServiceLib,
+		CompatibilityInitServiceLib = CompatibilityInitServiceLib,
 		ExecPolicy = ExecPolicy,
 		HttpLoaderService = HttpLoaderService,
 		loadWithTimeout = loadWithTimeout,

@@ -8633,6 +8633,107 @@ put("src/legacy/map.lua", [[return {
 	}
 }
 ]])
+put("src/services/analytics-manager.lua", [[local AnalyticsManager = {}
+
+local function createFallbackSender(warnFn)
+	return function()
+		if type(warnFn) == "function" then
+			warnFn("Failed to load report function")
+		end
+	end
+end
+
+function AnalyticsManager.create(options)
+	options = type(options) == "table" and options or {}
+
+	local runtimeBootstrap = options.runtimeBootstrap
+	local analyticsProviderServiceLib = options.analyticsProviderServiceLib
+	local analyticsReporterServiceLib = options.analyticsReporterServiceLib
+	local requestsDisabled = options.requestsDisabled == true
+	local useStudio = options.useStudio == true
+	local debug = options.debug == true
+	local release = tostring(options.release or "")
+	local interfaceBuild = tostring(options.interfaceBuild or "")
+	local scriptName = tostring(options.scriptName or "Rayfield")
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local printFn = type(options.print) == "function" and options.print or print
+	local loadWithTimeout = type(options.loadWithTimeout) == "function" and options.loadWithTimeout or nil
+
+	local manager = {}
+	local sendReport = createFallbackSender(warnFn)
+
+	if type(runtimeBootstrap) == "table" and type(runtimeBootstrap.createAnalyticsSender) == "function" then
+		sendReport = runtimeBootstrap.createAnalyticsSender({
+			requestsDisabled = requestsDisabled,
+			useStudio = useStudio,
+			debug = debug,
+			release = release,
+			interfaceBuild = interfaceBuild,
+			scriptName = scriptName,
+			warn = warnFn,
+			print = printFn
+		})
+	elseif type(analyticsProviderServiceLib) == "table" and type(analyticsProviderServiceLib.create) == "function" then
+		local analyticsProvider = analyticsProviderServiceLib.create({
+			reporterModule = analyticsReporterServiceLib,
+			requestsDisabled = requestsDisabled,
+			useStudio = useStudio,
+			debug = debug,
+			release = release,
+			interfaceBuild = interfaceBuild,
+			loadWithTimeout = loadWithTimeout,
+			scriptName = scriptName,
+			warn = warnFn,
+			print = printFn
+		})
+		if type(analyticsProvider) == "table" then
+			if type(analyticsProvider.init) == "function" then
+				pcall(analyticsProvider.init)
+			end
+			if type(analyticsProvider.sendReport) == "function" then
+				sendReport = function(ev_n, sc_n)
+					local okReport, reportErr = pcall(analyticsProvider.sendReport, ev_n, sc_n)
+					if not okReport and type(warnFn) == "function" then
+						warnFn("Analytics report error: " .. tostring(reportErr))
+					end
+				end
+			end
+		end
+	elseif type(analyticsReporterServiceLib) == "table" and type(analyticsReporterServiceLib.create) == "function" then
+		local analyticsReporter = analyticsReporterServiceLib.create({
+			requestsDisabled = requestsDisabled,
+			useStudio = useStudio,
+			debug = debug,
+			release = release,
+			interfaceBuild = interfaceBuild,
+			loadWithTimeout = loadWithTimeout,
+			scriptName = scriptName,
+			warn = warnFn,
+			print = printFn
+		})
+		if type(analyticsReporter) == "table" then
+			if type(analyticsReporter.init) == "function" then
+				pcall(analyticsReporter.init)
+			end
+			if type(analyticsReporter.sendReport) == "function" then
+				sendReport = function(ev_n, sc_n)
+					local okReport, reportErr = pcall(analyticsReporter.sendReport, ev_n, sc_n)
+					if not okReport and type(warnFn) == "function" then
+						warnFn("Analytics report error: " .. tostring(reportErr))
+					end
+				end
+			end
+		end
+	elseif not requestsDisabled and type(warnFn) == "function" then
+		warnFn("Rayfield Mod: [W_ANALYTICS_SERVICE] Analytics reporter service unavailable.")
+	end
+
+	manager.sendReport = sendReport
+	return manager
+end
+
+return AnalyticsManager
+]])
 put("src/services/analytics-reporter.lua", [[local AnalyticsReporterService = {}
 
 local function shouldReportExecution(cachedSettings)
@@ -8781,6 +8882,136 @@ function AnalyticsProvider.create(options)
 end
 
 return AnalyticsProvider
+]])
+put("src/services/compatibility-init.lua", [[local CompatibilityInitService = {}
+
+local function buildCompatibilityFallback(compileString, warnFn, reason)
+	warnFn("Rayfield Mod: [W_BOOTSTRAP_COMPAT] Failed to load compatibility service; using fallback compatibility.")
+	if reason then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_COMPAT_REASON] " .. tostring(reason))
+	end
+	return {
+		getService = function(name)
+			return game:GetService(name)
+		end,
+		getCompileString = function()
+			return compileString
+		end,
+		protectAndParent = function(gui, _preferredContainer, opts)
+			if opts and opts.useStudio then
+				return nil
+			end
+			local okCore, core = pcall(function()
+				return game:GetService("CoreGui")
+			end)
+			if okCore and core then
+				gui.Parent = core
+				return core
+			end
+			return nil
+		end,
+		dedupeGuiByName = function()
+			return
+		end
+	}
+end
+
+local function buildWidgetBootstrapFallback(apiClient, moduleRootUrl, warnFn, reason)
+	warnFn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS] Failed to load widget bootstrap; using fallback widget loader.")
+	if reason then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS_REASON] " .. tostring(reason))
+	end
+
+	return {
+		bootstrapWidget = function(widgetName, targetPath, exportAdapter, opts)
+			if type(apiClient) ~= "table" or type(apiClient.fetchAndExecute) ~= "function" then
+				error("Rayfield Mod: [E_WIDGET_BOOTSTRAP] ApiClient.fetchAndExecute unavailable for " .. tostring(widgetName))
+			end
+			local moduleValue = apiClient.fetchAndExecute(moduleRootUrl .. tostring(targetPath))
+			if opts and opts.expectedType and type(moduleValue) ~= opts.expectedType then
+				error("Rayfield Mod: [E_WIDGET_BOOTSTRAP] " .. tostring(widgetName) .. " expected " .. tostring(opts.expectedType) .. ", got " .. type(moduleValue))
+			end
+			if type(exportAdapter) == "function" then
+				return exportAdapter(moduleValue)
+			end
+			return moduleValue
+		end
+	}
+end
+
+function CompatibilityInitService.create(options)
+	options = type(options) == "table" and options or {}
+	local loaderHelpers = options.loaderHelpers
+	local apiClient = options.apiClient
+	local moduleRootUrl = tostring(options.moduleRootUrl or "")
+	local compileString = type(options.compileString) == "function" and options.compileString or (loadstring or load)
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local globalEnv = type(options.globalEnv) == "table" and options.globalEnv or nil
+
+	if type(loaderHelpers) ~= "table" or type(loaderHelpers.fetchExecuteSafely) ~= "function" then
+		return nil, "Loader helpers unavailable"
+	end
+
+	local fetchExecuteSafely = loaderHelpers.fetchExecuteSafely
+
+	local okCompatibility, compatibilityResult = fetchExecuteSafely("src/services/compatibility.lua")
+	local compatibility
+	if okCompatibility and type(compatibilityResult) == "table" then
+		compatibility = compatibilityResult
+	else
+		compatibility = buildCompatibilityFallback(compileString, warnFn, compatibilityResult)
+	end
+
+	local okWidgetBootstrap, widgetBootstrapResult = fetchExecuteSafely("src/ui/elements/widgets/bootstrap.lua")
+	local widgetBootstrap
+	if okWidgetBootstrap
+		and type(widgetBootstrapResult) == "table"
+		and type(widgetBootstrapResult.bootstrapWidget) == "function" then
+		widgetBootstrap = widgetBootstrapResult
+	else
+		widgetBootstrap = buildWidgetBootstrapFallback(apiClient, moduleRootUrl, warnFn, widgetBootstrapResult)
+	end
+
+	local okApiLoader, apiLoaderResult = fetchExecuteSafely("src/api/loader.lua")
+	if not okApiLoader then
+		return nil, "Failed to load API loader: " .. tostring(apiLoaderResult)
+	end
+	if type(apiLoaderResult) ~= "table" or type(apiLoaderResult.load) ~= "function" then
+		return nil, "Invalid API loader contract"
+	end
+
+	if type(loaderHelpers.setApiLoader) == "function" then
+		loaderHelpers.setApiLoader(apiLoaderResult)
+	end
+
+	if globalEnv then
+		globalEnv.__RayfieldCompatibility = compatibility
+		globalEnv.__RayfieldWidgetBootstrap = widgetBootstrap
+	end
+
+	local serviceOverride = nil
+	if type(compatibility.getService) == "function" then
+		serviceOverride = compatibility.getService
+	end
+
+	local compileOverride = nil
+	if type(compatibility.getCompileString) == "function" then
+		local okCompile, compileOrErr = pcall(compatibility.getCompileString)
+		if okCompile and type(compileOrErr) == "function" then
+			compileOverride = compileOrErr
+		end
+	end
+
+	return {
+		Compatibility = compatibility,
+		WidgetBootstrap = widgetBootstrap,
+		ApiLoader = apiLoaderResult,
+		getService = serviceOverride,
+		compileString = compileOverride
+	}
+end
+
+return CompatibilityInitService
 ]])
 put("src/services/config.lua", [[-- Rayfield Configuration Management Module
 -- Handles configuration save/load and color packing
@@ -11043,6 +11274,151 @@ function LayoutPersistence.init(ctx)
 end
 
 return LayoutPersistence
+]])
+put("src/services/loader-helpers.lua", [[local LoaderHelpersService = {}
+
+local function createDiagnostics(globalEnv)
+	local diagnostics = {
+		optionalFailed = {},
+		notified = false,
+		performanceProfile = nil
+	}
+	if type(globalEnv) == "table" then
+		globalEnv.__RAYFIELD_LOADER_DIAGNOSTICS = diagnostics
+	end
+	return diagnostics
+end
+
+local function formatLoaderError(code, message)
+	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
+end
+
+function LoaderHelpersService.createFallback(options)
+	options = type(options) == "table" and options or {}
+	local apiClient = options.apiClient
+	local rootUrl = tostring(options.rootUrl or "")
+	local useStudio = options.useStudio == true
+	local getScriptRef = type(options.getScriptRef) == "function" and options.getScriptRef or function()
+		return nil
+	end
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local globalEnv = options.globalEnv
+
+	local diagnostics = createDiagnostics(globalEnv)
+	local apiLoaderFallback = nil
+
+	local function loadModuleFallback(moduleName)
+		if type(apiLoaderFallback) ~= "table" or type(apiLoaderFallback.load) ~= "function" then
+			return false, "API loader unavailable"
+		end
+		local opts = {
+			tryStudioRequire = useStudio,
+			scriptRef = getScriptRef(),
+			allowLegacyFallback = true
+		}
+		if type(apiLoaderFallback.tryLoad) == "function" then
+			return apiLoaderFallback.tryLoad(moduleName, opts)
+		end
+		local okLoad, result = pcall(apiLoaderFallback.load, moduleName, opts)
+		if okLoad then
+			return true, result
+		end
+		return false, tostring(result)
+	end
+
+	local helpers = {}
+
+	function helpers.fetchExecuteSafely(path)
+		if type(apiClient) ~= "table" or type(apiClient.fetchAndExecute) ~= "function" then
+			return false, "ApiClient unavailable"
+		end
+		local ok, result = pcall(apiClient.fetchAndExecute, rootUrl .. tostring(path))
+		if ok then
+			return true, result
+		end
+		return false, tostring(result)
+	end
+
+	function helpers.setApiLoader(loader)
+		apiLoaderFallback = loader
+		return true
+	end
+
+	function helpers.requireModule(moduleName, hint)
+		local okLoad, result = loadModuleFallback(moduleName)
+		if okLoad then
+			return result
+		end
+		local reason = tostring(result)
+		if hint then
+			reason = tostring(hint) .. "\n" .. reason
+		end
+		error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
+	end
+
+	function helpers.optionalModule(moduleName, fallbackModule, hint)
+		local okLoad, result = loadModuleFallback(moduleName)
+		if okLoad then
+			return result
+		end
+		table.insert(diagnostics.optionalFailed, {
+			module = moduleName,
+			error = tostring(result)
+		})
+		local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
+		if hint then
+			message = message .. " " .. tostring(hint)
+		end
+		warnFn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
+		return fallbackModule
+	end
+
+	function helpers.optionalModuleWithContract(moduleName, validatorFn, hint)
+		local okLoad, result = loadModuleFallback(moduleName)
+		if okLoad and type(validatorFn) == "function" and validatorFn(result) then
+			return result
+		end
+		table.insert(diagnostics.optionalFailed, {
+			module = moduleName,
+			error = okLoad and "Invalid module contract" or tostring(result)
+		})
+		local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Feature disabled."
+		if hint then
+			message = message .. " " .. tostring(hint)
+		end
+		local detail = okLoad and "Invalid module contract" or tostring(result)
+		warnFn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. detail))
+		return nil
+	end
+
+	function helpers.maybeNotifyFallback(notifyFn)
+		if diagnostics.notified or #diagnostics.optionalFailed == 0 then
+			return
+		end
+		diagnostics.notified = true
+		local moduleNames = {}
+		for _, item in ipairs(diagnostics.optionalFailed) do
+			table.insert(moduleNames, tostring(item.module))
+		end
+		local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
+		if type(notifyFn) == "function" then
+			local okNotify, notifyErr = pcall(notifyFn, message)
+			if not okNotify then
+				warnFn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | notify failed: " .. tostring(notifyErr)))
+			end
+			return
+		end
+		warnFn(formatLoaderError("W_OPTIONAL_MODULE", message))
+	end
+
+	function helpers.getDiagnostics()
+		return diagnostics
+	end
+
+	return helpers
+end
+
+return LoaderHelpersService
 ]])
 put("src/services/ownership-tracker.lua", [[-- Rayfield Ownership Tracker
 -- Scoped ownership registry for precise cleanup of UI features/resources.
@@ -16156,6 +16532,1357 @@ end
 
 return ChartFactory
 ]])
+put("src/ui/elements/factory/component-widgets-factory.lua", [[local ComponentWidgetsFactory = {}
+
+local function resolvePlayers(context)
+	if type(context) == "table" and context.Players then
+		return context.Players
+	end
+	local okPlayers, serviceOrErr = pcall(function()
+		return game:GetService("Players")
+	end)
+	if okPlayers then
+		return serviceOrErr
+	end
+	return nil
+end
+
+local function createMethods(context)
+	context = type(context) == "table" and context or {}
+	local self = context.self
+	local TabPage = context.TabPage
+	local Settings = context.Settings
+	local addExtendedAPI = context.addExtendedAPI
+	local registerHoverBinding = context.registerHoverBinding
+	local connectThemeRefresh = context.connectThemeRefresh
+	local resolveElementParentFromSettings = context.resolveElementParentFromSettings
+	local cloneSerializable = context.cloneSerializable
+	local clampNumber = context.clampNumber
+	local roundToPrecision = context.roundToPrecision
+	local emitUICue = context.emitUICue
+	local Players = resolvePlayers(context)
+
+	if type(self) ~= "table" or typeof(TabPage) ~= "Instance" then
+		return nil, "Invalid component widget context."
+	end
+
+	local Tab = {}
+			function Tab:CreateColorPicker(ColorPickerSettings) -- by Throit
+				ColorPickerSettings.Type = "ColorPicker"
+				local ColorPicker = self.Elements.Template.ColorPicker:Clone()
+				local Background = ColorPicker.CPBackground
+				local Display = Background.Display
+				local Main = Background.MainCP
+				local Slider = ColorPicker.ColorSlider
+				ColorPicker.ClipsDescendants = true
+				ColorPicker.Name = ColorPickerSettings.Name
+				ColorPicker.Title.Text = ColorPickerSettings.Name
+				ColorPicker.Visible = true
+				ColorPicker.Parent = TabPage
+				ColorPicker.Size = UDim2.new(1, -10, 0, 45)
+				Background.Size = UDim2.new(0, 39, 0, 22)
+				Display.BackgroundTransparency = 0
+				self.Main.MainPoint.ImageTransparency = 1
+				ColorPicker.Interact.Size = UDim2.new(1, 0, 1, 0)
+				ColorPicker.Interact.Position = UDim2.new(0.5, 0, 0.5, 0)
+				ColorPicker.RGB.Position = UDim2.new(0, 17, 0, 70)
+				ColorPicker.HexInput.Position = UDim2.new(0, 17, 0, 90)
+				self.Main.ImageTransparency = 1
+				Background.BackgroundTransparency = 1
+	
+				for _, rgbinput in ipairs(ColorPicker.RGB:GetChildren()) do
+					if rgbinput:IsA("Frame") then
+						rgbinput.BackgroundColor3 = self.getSelectedTheme().InputBackground
+						rgbinput.UIStroke.Color = self.getSelectedTheme().InputStroke
+					end
+				end
+	
+				ColorPicker.HexInput.BackgroundColor3 = self.getSelectedTheme().InputBackground
+				ColorPicker.HexInput.UIStroke.Color = self.getSelectedTheme().InputStroke
+	
+				local opened = false 
+				local mouse = Players.LocalPlayer:GetMouse()
+				self.Main.Image = "http://www.roblox.com/asset/?id=11415645739"
+				local mainDragging = false 
+				local sliderDragging = false 
+				ColorPicker.Interact.MouseButton1Down:Connect(function()
+					task.spawn(function()
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
+						self.Animation:Create(ColorPicker.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
+						task.wait(0.2)
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
+						self.Animation:Create(ColorPicker.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+					end)
+	
+					if not opened then
+						opened = true 
+						self.Animation:Create(Background, TweenInfo.new(0.45, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 18, 0, 15)}):Play()
+						task.wait(0.1)
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 120)}):Play()
+						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 173, 0, 86)}):Play()
+						self.Animation:Create(Display, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
+						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0.289, 0, 0.5, 0)}):Play()
+						self.Animation:Create(ColorPicker.RGB, TweenInfo.new(0.8, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 40)}):Play()
+						self.Animation:Create(ColorPicker.HexInput, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 73)}):Play()
+						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0.574, 0, 1, 0)}):Play()
+						self.Animation:Create(self.Main.MainPoint, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
+						self.Animation:Create(Main, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = self.getSelectedTheme() ~= self.RayfieldLibrary.Theme.Default and 0.25 or 0.1}):Play()
+						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+					else
+						opened = false
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 45)}):Play()
+						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 39, 0, 22)}):Play()
+						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
+						self.Animation:Create(ColorPicker.RGB, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 70)}):Play()
+						self.Animation:Create(ColorPicker.HexInput, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 90)}):Play()
+						self.Animation:Create(Display, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+						self.Animation:Create(self.Main.MainPoint, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
+						self.Animation:Create(Main, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
+						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
+					end
+	
+				end)
+	
+				self.UserInputService.InputEnded:Connect(function(input, gameProcessed) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+						local wasDragging = mainDragging or sliderDragging
+						mainDragging = false
+						sliderDragging = false
+						if wasDragging and not ColorPickerSettings.Ext then
+							self.SaveConfiguration()
+						end
+					end end)
+				self.Main.MouseButton1Down:Connect(function()
+					if opened then
+						mainDragging = true 
+					end
+				end)
+				self.Main.MainPoint.MouseButton1Down:Connect(function()
+					if opened then
+						mainDragging = true 
+					end
+				end)
+				Slider.MouseButton1Down:Connect(function()
+					sliderDragging = true 
+				end)
+				Slider.SliderPoint.MouseButton1Down:Connect(function()
+					sliderDragging = true 
+				end)
+				local h,s,v = ColorPickerSettings.Color:ToHSV()
+				local color = Color3.fromHSV(h,s,v) 
+				local hex = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
+				ColorPicker.HexInput.InputBox.Text = hex
+				local function setDisplay()
+					--Main
+					self.Main.MainPoint.Position = UDim2.new(s,-self.Main.MainPoint.AbsoluteSize.X/2,1-v,-self.Main.MainPoint.AbsoluteSize.Y/2)
+					self.Main.MainPoint.ImageColor3 = Color3.fromHSV(h,s,v)
+					Background.BackgroundColor3 = Color3.fromHSV(h,1,1)
+					Display.BackgroundColor3 = Color3.fromHSV(h,s,v)
+					--Slider 
+					local x = h * Slider.AbsoluteSize.X
+					Slider.SliderPoint.Position = UDim2.new(0,x-Slider.SliderPoint.AbsoluteSize.X/2,0.5,0)
+					Slider.SliderPoint.ImageColor3 = Color3.fromHSV(h,1,1)
+					local color = Color3.fromHSV(h,s,v) 
+					local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
+					ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
+					ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
+					ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
+					hex = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
+					ColorPicker.HexInput.InputBox.Text = hex
+				end
+				setDisplay()
+				ColorPicker.HexInput.InputBox.FocusLost:Connect(function()
+					if not pcall(function()
+							local r, g, b = string.match(ColorPicker.HexInput.InputBox.Text, "^#?(%w%w)(%w%w)(%w%w)$")
+							local rgbColor = Color3.fromRGB(tonumber(r, 16),tonumber(g, 16), tonumber(b, 16))
+							h,s,v = rgbColor:ToHSV()
+							hex = ColorPicker.HexInput.InputBox.Text
+							setDisplay()
+							ColorPickerSettings.Color = rgbColor
+						end) 
+					then 
+						ColorPicker.HexInput.InputBox.Text = hex 
+					end
+					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
+					local r,g,b = math.floor((h*255)+0.5),math.floor((s*255)+0.5),math.floor((v*255)+0.5)
+					ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
+					if not ColorPickerSettings.Ext then
+						self.SaveConfiguration()
+					end
+				end)
+				--RGB
+				local function rgbBoxes(box,toChange)
+					local value = tonumber(box.Text) 
+					local color = Color3.fromHSV(h,s,v) 
+					local oldR,oldG,oldB = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
+					local save 
+					if toChange == "R" then save = oldR;oldR = value elseif toChange == "G" then save = oldG;oldG = value else save = oldB;oldB = value end
+					if value then 
+						value = math.clamp(value,0,255)
+						h,s,v = Color3.fromRGB(oldR,oldG,oldB):ToHSV()
+	
+						setDisplay()
+					else 
+						box.Text = tostring(save)
+					end
+					local r,g,b = math.floor((h*255)+0.5),math.floor((s*255)+0.5),math.floor((v*255)+0.5)
+					ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
+					if not ColorPickerSettings.Ext then
+						self.SaveConfiguration(ColorPickerSettings.Flag..'\n'..tostring(ColorPickerSettings.Color))
+					end
+				end
+				ColorPicker.RGB.RInput.InputBox.FocusLost:connect(function()
+					rgbBoxes(ColorPicker.RGB.RInput.InputBox,"R")
+					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
+				end)
+				ColorPicker.RGB.GInput.InputBox.FocusLost:connect(function()
+					rgbBoxes(ColorPicker.RGB.GInput.InputBox,"G")
+					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
+				end)
+				ColorPicker.RGB.BInput.InputBox.FocusLost:connect(function()
+					rgbBoxes(ColorPicker.RGB.BInput.InputBox,"B")
+					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
+				end)
+	
+				local prevH, prevS, prevV = h, s, v
+				self.RunService.RenderStepped:connect(function()
+					if mainDragging then
+						local localX = math.clamp(mouse.X-self.Main.AbsolutePosition.X,0,self.Main.AbsoluteSize.X)
+						local localY = math.clamp(mouse.Y-self.Main.AbsolutePosition.Y,0,self.Main.AbsoluteSize.Y)
+						self.Main.MainPoint.Position = UDim2.new(0,localX-self.Main.MainPoint.AbsoluteSize.X/2,0,localY-self.Main.MainPoint.AbsoluteSize.Y/2)
+						s = localX / self.Main.AbsoluteSize.X
+						v = 1 - (localY / self.Main.AbsoluteSize.Y)
+						local color = Color3.fromHSV(h,s,v)
+						Display.BackgroundColor3 = color
+						self.Main.MainPoint.ImageColor3 = color
+						Background.BackgroundColor3 = Color3.fromHSV(h,1,1)
+						local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
+						ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
+						ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
+						ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
+						ColorPicker.HexInput.InputBox.Text = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
+						ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
+						if h ~= prevH or s ~= prevS or v ~= prevV then
+							prevH, prevS, prevV = h, s, v
+							pcall(ColorPickerSettings.Callback, color)
+						end
+					end
+					if sliderDragging then
+						local localX = math.clamp(mouse.X-Slider.AbsolutePosition.X,0,Slider.AbsoluteSize.X)
+						h = localX / Slider.AbsoluteSize.X
+						local color = Color3.fromHSV(h,s,v)
+						local hueColor = Color3.fromHSV(h,1,1)
+						Display.BackgroundColor3 = color
+						Slider.SliderPoint.Position = UDim2.new(0,localX-Slider.SliderPoint.AbsoluteSize.X/2,0.5,0)
+						Slider.SliderPoint.ImageColor3 = hueColor
+						Background.BackgroundColor3 = hueColor
+						self.Main.MainPoint.ImageColor3 = color
+						local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
+						ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
+						ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
+						ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
+						ColorPicker.HexInput.InputBox.Text = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
+						ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
+						if h ~= prevH or s ~= prevS or v ~= prevV then
+							prevH, prevS, prevV = h, s, v
+							pcall(ColorPickerSettings.Callback, color)
+						end
+					end
+				end)
+	
+				if Settings.ConfigurationSaving then
+					if Settings.ConfigurationSaving.Enabled and ColorPickerSettings.Flag then
+						self.RayfieldLibrary.Flags[ColorPickerSettings.Flag] = ColorPickerSettings
+					end
+				end
+	
+				function ColorPickerSettings:Set(RGBColor)
+					ColorPickerSettings.Color = RGBColor
+					h,s,v = ColorPickerSettings.Color:ToHSV()
+					color = Color3.fromHSV(h,s,v)
+					setDisplay()
+				end
+	
+				local colorPickerHoverBindingKey = registerHoverBinding(ColorPicker,
+					function()
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
+					end,
+					function()
+						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
+					end
+				)
+	
+				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
+					for _, rgbinput in ipairs(ColorPicker.RGB:GetChildren()) do
+						if rgbinput:IsA("Frame") then
+							rgbinput.BackgroundColor3 = self.getSelectedTheme().InputBackground
+							rgbinput.UIStroke.Color = self.getSelectedTheme().InputStroke
+						end
+					end
+	
+					ColorPicker.HexInput.BackgroundColor3 = self.getSelectedTheme().InputBackground
+					ColorPicker.HexInput.UIStroke.Color = self.getSelectedTheme().InputStroke
+				end)
+	
+				function ColorPickerSettings:Destroy()
+					ColorPicker:Destroy()
+				end
+	
+				-- Add extended API
+				addExtendedAPI(ColorPickerSettings, ColorPickerSettings.Name, "ColorPicker", ColorPicker, colorPickerHoverBindingKey)
+	
+				return ColorPickerSettings
+			end
+	
+			-- Section
+
+			function Tab:CreateNumberStepper(stepperSettings)
+				local settingsValue = stepperSettings or {}
+				local stepper = {}
+				stepper.Name = tostring(settingsValue.Name or "Number Stepper")
+				stepper.Flag = settingsValue.Flag
+				stepper.CurrentValue = clampNumber(settingsValue.CurrentValue, settingsValue.Min, settingsValue.Max, 0)
+
+				local minValue = tonumber(settingsValue.Min)
+				local maxValue = tonumber(settingsValue.Max)
+				local stepValue = math.max(0.0001, tonumber(settingsValue.Step) or 1)
+				local precision = math.max(0, math.floor(tonumber(settingsValue.Precision) or 2))
+				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+
+				local root = Instance.new("Frame")
+				root.Name = stepper.Name
+				root.Size = UDim2.new(1, -10, 0, 45)
+				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 6)
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().ElementStroke
+				stroke.Parent = root
+
+				local title = Instance.new("TextLabel")
+				title.BackgroundTransparency = 1
+				title.Position = UDim2.new(0, 10, 0, 0)
+				title.Size = UDim2.new(0.45, -8, 1, 0)
+				title.TextXAlignment = Enum.TextXAlignment.Left
+				title.Font = Enum.Font.GothamMedium
+				title.TextSize = 13
+				title.Text = stepper.Name
+				title.TextColor3 = self.getSelectedTheme().TextColor
+				title.Parent = root
+
+				local minus = Instance.new("TextButton")
+				minus.Name = "Minus"
+				minus.AnchorPoint = Vector2.new(1, 0.5)
+				minus.Position = UDim2.new(1, -78, 0.5, 0)
+				minus.Size = UDim2.new(0, 22, 0, 22)
+				minus.Text = "-"
+				minus.Font = Enum.Font.GothamBold
+				minus.TextSize = 16
+				minus.TextColor3 = self.getSelectedTheme().TextColor
+				minus.BackgroundColor3 = self.getSelectedTheme().InputBackground
+				minus.BorderSizePixel = 0
+				minus.Parent = root
+
+				local valueBox = Instance.new("TextBox")
+				valueBox.Name = "Value"
+				valueBox.AnchorPoint = Vector2.new(1, 0.5)
+				valueBox.Position = UDim2.new(1, -50, 0.5, 0)
+				valueBox.Size = UDim2.new(0, 56, 0, 22)
+				valueBox.ClearTextOnFocus = false
+				valueBox.Font = Enum.Font.Gotham
+				valueBox.TextSize = 13
+				valueBox.TextColor3 = self.getSelectedTheme().TextColor
+				valueBox.PlaceholderText = "0"
+				valueBox.BackgroundColor3 = self.getSelectedTheme().InputBackground
+				valueBox.BorderSizePixel = 0
+				valueBox.Parent = root
+
+				local plus = Instance.new("TextButton")
+				plus.Name = "Plus"
+				plus.AnchorPoint = Vector2.new(1, 0.5)
+				plus.Position = UDim2.new(1, -22, 0.5, 0)
+				plus.Size = UDim2.new(0, 22, 0, 22)
+				plus.Text = "+"
+				plus.Font = Enum.Font.GothamBold
+				plus.TextSize = 16
+				plus.TextColor3 = self.getSelectedTheme().TextColor
+				plus.BackgroundColor3 = self.getSelectedTheme().InputBackground
+				plus.BorderSizePixel = 0
+				plus.Parent = root
+
+				local function formatValue(numberValue)
+					local template = "%." .. tostring(precision) .. "f"
+					return string.format(template, numberValue)
+				end
+
+				local function commitValue(nextValue, options)
+					options = options or {}
+					local normalized = roundToPrecision(clampNumber(nextValue, minValue, maxValue, stepper.CurrentValue), precision)
+					if normalized == stepper.CurrentValue and options.force ~= true then
+						valueBox.Text = formatValue(stepper.CurrentValue)
+						return
+					end
+					stepper.CurrentValue = normalized
+					valueBox.Text = formatValue(normalized)
+					local okCallback, callbackErr = pcall(callback, normalized)
+					if not okCallback then
+						warn("Rayfield | NumberStepper callback failed: " .. tostring(callbackErr))
+					end
+					if settingsValue.Ext ~= true and options.persist ~= false then
+						self.SaveConfiguration()
+					end
+				end
+
+				minus.MouseButton1Click:Connect(function()
+					commitValue(stepper.CurrentValue - stepValue, {persist = true})
+				end)
+				plus.MouseButton1Click:Connect(function()
+					commitValue(stepper.CurrentValue + stepValue, {persist = true})
+				end)
+				valueBox.FocusLost:Connect(function()
+					commitValue(valueBox.Text, {persist = true, force = true})
+				end)
+
+				function stepper:Set(nextValue)
+					commitValue(nextValue, {persist = true, force = true})
+				end
+
+				function stepper:Get()
+					return stepper.CurrentValue
+				end
+
+				function stepper:Increment()
+					commitValue(stepper.CurrentValue + stepValue, {persist = true})
+				end
+
+				function stepper:Decrement()
+					commitValue(stepper.CurrentValue - stepValue, {persist = true})
+				end
+
+				function stepper:Destroy()
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+					stroke.Color = self.getSelectedTheme().ElementStroke
+					title.TextColor3 = self.getSelectedTheme().TextColor
+					minus.TextColor3 = self.getSelectedTheme().TextColor
+					minus.BackgroundColor3 = self.getSelectedTheme().InputBackground
+					plus.TextColor3 = self.getSelectedTheme().TextColor
+					plus.BackgroundColor3 = self.getSelectedTheme().InputBackground
+					valueBox.TextColor3 = self.getSelectedTheme().TextColor
+					valueBox.BackgroundColor3 = self.getSelectedTheme().InputBackground
+				end)
+
+				resolveElementParentFromSettings(stepper, settingsValue)
+				commitValue(stepper.CurrentValue, {persist = false, force = true})
+				addExtendedAPI(stepper, stepper.Name, "NumberStepper", root)
+
+				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and stepper.Flag then
+					self.RayfieldLibrary.Flags[stepper.Flag] = stepper
+				end
+
+				return stepper
+			end
+
+			function Tab:CreateConfirmButton(confirmSettings)
+				local settingsValue = confirmSettings or {}
+				local element = {}
+				element.Name = tostring(settingsValue.Name or "Confirm Button")
+				element.Flag = settingsValue.Flag
+				element.Ext = settingsValue.Ext
+
+				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+				local mode = tostring(settingsValue.ConfirmMode or "hold"):lower()
+				local holdDuration = clampNumber(settingsValue.HoldDuration, 0.05, 6, 1.2)
+				local doubleWindow = clampNumber(settingsValue.DoubleWindow, 0.05, 4, 0.4)
+				local timeout = clampNumber(settingsValue.Timeout, 0.2, 12, 2)
+				local armed = false
+				local armedToken = 0
+				local lastClickTime = 0
+				local holdActive = false
+				local holdToken = 0
+
+				local root = Instance.new("Frame")
+				root.Name = element.Name
+				root.Size = UDim2.new(1, -10, 0, 45)
+				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 6)
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().ElementStroke
+				stroke.Parent = root
+
+				local button = Instance.new("TextButton")
+				button.Name = "Interact"
+				button.Size = UDim2.new(1, 0, 1, 0)
+				button.BackgroundTransparency = 1
+				button.Text = element.Name
+				button.Font = Enum.Font.GothamSemibold
+				button.TextSize = 13
+				button.TextColor3 = self.getSelectedTheme().TextColor
+				button.Parent = root
+
+				local function setArmedVisual(value)
+					armed = value == true
+					if armed then
+						root.BackgroundColor3 = self.getSelectedTheme().ConfirmArmed or self.getSelectedTheme().ElementBackgroundHover
+					else
+						root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+					end
+				end
+
+				local function fireConfirmed()
+					setArmedVisual(false)
+					emitUICue("click")
+					local okCallback, callbackErr = pcall(callback)
+					if not okCallback then
+						emitUICue("error")
+						warn("Rayfield | ConfirmButton callback failed: " .. tostring(callbackErr))
+					else
+						emitUICue("success")
+					end
+					if settingsValue.Ext ~= true then
+						self.SaveConfiguration()
+					end
+				end
+
+				local function armWithTimeout()
+					armedToken += 1
+					local localToken = armedToken
+					setArmedVisual(true)
+					task.delay(timeout, function()
+						if armed and armedToken == localToken then
+							setArmedVisual(false)
+						end
+					end)
+				end
+
+				local function isModeEnabled(modeName)
+					return mode == modeName or mode == "either"
+				end
+
+				button.MouseButton1Click:Connect(function()
+					local now = os.clock()
+					if isModeEnabled("double") then
+						if armed and (now - lastClickTime) <= doubleWindow then
+							fireConfirmed()
+							lastClickTime = 0
+							return
+						end
+						lastClickTime = now
+						armWithTimeout()
+						return
+					end
+					if not isModeEnabled("hold") then
+						fireConfirmed()
+					end
+				end)
+
+				button.InputBegan:Connect(function(input)
+					if not isModeEnabled("hold") then
+						return
+					end
+					if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					holdActive = true
+					holdToken += 1
+					local localToken = holdToken
+					setArmedVisual(true)
+					task.delay(holdDuration, function()
+						if holdActive and holdToken == localToken then
+							fireConfirmed()
+						end
+					end)
+				end)
+
+				button.InputEnded:Connect(function(input)
+					if not isModeEnabled("hold") then
+						return
+					end
+					if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					holdActive = false
+					if armed then
+						setArmedVisual(false)
+					end
+				end)
+
+				function element:Arm()
+					armWithTimeout()
+					return true, "armed"
+				end
+
+				function element:Cancel()
+					holdActive = false
+					setArmedVisual(false)
+					return true, "cancelled"
+				end
+
+				function element:SetMode(nextMode)
+					local normalized = tostring(nextMode or "hold"):lower()
+					if normalized ~= "hold" and normalized ~= "double" and normalized ~= "either" then
+						return false, "Invalid mode."
+					end
+					mode = normalized
+					return true, "ok"
+				end
+
+				function element:SetHoldDuration(nextDuration)
+					holdDuration = clampNumber(nextDuration, 0.05, 6, holdDuration)
+					return true, "ok"
+				end
+
+				function element:SetDoubleWindow(nextWindow)
+					doubleWindow = clampNumber(nextWindow, 0.05, 4, doubleWindow)
+					return true, "ok"
+				end
+
+				function element:Destroy()
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					button.TextColor3 = self.getSelectedTheme().TextColor
+					stroke.Color = self.getSelectedTheme().ElementStroke
+					setArmedVisual(armed)
+				end)
+
+				resolveElementParentFromSettings(element, settingsValue)
+				addExtendedAPI(element, element.Name, "ConfirmButton", root)
+				return element
+			end
+
+			local function resolveImageSourceUri(source)
+				local valueType = typeof(source)
+				if valueType == "nil" then
+					return "rbxassetid://0", nil
+				end
+				if valueType == "number" then
+					return "rbxassetid://" .. tostring(math.floor(source)), nil
+				end
+				if valueType ~= "string" then
+					return "rbxassetid://0", "Image source must be a number or string."
+				end
+				local normalized = tostring(source)
+				if normalized == "" then
+					return "rbxassetid://0", "Image source is empty."
+				end
+				if normalized:match("^rbxassetid://") then
+					return normalized, nil
+				end
+				if normalized:match("^https?://") then
+					local hasBridge = type(getcustomasset) == "function" or type(getsynasset) == "function"
+					if not hasBridge then
+						return "rbxassetid://0", "URL image source unsupported in this executor (no asset bridge)."
+					end
+					return normalized, nil
+				end
+				if tonumber(normalized) then
+					return "rbxassetid://" .. tostring(math.floor(tonumber(normalized))), nil
+				end
+				return normalized, nil
+			end
+
+			function Tab:CreateImage(imageSettings)
+				local settingsValue = imageSettings or {}
+				local imageElement = {}
+				imageElement.Name = tostring(settingsValue.Name or "Image")
+				imageElement.Flag = settingsValue.Flag
+				local initialSource, initialWarning = resolveImageSourceUri(settingsValue.Source)
+				imageElement.CurrentValue = {
+					source = initialSource,
+					fitMode = tostring(settingsValue.FitMode or "fill"):lower(),
+					caption = tostring(settingsValue.Caption or "")
+				}
+				if initialWarning then
+					warn("Rayfield | Image source warning: " .. tostring(initialWarning))
+				end
+
+				local root = Instance.new("Frame")
+				root.Name = imageElement.Name
+				root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 60, 360, 130))
+				root.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, clampNumber(settingsValue.CornerRadius, 0, 24, 8))
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().SecondaryElementStroke
+				stroke.Parent = root
+
+				local image = Instance.new("ImageLabel")
+				image.Name = "Image"
+				image.BackgroundTransparency = 1
+				image.Position = UDim2.new(0, 0, 0, 0)
+				image.Size = UDim2.new(1, 0, 1, -24)
+				image.Image = imageElement.CurrentValue.source
+				image.ScaleType = imageElement.CurrentValue.fitMode == "fit" and Enum.ScaleType.Fit or Enum.ScaleType.Crop
+				image.Parent = root
+
+				local caption = Instance.new("TextLabel")
+				caption.Name = "Caption"
+				caption.BackgroundTransparency = 1
+				caption.AnchorPoint = Vector2.new(0.5, 1)
+				caption.Position = UDim2.new(0.5, 0, 1, -4)
+				caption.Size = UDim2.new(1, -12, 0, 18)
+				caption.Font = Enum.Font.Gotham
+				caption.TextSize = 12
+				caption.TextXAlignment = Enum.TextXAlignment.Left
+				caption.TextColor3 = self.getSelectedTheme().TextColor
+				caption.Text = imageElement.CurrentValue.caption
+				caption.Visible = imageElement.CurrentValue.caption ~= ""
+				caption.Parent = root
+
+				local function persistImageState()
+					if settingsValue.Ext ~= true then
+						self.SaveConfiguration()
+					end
+				end
+
+				function imageElement:SetSource(nextSource)
+					local resolved, warningMessage = resolveImageSourceUri(nextSource)
+					imageElement.CurrentValue.source = resolved
+					image.Image = imageElement.CurrentValue.source
+					persistImageState()
+					if warningMessage then
+						warn("Rayfield | Image source warning: " .. tostring(warningMessage))
+						return false, warningMessage
+					end
+					return true, "ok"
+				end
+
+				function imageElement:GetSource()
+					return imageElement.CurrentValue.source
+				end
+
+				function imageElement:SetFitMode(nextMode)
+					local normalized = tostring(nextMode or "fill"):lower()
+					if normalized ~= "fill" and normalized ~= "fit" then
+						normalized = "fill"
+					end
+					imageElement.CurrentValue.fitMode = normalized
+					image.ScaleType = normalized == "fit" and Enum.ScaleType.Fit or Enum.ScaleType.Crop
+					persistImageState()
+				end
+
+				function imageElement:SetCaption(nextCaption)
+					imageElement.CurrentValue.caption = tostring(nextCaption or "")
+					caption.Text = imageElement.CurrentValue.caption
+					caption.Visible = imageElement.CurrentValue.caption ~= ""
+					persistImageState()
+				end
+
+				function imageElement:GetPersistValue()
+					return cloneSerializable(imageElement.CurrentValue)
+				end
+
+				function imageElement:Set(value)
+					if type(value) == "table" then
+						if value.source ~= nil then
+							imageElement:SetSource(value.source)
+						end
+						if value.fitMode ~= nil then
+							imageElement:SetFitMode(value.fitMode)
+						end
+						if value.caption ~= nil then
+							imageElement:SetCaption(value.caption)
+						end
+					else
+						imageElement:SetSource(value)
+					end
+				end
+
+				function imageElement:Destroy()
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					root.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+					stroke.Color = self.getSelectedTheme().SecondaryElementStroke
+					caption.TextColor3 = self.getSelectedTheme().TextColor
+				end)
+
+				resolveElementParentFromSettings(imageElement, settingsValue)
+				addExtendedAPI(imageElement, imageElement.Name, "Image", root)
+				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and imageElement.Flag then
+					self.RayfieldLibrary.Flags[imageElement.Flag] = imageElement
+				end
+				return imageElement
+			end
+
+			function Tab:CreateGallery(gallerySettings)
+				local settingsValue = gallerySettings or {}
+				local gallery = {}
+				gallery.Name = tostring(settingsValue.Name or "Gallery")
+				gallery.Flag = settingsValue.Flag
+				local selectionMode = tostring(settingsValue.SelectionMode or "single"):lower()
+				if selectionMode ~= "single" and selectionMode ~= "multi" then
+					selectionMode = "single"
+				end
+				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+				local columns = settingsValue.Columns or "auto"
+				local items = {}
+				local selected = {}
+
+				local root = Instance.new("Frame")
+				root.Name = gallery.Name
+				root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 140, 520, 220))
+				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+				root.BorderSizePixel = 0
+				root.Visible = true
+				root.Parent = TabPage
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(0, 6)
+				corner.Parent = root
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Color = self.getSelectedTheme().ElementStroke
+				stroke.Parent = root
+
+				local title = Instance.new("TextLabel")
+				title.BackgroundTransparency = 1
+				title.Position = UDim2.new(0, 10, 0, 0)
+				title.Size = UDim2.new(1, -12, 0, 22)
+				title.Font = Enum.Font.GothamSemibold
+				title.TextXAlignment = Enum.TextXAlignment.Left
+				title.TextSize = 13
+				title.TextColor3 = self.getSelectedTheme().TextColor
+				title.Text = gallery.Name
+				title.Parent = root
+
+				local list = Instance.new("ScrollingFrame")
+				list.Name = "List"
+				list.BackgroundTransparency = 1
+				list.BorderSizePixel = 0
+				list.Position = UDim2.new(0, 6, 0, 24)
+				list.Size = UDim2.new(1, -12, 1, -30)
+				list.CanvasSize = UDim2.new(0, 0, 0, 0)
+				list.ScrollBarImageTransparency = 0.5
+				list.Parent = root
+
+				local grid = Instance.new("UIGridLayout")
+				grid.CellPadding = UDim2.new(0, 8, 0, 8)
+				grid.SortOrder = Enum.SortOrder.LayoutOrder
+				grid.Parent = list
+
+				local function applyGridSizing()
+					local targetColumns = 2
+					if type(columns) == "number" then
+						targetColumns = math.max(1, math.floor(columns))
+					else
+						targetColumns = math.max(1, math.floor((list.AbsoluteSize.X + 8) / 116))
+					end
+					local width = math.max(70, math.floor((list.AbsoluteSize.X - ((targetColumns - 1) * 8)) / targetColumns))
+					grid.CellSize = UDim2.new(0, width, 0, 92)
+				end
+
+				local function snapshotSelection()
+					if selectionMode == "single" then
+						for id in pairs(selected) do
+							return id
+						end
+						return nil
+					end
+					local out = {}
+					for id in pairs(selected) do
+						table.insert(out, id)
+					end
+					table.sort(out)
+					return out
+				end
+
+				local function emitSelection()
+					local okCallback, callbackErr = pcall(callback, snapshotSelection())
+					if not okCallback then
+						warn("Rayfield | Gallery callback failed: " .. tostring(callbackErr))
+					end
+					if settingsValue.Ext ~= true then
+						self.SaveConfiguration()
+					end
+				end
+
+				local cardById = {}
+
+				local function applyCardSelectionVisual(itemId)
+					local card = cardById[itemId]
+					if not card then
+						return
+					end
+					local active = selected[itemId] == true
+					card.BackgroundColor3 = active and (self.getSelectedTheme().DropdownSelected or self.getSelectedTheme().ElementBackgroundHover) or self.getSelectedTheme().SecondaryElementBackground
+				end
+
+				local function renderItems()
+					for _, child in ipairs(list:GetChildren()) do
+						if child:IsA("Frame") then
+							child:Destroy()
+						end
+					end
+					cardById = {}
+
+					for index, item in ipairs(items) do
+						local itemId = tostring(item.id or item.Id or index)
+						local card = Instance.new("Frame")
+						card.Name = "Item_" .. itemId
+						card.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+						card.BorderSizePixel = 0
+						card.LayoutOrder = index
+						card.Parent = list
+
+						local cardCorner = Instance.new("UICorner")
+						cardCorner.CornerRadius = UDim.new(0, 6)
+						cardCorner.Parent = card
+
+						local image = Instance.new("ImageLabel")
+						image.BackgroundTransparency = 1
+						image.Position = UDim2.new(0, 6, 0, 6)
+						image.Size = UDim2.new(1, -12, 1, -30)
+						image.ScaleType = Enum.ScaleType.Crop
+						image.Image = resolveImageSourceUri(item.image or item.Image or item.source or item.Source)
+						image.Parent = card
+
+						local label = Instance.new("TextLabel")
+						label.BackgroundTransparency = 1
+						label.Position = UDim2.new(0, 6, 1, -22)
+						label.Size = UDim2.new(1, -12, 0, 16)
+						label.Font = Enum.Font.Gotham
+						label.TextSize = 11
+						label.TextXAlignment = Enum.TextXAlignment.Left
+						label.TextColor3 = self.getSelectedTheme().TextColor
+						label.Text = tostring(item.name or item.Name or itemId)
+						label.Parent = card
+
+						local interact = Instance.new("TextButton")
+						interact.BackgroundTransparency = 1
+						interact.Size = UDim2.new(1, 0, 1, 0)
+						interact.Text = ""
+						interact.Parent = card
+						interact.MouseButton1Click:Connect(function()
+							if selectionMode == "single" then
+								selected = {}
+								selected[itemId] = true
+							else
+								if selected[itemId] then
+									selected[itemId] = nil
+								else
+									selected[itemId] = true
+								end
+							end
+							for id in pairs(cardById) do
+								applyCardSelectionVisual(id)
+							end
+							emitSelection()
+						end)
+
+						cardById[itemId] = card
+						applyCardSelectionVisual(itemId)
+					end
+
+					task.defer(function()
+						applyGridSizing()
+						list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
+					end)
+				end
+
+				list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+					applyGridSizing()
+					list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
+				end)
+				grid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+					list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
+				end)
+
+				function gallery:SetItems(nextItems)
+					items = {}
+					if type(nextItems) == "table" then
+						for _, item in ipairs(nextItems) do
+							table.insert(items, cloneSerializable(item))
+						end
+					end
+					renderItems()
+				end
+
+				function gallery:AddItem(item)
+					if type(item) ~= "table" then
+						return
+					end
+					table.insert(items, cloneSerializable(item))
+					renderItems()
+				end
+
+				function gallery:RemoveItem(itemId)
+					local key = tostring(itemId or "")
+					for index, item in ipairs(items) do
+						local id = tostring(item.id or item.Id or index)
+						if id == key then
+							table.remove(items, index)
+							selected[key] = nil
+							break
+						end
+					end
+					renderItems()
+					emitSelection()
+				end
+
+				function gallery:Select(itemId)
+					local key = tostring(itemId or "")
+					if selectionMode == "single" then
+						selected = {}
+					end
+					selected[key] = true
+					applyCardSelectionVisual(key)
+					emitSelection()
+				end
+
+				function gallery:Deselect(itemId)
+					local key = tostring(itemId or "")
+					selected[key] = nil
+					applyCardSelectionVisual(key)
+					emitSelection()
+				end
+
+				function gallery:ClearSelection()
+					selected = {}
+					for id in pairs(cardById) do
+						applyCardSelectionVisual(id)
+					end
+					emitSelection()
+				end
+
+				function gallery:SetSelection(nextSelection)
+					selected = {}
+					if selectionMode == "single" then
+						local value = type(nextSelection) == "table" and nextSelection[1] or nextSelection
+						if value ~= nil then
+							selected[tostring(value)] = true
+						end
+					else
+						if type(nextSelection) == "table" then
+							for _, value in ipairs(nextSelection) do
+								selected[tostring(value)] = true
+							end
+						elseif nextSelection ~= nil then
+							selected[tostring(nextSelection)] = true
+						end
+					end
+					for id in pairs(cardById) do
+						applyCardSelectionVisual(id)
+					end
+					emitSelection()
+				end
+
+				function gallery:GetSelection()
+					return snapshotSelection()
+				end
+
+				function gallery:GetPersistValue()
+					return cloneSerializable(snapshotSelection())
+				end
+
+				function gallery:Set(value)
+					gallery:SetSelection(value)
+				end
+
+				function gallery:Destroy()
+					root:Destroy()
+				end
+
+				connectThemeRefresh(function()
+					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+					stroke.Color = self.getSelectedTheme().ElementStroke
+					title.TextColor3 = self.getSelectedTheme().TextColor
+					for id in pairs(cardById) do
+						local card = cardById[id]
+						if card then
+							local label = card:FindFirstChildOfClass("TextLabel")
+							if label then
+								label.TextColor3 = self.getSelectedTheme().TextColor
+							end
+						end
+						applyCardSelectionVisual(id)
+					end
+				end)
+
+				resolveElementParentFromSettings(gallery, settingsValue)
+				gallery:SetItems(settingsValue.Items or {})
+				addExtendedAPI(gallery, gallery.Name, "Gallery", root)
+				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and gallery.Flag then
+					self.RayfieldLibrary.Flags[gallery.Flag] = gallery
+				end
+				return gallery
+			end
+
+
+			function Tab:CreateDivider()
+				local DividerValue = {}
+	
+				local Divider = self.Elements.Template.Divider:Clone()
+				Divider.Visible = true
+				Divider.Parent = TabPage
+	
+				Divider.Divider.BackgroundTransparency = 1
+				self.Animation:Create(Divider.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
+	
+				function DividerValue:Set(Value)
+					Divider.Visible = Value
+				end
+	
+				function DividerValue:Destroy()
+					Divider:Destroy()
+				end
+	
+				-- Add extended API
+				addExtendedAPI(DividerValue, "Divider", "Divider", Divider)
+	
+				return DividerValue
+			end
+	
+			-- Label
+			function Tab:CreateLabel(LabelText, Icon, Color, IgnoreTheme)
+				local LabelValue = {}
+	
+				local Label = self.Elements.Template.Label:Clone()
+				Label.Title.Text = LabelText
+				Label.Visible = true
+				Label.Parent = TabPage
+	
+				Label.BackgroundColor3 = Color or self.getSelectedTheme().SecondaryElementBackground
+				Label.UIStroke.Color = Color or self.getSelectedTheme().SecondaryElementStroke
+	
+				if Icon then
+					if typeof(Icon) == 'string' and self.Icons then
+						local asset = self.getIcon(Icon)
+	
+						Label.Icon.Image = 'rbxassetid://'..asset.id
+						Label.Icon.ImageRectOffset = asset.imageRectOffset
+						Label.Icon.ImageRectSize = asset.imageRectSize
+					else
+						Label.Icon.Image = self.getAssetUri(Icon)
+					end
+				else
+					Label.Icon.Image = "rbxassetid://" .. 0
+				end
+	
+				if Icon and Label:FindFirstChild('Icon') then
+					Label.Title.Position = UDim2.new(0, 45, 0.5, 0)
+					Label.Title.Size = UDim2.new(1, -100, 0, 14)
+	
+					if Icon then
+						if typeof(Icon) == 'string' and self.Icons then
+							local asset = self.getIcon(Icon)
+	
+							Label.Icon.Image = 'rbxassetid://'..asset.id
+							Label.Icon.ImageRectOffset = asset.imageRectOffset
+							Label.Icon.ImageRectSize = asset.imageRectSize
+						else
+							Label.Icon.Image = self.getAssetUri(Icon)
+						end
+					else
+						Label.Icon.Image = "rbxassetid://" .. 0
+					end
+	
+					Label.Icon.Visible = true
+				end
+	
+				Label.Icon.ImageTransparency = 1
+				Label.BackgroundTransparency = 1
+				Label.UIStroke.Transparency = 1
+				Label.Title.TextTransparency = 1
+	
+				self.Animation:Create(Label, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = Color and 0.8 or 0}):Play()
+				self.Animation:Create(Label.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = Color and 0.7 or 0}):Play()
+				self.Animation:Create(Label.Icon, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
+				self.Animation:Create(Label.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = Color and 0.2 or 0}):Play()	
+	
+				function LabelValue:Set(NewLabel, Icon, Color)
+					Label.Title.Text = NewLabel
+	
+					if Color then
+						Label.BackgroundColor3 = Color or self.getSelectedTheme().SecondaryElementBackground
+						Label.UIStroke.Color = Color or self.getSelectedTheme().SecondaryElementStroke
+					end
+	
+					if Icon and Label:FindFirstChild('Icon') then
+						Label.Title.Position = UDim2.new(0, 45, 0.5, 0)
+						Label.Title.Size = UDim2.new(1, -100, 0, 14)
+	
+						if Icon then
+							if typeof(Icon) == 'string' and self.Icons then
+								local asset = self.getIcon(Icon)
+	
+								Label.Icon.Image = 'rbxassetid://'..asset.id
+								Label.Icon.ImageRectOffset = asset.imageRectOffset
+								Label.Icon.ImageRectSize = asset.imageRectSize
+							else
+								Label.Icon.Image = self.getAssetUri(Icon)
+							end
+						else
+							Label.Icon.Image = "rbxassetid://" .. 0
+						end
+	
+						Label.Icon.Visible = true
+					end
+				end
+	
+				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
+					Label.BackgroundColor3 = IgnoreTheme and (Color or Label.BackgroundColor3) or self.getSelectedTheme().SecondaryElementBackground
+					Label.UIStroke.Color = IgnoreTheme and (Color or Label.BackgroundColor3) or self.getSelectedTheme().SecondaryElementStroke
+				end)
+	
+				function LabelValue:Destroy()
+					Label:Destroy()
+				end
+	
+				-- Add extended API
+				addExtendedAPI(LabelValue, LabelText, "Label", Label)
+	
+				return LabelValue
+			end
+	
+			-- Paragraph
+			function Tab:CreateParagraph(ParagraphSettings)
+				local ParagraphValue = {}
+	
+				local Paragraph = self.Elements.Template.Paragraph:Clone()
+				Paragraph.Title.Text = ParagraphSettings.Title
+				Paragraph.Content.Text = ParagraphSettings.Content
+				Paragraph.Visible = true
+				Paragraph.Parent = TabPage
+	
+				Paragraph.BackgroundTransparency = 1
+				Paragraph.UIStroke.Transparency = 1
+				Paragraph.Title.TextTransparency = 1
+				Paragraph.Content.TextTransparency = 1
+	
+				Paragraph.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+				Paragraph.UIStroke.Color = self.getSelectedTheme().SecondaryElementStroke
+	
+				self.Animation:Create(Paragraph, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
+				self.Animation:Create(Paragraph.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+				self.Animation:Create(Paragraph.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+				self.Animation:Create(Paragraph.Content, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
+	
+				function ParagraphValue:Set(NewParagraphSettings)
+					Paragraph.Title.Text = NewParagraphSettings.Title
+					Paragraph.Content.Text = NewParagraphSettings.Content
+				end
+	
+				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
+					Paragraph.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+					Paragraph.UIStroke.Color = self.getSelectedTheme().SecondaryElementStroke
+				end)
+	
+				function ParagraphValue:Destroy()
+					Paragraph:Destroy()
+				end
+	
+				-- Add extended API
+				addExtendedAPI(ParagraphValue, ParagraphSettings.Title, "Paragraph", Paragraph)
+	
+				return ParagraphValue
+			end
+	
+			-- Input
+			-- Input
+
+	return Tab
+end
+
+function ComponentWidgetsFactory.createColorPicker(context, settings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateColorPicker(settings)
+end
+
+function ComponentWidgetsFactory.createNumberStepper(context, settings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateNumberStepper(settings)
+end
+
+function ComponentWidgetsFactory.createConfirmButton(context, settings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateConfirmButton(settings)
+end
+
+function ComponentWidgetsFactory.createImage(context, settings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateImage(settings)
+end
+
+function ComponentWidgetsFactory.createGallery(context, settings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateGallery(settings)
+end
+
+function ComponentWidgetsFactory.createDivider(context)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateDivider()
+end
+
+function ComponentWidgetsFactory.createLabel(context, labelText, icon, color, ignoreTheme)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateLabel(labelText, icon, color, ignoreTheme)
+end
+
+function ComponentWidgetsFactory.createParagraph(context, paragraphSettings)
+	local Tab, err = createMethods(context)
+	if not Tab then
+		warn("Rayfield | " .. tostring(err))
+		return nil
+	end
+	return Tab:CreateParagraph(paragraphSettings)
+end
+
+return ComponentWidgetsFactory
+]])
 put("src/ui/elements/factory/create-section.lua", [[local CreateSection = {}
 
 function CreateSection.execute(tabObject, ...)
@@ -19064,12 +20791,20 @@ function ElementsModule.init(ctx)
 	self.ResolveHoverProviderModule = type(ctx.ResolveHoverProviderModule) == "function" and ctx.ResolveHoverProviderModule or nil
 	self.TooltipEngineModule = ctx.TooltipEngineModule
 	self.ResolveTooltipEngineModule = type(ctx.ResolveTooltipEngineModule) == "function" and ctx.ResolveTooltipEngineModule or nil
+	self.TooltipProviderModule = ctx.TooltipProviderModule
+	self.ResolveTooltipProviderModule = type(ctx.ResolveTooltipProviderModule) == "function" and ctx.ResolveTooltipProviderModule or nil
+	self.LoggingProviderModule = ctx.LoggingProviderModule
+	self.ResolveLoggingProviderModule = type(ctx.ResolveLoggingProviderModule) == "function" and ctx.ResolveLoggingProviderModule or nil
 	self.WidgetAPIInjectorModule = ctx.WidgetAPIInjectorModule
 	self.ResolveWidgetAPIInjectorModule = type(ctx.ResolveWidgetAPIInjectorModule) == "function" and ctx.ResolveWidgetAPIInjectorModule or nil
 	self.MathUtilsModule = ctx.MathUtilsModule
 	self.ResolveMathUtilsModule = type(ctx.ResolveMathUtilsModule) == "function" and ctx.ResolveMathUtilsModule or nil
 	self.ResourceGuardModule = ctx.ResourceGuardModule
 	self.ResolveResourceGuardModule = type(ctx.ResolveResourceGuardModule) == "function" and ctx.ResolveResourceGuardModule or nil
+	self.SectionFactoryModule = ctx.SectionFactoryModule
+	self.ResolveSectionFactoryModule = type(ctx.ResolveSectionFactoryModule) == "function" and ctx.ResolveSectionFactoryModule or nil
+	self.ControlRegistryModule = ctx.ControlRegistryModule
+	self.ResolveControlRegistryModule = type(ctx.ResolveControlRegistryModule) == "function" and ctx.ResolveControlRegistryModule or nil
 	self.GridBuilderModule = ctx.GridBuilderModule
 	self.ResolveGridBuilderModule = type(ctx.ResolveGridBuilderModule) == "function" and ctx.ResolveGridBuilderModule or nil
 	self.ChartBuilderModule = ctx.ChartBuilderModule
@@ -19078,6 +20813,8 @@ function ElementsModule.init(ctx)
 	self.ResolveRangeBarsFactoryModule = type(ctx.ResolveRangeBarsFactoryModule) == "function" and ctx.ResolveRangeBarsFactoryModule or nil
 	self.FeedbackWidgetsFactoryModule = ctx.FeedbackWidgetsFactoryModule
 	self.ResolveFeedbackWidgetsFactoryModule = type(ctx.ResolveFeedbackWidgetsFactoryModule) == "function" and ctx.ResolveFeedbackWidgetsFactoryModule or nil
+	self.ComponentWidgetsFactoryModule = ctx.ComponentWidgetsFactoryModule
+	self.ResolveComponentWidgetsFactoryModule = type(ctx.ResolveComponentWidgetsFactoryModule) == "function" and ctx.ResolveComponentWidgetsFactoryModule or nil
 	-- Improvement 4: Add safe fallbacks for critical dependencies
 	self.keybindConnections = ctx.keybindConnections or {} -- Fallback to empty table
 	self.getDebounce = ctx.getDebounce or function() return false end
@@ -19191,18 +20928,14 @@ function ElementsModule.init(ctx)
 		}
 	end
 
+	local controlRegistry = nil
 	local allControlsById = {}
 	local controlOrder = {}
 	local controlsByFlag = {}
 	local pinnedControlIds = {}
 	local controlRegistrySubscribers = {}
-	local controlIdSalt = 0
-	local pinBadgesVisible = true
-	local logHub = {
-		connection = nil,
-		subscribers = {}
-	}
-	local tooltipEngine = nil
+	local loggingProvider = nil
+	local tooltipProvider = nil
 	local widgetApiInjector = nil
 	local resourceGuard = nil
 	local mathUtils = nil
@@ -19210,6 +20943,8 @@ function ElementsModule.init(ctx)
 	local chartBuilder = nil
 	local rangeBarsFactory = nil
 	local feedbackWidgetsFactory = nil
+	local sectionFactory = nil
+	local componentWidgetsFactory = nil
 
 	local function cloneArray(values)
 		local out = {}
@@ -19243,6 +20978,45 @@ function ElementsModule.init(ctx)
 		end
 		mathUtils = moduleValue
 		return mathUtils
+	end
+
+	local function resolveControlRegistry()
+		if type(controlRegistry) == "table" then
+			return controlRegistry
+		end
+		local moduleValue = self.ControlRegistryModule
+		if type(moduleValue) ~= "table" and type(self.ResolveControlRegistryModule) == "function" then
+			moduleValue = self.ResolveControlRegistryModule()
+		end
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			local okCreate, registryOrErr = pcall(moduleValue.create, {
+				resolveControlDisplayLabel = self.resolveControlDisplayLabel,
+				persistControlDisplayLabel = self.persistControlDisplayLabel,
+				resetControlDisplayLabel = self.resetControlDisplayLabel
+			})
+			if okCreate and type(registryOrErr) == "table" and type(registryOrErr.state) == "table" then
+				controlRegistry = registryOrErr
+			end
+		end
+		if type(controlRegistry) ~= "table" or type(controlRegistry.state) ~= "table" then
+			controlRegistry = {
+				state = {
+					allControlsById = {},
+					controlOrder = {},
+					controlsByFlag = {},
+					pinnedControlIds = {},
+					controlRegistrySubscribers = {},
+					pinBadgesVisible = true
+				}
+			}
+		end
+
+		allControlsById = controlRegistry.state.allControlsById or {}
+		controlOrder = controlRegistry.state.controlOrder or {}
+		controlsByFlag = controlRegistry.state.controlsByFlag or {}
+		pinnedControlIds = controlRegistry.state.pinnedControlIds or {}
+		controlRegistrySubscribers = controlRegistry.state.controlRegistrySubscribers or {}
+		return controlRegistry
 	end
 
 	local function resolveResourceGuard()
@@ -19432,387 +21206,224 @@ function ElementsModule.init(ctx)
 		return math.floor((tonumber(value) or 0) * scale + 0.5) / scale
 	end
 
-	local function resolveTooltipEngine()
-		if tooltipEngine then
-			return tooltipEngine
+	local function resolveTooltipProvider()
+		if type(tooltipProvider) == "table" then
+			return tooltipProvider
 		end
-		local moduleValue = self.TooltipEngineModule
-		if type(moduleValue) ~= "table" and type(self.ResolveTooltipEngineModule) == "function" then
-			moduleValue = self.ResolveTooltipEngineModule()
+		local moduleValue = self.TooltipProviderModule
+		if type(moduleValue) ~= "table" and type(self.ResolveTooltipProviderModule) == "function" then
+			moduleValue = self.ResolveTooltipProviderModule()
 		end
-		if type(moduleValue) ~= "table" or type(moduleValue.create) ~= "function" then
-			return nil
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			local okCreate, providerOrErr = pcall(moduleValue.create, {
+				tooltipEngineModule = self.TooltipEngineModule,
+				resolveTooltipEngineModule = self.ResolveTooltipEngineModule,
+				engineCreateOptions = {
+					Rayfield = self.Rayfield,
+					Main = self.Main,
+					UserInputService = self.UserInputService,
+					getSelectedTheme = self.getSelectedTheme
+				}
+			})
+			if okCreate and type(providerOrErr) == "table" then
+				tooltipProvider = providerOrErr
+			end
 		end
-		local okCreate, engineOrErr = pcall(moduleValue.create, {
-			Rayfield = self.Rayfield,
-			Main = self.Main,
-			UserInputService = self.UserInputService,
-			getSelectedTheme = self.getSelectedTheme
-		})
-		if okCreate and type(engineOrErr) == "table" then
-			tooltipEngine = engineOrErr
+		if type(tooltipProvider) ~= "table" then
+			tooltipProvider = {
+				show = function() end,
+				hide = function() end
+			}
 		end
-		return tooltipEngine
+		return tooltipProvider
 	end
 
 	local function hideTooltip(key)
-		local engine = resolveTooltipEngine()
-		if engine and type(engine.hide) == "function" then
-			engine.hide(key)
+		local provider = resolveTooltipProvider()
+		if type(provider.hide) == "function" then
+			provider.hide(key)
 		end
 	end
 
 	local function showTooltip(key, guiObject, text)
-		local engine = resolveTooltipEngine()
-		if engine and type(engine.show) == "function" then
-			engine.show(key, guiObject, text)
+		local provider = resolveTooltipProvider()
+		if type(provider.show) == "function" then
+			provider.show(key, guiObject, text)
 		end
 	end
 
-	local function ensureLogHubConnected()
-		if not LogService or logHub.connection then
-			return
+	local function resolveLoggingProvider()
+		if type(loggingProvider) == "table" then
+			return loggingProvider
 		end
-		logHub.connection = LogService.MessageOut:Connect(function(message, messageType)
-			local level = "info"
-			if messageType == Enum.MessageType.MessageWarning then
-				level = "warn"
-			elseif messageType == Enum.MessageType.MessageError then
-				level = "error"
+		local moduleValue = self.LoggingProviderModule
+		if type(moduleValue) ~= "table" and type(self.ResolveLoggingProviderModule) == "function" then
+			moduleValue = self.ResolveLoggingProviderModule()
+		end
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			local okCreate, providerOrErr = pcall(moduleValue.create, {
+				logService = LogService
+			})
+			if okCreate and type(providerOrErr) == "table" then
+				loggingProvider = providerOrErr
 			end
-			for callback in pairs(logHub.subscribers) do
-				local ok = pcall(callback, level, tostring(message or ""))
-				if not ok then
-					logHub.subscribers[callback] = nil
+		end
+		if type(loggingProvider) ~= "table" then
+			loggingProvider = {
+				subscribe = function()
+					return function() end
 				end
-			end
-		end)
+			}
+		end
+		return loggingProvider
 	end
 
 	local function subscribeGlobalLogs(callback)
-		if type(callback) ~= "function" then
-			return function() end
+		local provider = resolveLoggingProvider()
+		if type(provider.subscribe) == "function" then
+			return provider.subscribe(callback)
 		end
-		logHub.subscribers[callback] = true
-		ensureLogHubConnected()
-		local disposed = false
-		return function()
-			if disposed then
-				return
-			end
-			disposed = true
-			logHub.subscribers[callback] = nil
-			if not next(logHub.subscribers) and logHub.connection then
-				logHub.connection:Disconnect()
-				logHub.connection = nil
-			end
-		end
+		return function() end
 	end
 
 	local function emitControlRegistryChange(reason)
-		for callback in pairs(controlRegistrySubscribers) do
-			local ok = pcall(callback, tostring(reason or "changed"))
-			if not ok then
-				controlRegistrySubscribers[callback] = nil
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.emitControlRegistryChange) == "function" then
+			registry.emitControlRegistryChange(reason)
 		end
 	end
 
 	local function isControlRecordAlive(record)
-		if type(record) ~= "table" then
-			return false
+		local registry = resolveControlRegistry()
+		if type(registry.isControlRecordAlive) == "function" then
+			return registry.isControlRecordAlive(record)
 		end
-		local guiObject = record.GuiObject
-		return guiObject and guiObject.Parent ~= nil
+		return false
 	end
 
 	local function applyPinnedVisual(record)
-		if type(record) ~= "table" then
-			return
+		local registry = resolveControlRegistry()
+		if type(registry.applyPinnedVisual) == "function" then
+			registry.applyPinnedVisual(record)
 		end
-		local pinButton = record.PinButton
-		if not pinButton then
-			return
-		end
-		local pinned = pinnedControlIds[record.Id] == true
-		pinButton.Text = pinned and "*" or "o"
-		pinButton.TextColor3 = pinned and Color3.fromRGB(255, 215, 120) or Color3.fromRGB(225, 225, 225)
 	end
 
 	local function getRecordByIdOrFlag(idOrFlag)
-		if type(idOrFlag) ~= "string" then
-			return nil
-		end
-		local key = tostring(idOrFlag)
-		local record = allControlsById[key]
-		if record then
-			return record
-		end
-		if controlsByFlag[key] then
-			return controlsByFlag[key]
-		end
-		local byFlagName = controlsByFlag["flag:" .. key]
-		if byFlagName then
-			return byFlagName
+		local registry = resolveControlRegistry()
+		if type(registry.getRecordByIdOrFlag) == "function" then
+			return registry.getRecordByIdOrFlag(idOrFlag)
 		end
 		return nil
 	end
 
 	local function buildLocalizationKeysForRecord(record)
-		local keys = {}
-		if type(record) ~= "table" then
-			return keys
+		local registry = resolveControlRegistry()
+		if type(registry.buildLocalizationKeysForRecord) == "function" then
+			return registry.buildLocalizationKeysForRecord(record)
 		end
-		local flagValue = tostring(record.Flag or "")
-		local idValue = tostring(record.Id or "")
-		local typeValue = tostring(record.Type or "Element")
-		local internalValue = tostring(record.InternalName or record.Name or "")
-		if flagValue ~= "" then
-			table.insert(keys, "flag:" .. flagValue)
-		end
-		if idValue ~= "" then
-			table.insert(keys, "id:" .. idValue)
-		end
-		if internalValue ~= "" then
-			table.insert(keys, string.format("eng:%s:%s", typeValue, internalValue))
-		end
-		return keys
+		return {}
 	end
 
 	local function resolveLocalizationKey(record)
-		local keys = buildLocalizationKeysForRecord(record)
-		return keys[1] or ""
-	end
-
-	local function setGuiTitleText(guiObject, text)
-		if not (guiObject and guiObject.Parent) then
-			return false
+		local registry = resolveControlRegistry()
+		if type(registry.resolveLocalizationKey) == "function" then
+			return registry.resolveLocalizationKey(record)
 		end
-		local applied = false
-		local function trySet(target)
-			if not target then
-				return
-			end
-			local okSet = pcall(function()
-				target.Text = tostring(text or "")
-			end)
-			if okSet then
-				applied = true
-			end
-		end
-		if guiObject:IsA("TextLabel") or guiObject:IsA("TextButton") then
-			trySet(guiObject)
-		end
-		if not applied then
-			local titleNode = guiObject:FindFirstChild("Title", true)
-			if titleNode then
-				trySet(titleNode)
-			end
-		end
-		return applied
+		return ""
 	end
 
 	local function applyControlDisplayLabel(record, label)
-		if type(record) ~= "table" then
-			return false, "Control record is invalid."
+		local registry = resolveControlRegistry()
+		if type(registry.applyControlDisplayLabel) == "function" then
+			return registry.applyControlDisplayLabel(record, label)
 		end
-		local internalName = tostring(record.InternalName or record.Name or "Unnamed")
-		local value = tostring(label or "")
-		value = value:gsub("^%s+", ""):gsub("%s+$", "")
-		if value == "" then
-			value = internalName
-		end
-		record.DisplayName = value
-		record.Name = value
-		record.LocalizationKey = resolveLocalizationKey(record)
-		if type(record.ElementObject) == "table" then
-			record.ElementObject.DisplayName = value
-			record.ElementObject.LocalizationKey = record.LocalizationKey
-		end
-		if record.GuiObject then
-			if record.GuiObject.SetAttribute then
-				record.GuiObject:SetAttribute("RayfieldLocalizationKey", record.LocalizationKey)
-			end
-			setGuiTitleText(record.GuiObject, value)
-		end
-		return true, value
-	end
-
-	local function setControlPinnedState(record, shouldPin)
-		if type(record) ~= "table" or type(record.Id) ~= "string" then
-			return false, "Control record is invalid."
-		end
-
-		if shouldPin then
-			pinnedControlIds[record.Id] = true
-		else
-			pinnedControlIds[record.Id] = nil
-		end
-		applyPinnedVisual(record)
-		emitControlRegistryChange(shouldPin and "pin" or "unpin")
-		return true, shouldPin and "Pinned." or "Unpinned."
+		return false, "Localization unavailable."
 	end
 
 	local function pinControl(idOrFlag)
-		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
-		if not record then
-			return false, "Control not found."
+		local registry = resolveControlRegistry()
+		if type(registry.pinControl) == "function" then
+			return registry.pinControl(idOrFlag)
 		end
-		return setControlPinnedState(record, true)
+		return false, "Pin unavailable."
 	end
 
 	local function unpinControl(idOrFlag)
-		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
-		if not record then
-			return false, "Control not found."
+		local registry = resolveControlRegistry()
+		if type(registry.unpinControl) == "function" then
+			return registry.unpinControl(idOrFlag)
 		end
-		return setControlPinnedState(record, false)
+		return false, "Unpin unavailable."
 	end
 
 	local function getPinnedIds(pruneMissing)
-		local orderedPinned = {}
-		for _, id in ipairs(controlOrder) do
-			if pinnedControlIds[id] then
-				local record = allControlsById[id]
-				if record and isControlRecordAlive(record) then
-					table.insert(orderedPinned, id)
-				elseif pruneMissing == true then
-					pinnedControlIds[id] = nil
-				end
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.getPinnedIds) == "function" then
+			return registry.getPinnedIds(pruneMissing)
 		end
-		return orderedPinned
+		return {}
 	end
 
 	local function setPinnedIds(ids)
-		pinnedControlIds = {}
-		if type(ids) == "table" then
-			for _, value in ipairs(ids) do
-				if type(value) == "string" and value ~= "" then
-					pinnedControlIds[value] = true
-				end
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.setPinnedIds) == "function" then
+			registry.setPinnedIds(ids)
 		end
-		for _, record in pairs(allControlsById) do
-			applyPinnedVisual(record)
-		end
-		emitControlRegistryChange("set_pinned_ids")
 	end
 
 	local function setPinBadgesVisible(visible)
-		local show = visible ~= false
-		pinBadgesVisible = show
-		for _, record in pairs(allControlsById) do
-			local pinButton = record.PinButton
-			if pinButton then
-				pinButton.Visible = show
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.setPinBadgesVisible) == "function" then
+			registry.setPinBadgesVisible(visible ~= false)
 		end
-		emitControlRegistryChange("set_pin_badges_visible")
 	end
 
 	local function listControlsForFavorites(pruneMissing)
-		local out = {}
-		for _, id in ipairs(controlOrder) do
-			local record = allControlsById[id]
-			if record and isControlRecordAlive(record) then
-				table.insert(out, {
-					id = record.Id,
-					tabId = record.TabPersistenceId,
-					name = record.DisplayName or record.Name,
-					displayName = record.DisplayName or record.Name,
-					internalName = record.InternalName or record.Name,
-					type = record.Type,
-					flag = record.Flag,
-					localizationKey = resolveLocalizationKey(record),
-					pinned = pinnedControlIds[record.Id] == true
-				})
-			elseif pruneMissing == true and pinnedControlIds[id] then
-				pinnedControlIds[id] = nil
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.listControlsForFavorites) == "function" then
+			return registry.listControlsForFavorites(pruneMissing)
 		end
-		return out
+		return {}
 	end
 
 	local function getControlRecordById(id)
-		local record = allControlsById[tostring(id or "")]
-		if not record then
-			return nil
+		local registry = resolveControlRegistry()
+		if type(registry.getControlRecordById) == "function" then
+			return registry.getControlRecordById(id)
 		end
-		if not isControlRecordAlive(record) then
-			return nil
-		end
-		return record
+		return nil
 	end
 
 	local function listControlRecords(pruneMissing)
-		local out = {}
-		for _, id in ipairs(controlOrder) do
-			local record = allControlsById[id]
-			if record and isControlRecordAlive(record) then
-				table.insert(out, record)
-			elseif pruneMissing == true and pinnedControlIds[id] then
-				pinnedControlIds[id] = nil
-			end
+		local registry = resolveControlRegistry()
+		if type(registry.listControlRecords) == "function" then
+			return registry.listControlRecords(pruneMissing)
 		end
-		return out
+		return {}
 	end
 
 	local function setControlDisplayLabelByIdOrFlag(idOrFlag, label, options)
-		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
-		if not record then
-			return false, "Control not found."
+		local registry = resolveControlRegistry()
+		if type(registry.setControlDisplayLabelByIdOrFlag) == "function" then
+			return registry.setControlDisplayLabelByIdOrFlag(idOrFlag, label, options)
 		end
-		options = type(options) == "table" and options or {}
-		local textValue = tostring(label or "")
-		textValue = textValue:gsub("^%s+", ""):gsub("%s+$", "")
-		if textValue == "" then
-			textValue = nil
-		end
-		local okApply, displayName = applyControlDisplayLabel(record, textValue)
-		if not okApply then
-			return false, "Failed to update control label."
-		end
-		if options.persist ~= false and type(self.persistControlDisplayLabel) == "function" then
-			local okPersist, persistResult = pcall(self.persistControlDisplayLabel, record, textValue)
-			if not okPersist then
-				return false, tostring(persistResult)
-			end
-		end
-		emitControlRegistryChange("control_renamed")
-		return true, tostring(displayName)
+		return false, "Localization unavailable."
 	end
 
 	local function getControlDisplayLabelByIdOrFlag(idOrFlag)
-		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
-		if not record then
-			return nil, nil
+		local registry = resolveControlRegistry()
+		if type(registry.getControlDisplayLabelByIdOrFlag) == "function" then
+			return registry.getControlDisplayLabelByIdOrFlag(idOrFlag)
 		end
-		return tostring(record.DisplayName or record.Name or ""), resolveLocalizationKey(record)
+		return nil, nil
 	end
 
 	local function resetControlDisplayLabelByIdOrFlag(idOrFlag, options)
-		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
-		if not record then
-			return false, "Control not found."
+		local registry = resolveControlRegistry()
+		if type(registry.resetControlDisplayLabelByIdOrFlag) == "function" then
+			return registry.resetControlDisplayLabelByIdOrFlag(idOrFlag, options)
 		end
-		options = type(options) == "table" and options or {}
-		local okApply = applyControlDisplayLabel(record, nil)
-		if not okApply then
-			return false, "Failed to reset control label."
-		end
-		if options.persist ~= false then
-			if type(self.resetControlDisplayLabel) == "function" then
-				local okReset, resetResult = pcall(self.resetControlDisplayLabel, record)
-				if not okReset then
-					return false, tostring(resetResult)
-				end
-			elseif type(self.persistControlDisplayLabel) == "function" then
-				pcall(self.persistControlDisplayLabel, record, nil)
-			end
-		end
-		emitControlRegistryChange("control_renamed")
-		return true, tostring(record.DisplayName or record.Name or "")
+		return false, "Localization unavailable."
 	end
 
 	local function L(key, fallback)
@@ -19896,6 +21507,44 @@ function ElementsModule.init(ctx)
 			feedbackWidgetsFactory = moduleValue
 		end
 		return feedbackWidgetsFactory
+	end
+
+	local function resolveSectionFactory()
+		if sectionFactory then
+			return sectionFactory
+		end
+		local moduleValue = self.SectionFactoryModule
+		if type(moduleValue) ~= "table" and type(self.ResolveSectionFactoryModule) == "function" then
+			moduleValue = self.ResolveSectionFactoryModule()
+		end
+		if type(moduleValue) == "table"
+			and type(moduleValue.createSection) == "function"
+			and type(moduleValue.createCollapsibleSection) == "function" then
+			sectionFactory = moduleValue
+		end
+		return sectionFactory
+	end
+
+	local function resolveComponentWidgetsFactory()
+		if componentWidgetsFactory then
+			return componentWidgetsFactory
+		end
+		local moduleValue = self.ComponentWidgetsFactoryModule
+		if type(moduleValue) ~= "table" and type(self.ResolveComponentWidgetsFactoryModule) == "function" then
+			moduleValue = self.ResolveComponentWidgetsFactoryModule()
+		end
+		if type(moduleValue) == "table"
+			and type(moduleValue.createColorPicker) == "function"
+			and type(moduleValue.createNumberStepper) == "function"
+			and type(moduleValue.createConfirmButton) == "function"
+			and type(moduleValue.createImage) == "function"
+			and type(moduleValue.createGallery) == "function"
+			and type(moduleValue.createDivider) == "function"
+			and type(moduleValue.createLabel) == "function"
+			and type(moduleValue.createParagraph) == "function" then
+			componentWidgetsFactory = moduleValue
+		end
+		return componentWidgetsFactory
 	end
 
 	-- Extract code starts here
@@ -20472,9 +22121,9 @@ function ElementsModule.init(ctx)
 				end
 
 				local favoriteId = baseFavoriteId
-				while allControlsById[favoriteId] and allControlsById[favoriteId].GuiObject ~= guiObject do
-					controlIdSalt += 1
-					favoriteId = baseFavoriteId .. "#" .. tostring(controlIdSalt)
+				local registryForId = resolveControlRegistry()
+				if type(registryForId.allocateUniqueControlId) == "function" then
+					favoriteId = registryForId.allocateUniqueControlId(baseFavoriteId, guiObject)
 				end
 
 				local internalName = tostring(elementName or "Unnamed")
@@ -20494,19 +22143,9 @@ function ElementsModule.init(ctx)
 					LocalizationKey = ""
 				}
 				controlRecord.LocalizationKey = resolveLocalizationKey(controlRecord)
-				if type(self.resolveControlDisplayLabel) == "function" then
-					local okLabel, label = pcall(self.resolveControlDisplayLabel, {
-						id = controlRecord.Id,
-						flag = controlRecord.Flag,
-						type = controlRecord.Type,
-						internalName = controlRecord.InternalName,
-						localizationKey = controlRecord.LocalizationKey
-					})
-					if okLabel and type(label) == "string" and label ~= "" then
-						applyControlDisplayLabel(controlRecord, label)
-					else
-						applyControlDisplayLabel(controlRecord, nil)
-					end
+				local registryForLabel = resolveControlRegistry()
+				if type(registryForLabel.resolveInitialDisplayLabel) == "function" then
+					registryForLabel.resolveInitialDisplayLabel(controlRecord)
 				else
 					applyControlDisplayLabel(controlRecord, nil)
 				end
@@ -20579,11 +22218,16 @@ function ElementsModule.init(ctx)
 					controlRecord.CleanupScope = cleanupScopeId
 				end
 
-				allControlsById[favoriteId] = controlRecord
-				table.insert(controlOrder, favoriteId)
-				if controlRecord.Flag then
-					controlsByFlag[controlRecord.Flag] = controlRecord
-					controlsByFlag["flag:" .. controlRecord.Flag] = controlRecord
+				local registryForRegister = resolveControlRegistry()
+				if type(registryForRegister.registerControlRecord) == "function" then
+					registryForRegister.registerControlRecord(controlRecord)
+				else
+					allControlsById[favoriteId] = controlRecord
+					table.insert(controlOrder, favoriteId)
+					if controlRecord.Flag then
+						controlsByFlag[controlRecord.Flag] = controlRecord
+						controlsByFlag["flag:" .. controlRecord.Flag] = controlRecord
+					end
 				end
 
 				local virtualToken = registerVirtualElement(guiObject, elementName, elementType, syncToken)
@@ -20650,7 +22294,7 @@ function ElementsModule.init(ctx)
 					tooltipHoverBindingKey = registerHoverBinding(guiObject,
 						function()
 							task.delay(desktopDelay, function()
-								local binding = hoverBindings[tooltipHoverBindingKey]
+								local binding = getHoverBinding(tooltipHoverBindingKey)
 								if binding and binding.Hovered and guiObject and guiObject.Parent then
 									showTooltip(favoriteId, guiObject, tooltipText)
 								end
@@ -20667,7 +22311,7 @@ function ElementsModule.init(ctx)
 							return
 						end
 						tooltipTouchActive = true
-						tooltipTouchToken += 1
+						tooltipTouchToken = tooltipTouchToken + 1
 						local token = tooltipTouchToken
 						task.delay(mobileDelay, function()
 							if tooltipTouchActive and tooltipTouchToken == token and guiObject and guiObject.Parent then
@@ -20721,7 +22365,12 @@ function ElementsModule.init(ctx)
 					pinButton.Font = Enum.Font.GothamBold
 					pinButton.ZIndex = (guiObject.ZIndex or 1) + 7
 					pinButton.AutoButtonColor = true
-					pinButton.Visible = pinBadgesVisible
+					local showPinBadges = true
+					local registryForPinBadge = resolveControlRegistry()
+					if type(registryForPinBadge.getPinBadgesVisible) == "function" then
+						showPinBadges = registryForPinBadge.getPinBadgesVisible()
+					end
+					pinButton.Visible = showPinBadges
 					pinButton.Parent = guiObject
 
 					local pinCorner = Instance.new("UICorner")
@@ -20733,7 +22382,11 @@ function ElementsModule.init(ctx)
 
 					pinConnection = pinButton.MouseButton1Click:Connect(function()
 						local currentlyPinned = pinnedControlIds[favoriteId] == true
-						setControlPinnedState(controlRecord, not currentlyPinned)
+						if currentlyPinned then
+							unpinControl(favoriteId)
+						else
+							pinControl(favoriteId)
+						end
 					end)
 				end
 
@@ -20798,7 +22451,11 @@ function ElementsModule.init(ctx)
 								label = (pinnedControlIds[favoriteId] == true) and L("context.unpin_control", "Unpin Control") or L("context.pin_control", "Pin Control"),
 								callback = function()
 									local currentlyPinned = pinnedControlIds[favoriteId] == true
-									setControlPinnedState(controlRecord, not currentlyPinned)
+									if currentlyPinned then
+										unpinControl(favoriteId)
+									else
+										pinControl(favoriteId)
+									end
 								end
 							},
 							{
@@ -20912,11 +22569,16 @@ function ElementsModule.init(ctx)
 					if controlRecord.PinButton and controlRecord.PinButton.Parent then
 						controlRecord.PinButton:Destroy()
 					end
-					if controlRecord.Flag then
-						controlsByFlag[controlRecord.Flag] = nil
-						controlsByFlag["flag:" .. controlRecord.Flag] = nil
+					local registryForUnregister = resolveControlRegistry()
+					if type(registryForUnregister.unregisterControlRecord) == "function" then
+						registryForUnregister.unregisterControlRecord(controlRecord)
+					else
+						if controlRecord.Flag then
+							controlsByFlag[controlRecord.Flag] = nil
+							controlsByFlag["flag:" .. controlRecord.Flag] = nil
+						end
+						allControlsById[favoriteId] = nil
 					end
-					allControlsById[favoriteId] = nil
 					if detachable and detachable.Destroy then
 						detachable.Destroy()
 					end
@@ -21223,480 +22885,78 @@ function ElementsModule.init(ctx)
 				return ButtonValue
 			end
 	
+			local resolveElementParentFromSettings
+			local connectThemeRefresh
+
 			-- ColorPicker
-			function Tab:CreateColorPicker(ColorPickerSettings) -- by Throit
-				ColorPickerSettings.Type = "ColorPicker"
-				local ColorPicker = self.Elements.Template.ColorPicker:Clone()
-				local Background = ColorPicker.CPBackground
-				local Display = Background.Display
-				local Main = Background.MainCP
-				local Slider = ColorPicker.ColorSlider
-				ColorPicker.ClipsDescendants = true
-				ColorPicker.Name = ColorPickerSettings.Name
-				ColorPicker.Title.Text = ColorPickerSettings.Name
-				ColorPicker.Visible = true
-				ColorPicker.Parent = TabPage
-				ColorPicker.Size = UDim2.new(1, -10, 0, 45)
-				Background.Size = UDim2.new(0, 39, 0, 22)
-				Display.BackgroundTransparency = 0
-				self.Main.MainPoint.ImageTransparency = 1
-				ColorPicker.Interact.Size = UDim2.new(1, 0, 1, 0)
-				ColorPicker.Interact.Position = UDim2.new(0.5, 0, 0.5, 0)
-				ColorPicker.RGB.Position = UDim2.new(0, 17, 0, 70)
-				ColorPicker.HexInput.Position = UDim2.new(0, 17, 0, 90)
-				self.Main.ImageTransparency = 1
-				Background.BackgroundTransparency = 1
-	
-				for _, rgbinput in ipairs(ColorPicker.RGB:GetChildren()) do
-					if rgbinput:IsA("Frame") then
-						rgbinput.BackgroundColor3 = self.getSelectedTheme().InputBackground
-						rgbinput.UIStroke.Color = self.getSelectedTheme().InputStroke
-					end
+			local function createComponentWidget(factoryMethod, settingsOrArg1, arg2, arg3, arg4)
+				local moduleValue = resolveComponentWidgetsFactory()
+				if type(moduleValue) ~= "table" or type(moduleValue[factoryMethod]) ~= "function" then
+					warn("Rayfield | Component widgets factory module unavailable for method: " .. tostring(factoryMethod))
+					return nil
 				end
-	
-				ColorPicker.HexInput.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				ColorPicker.HexInput.UIStroke.Color = self.getSelectedTheme().InputStroke
-	
-				local opened = false 
-				local mouse = Players.LocalPlayer:GetMouse()
-				self.Main.Image = "http://www.roblox.com/asset/?id=11415645739"
-				local mainDragging = false 
-				local sliderDragging = false 
-				ColorPicker.Interact.MouseButton1Down:Connect(function()
-					task.spawn(function()
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
-						self.Animation:Create(ColorPicker.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-						task.wait(0.2)
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-						self.Animation:Create(ColorPicker.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-					end)
-	
-					if not opened then
-						opened = true 
-						self.Animation:Create(Background, TweenInfo.new(0.45, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 18, 0, 15)}):Play()
-						task.wait(0.1)
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 120)}):Play()
-						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 173, 0, 86)}):Play()
-						self.Animation:Create(Display, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0.289, 0, 0.5, 0)}):Play()
-						self.Animation:Create(ColorPicker.RGB, TweenInfo.new(0.8, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 40)}):Play()
-						self.Animation:Create(ColorPicker.HexInput, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 73)}):Play()
-						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0.574, 0, 1, 0)}):Play()
-						self.Animation:Create(self.Main.MainPoint, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 0}):Play()
-						self.Animation:Create(Main, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = self.getSelectedTheme() ~= self.RayfieldLibrary.Theme.Default and 0.25 or 0.1}):Play()
-						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-					else
-						opened = false
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, -10, 0, 45)}):Play()
-						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 39, 0, 22)}):Play()
-						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(1, 0, 1, 0)}):Play()
-						self.Animation:Create(ColorPicker.Interact, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
-						self.Animation:Create(ColorPicker.RGB, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 70)}):Play()
-						self.Animation:Create(ColorPicker.HexInput, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Position = UDim2.new(0, 17, 0, 90)}):Play()
-						self.Animation:Create(Display, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-						self.Animation:Create(self.Main.MainPoint, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-						self.Animation:Create(Main, TweenInfo.new(0.2, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-						self.Animation:Create(Background, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-					end
-	
-				end)
-	
-				self.UserInputService.InputEnded:Connect(function(input, gameProcessed) if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-						local wasDragging = mainDragging or sliderDragging
-						mainDragging = false
-						sliderDragging = false
-						if wasDragging and not ColorPickerSettings.Ext then
-							self.SaveConfiguration()
-						end
-					end end)
-				self.Main.MouseButton1Down:Connect(function()
-					if opened then
-						mainDragging = true 
-					end
-				end)
-				self.Main.MainPoint.MouseButton1Down:Connect(function()
-					if opened then
-						mainDragging = true 
-					end
-				end)
-				Slider.MouseButton1Down:Connect(function()
-					sliderDragging = true 
-				end)
-				Slider.SliderPoint.MouseButton1Down:Connect(function()
-					sliderDragging = true 
-				end)
-				local h,s,v = ColorPickerSettings.Color:ToHSV()
-				local color = Color3.fromHSV(h,s,v) 
-				local hex = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
-				ColorPicker.HexInput.InputBox.Text = hex
-				local function setDisplay()
-					--Main
-					self.Main.MainPoint.Position = UDim2.new(s,-self.Main.MainPoint.AbsoluteSize.X/2,1-v,-self.Main.MainPoint.AbsoluteSize.Y/2)
-					self.Main.MainPoint.ImageColor3 = Color3.fromHSV(h,s,v)
-					Background.BackgroundColor3 = Color3.fromHSV(h,1,1)
-					Display.BackgroundColor3 = Color3.fromHSV(h,s,v)
-					--Slider 
-					local x = h * Slider.AbsoluteSize.X
-					Slider.SliderPoint.Position = UDim2.new(0,x-Slider.SliderPoint.AbsoluteSize.X/2,0.5,0)
-					Slider.SliderPoint.ImageColor3 = Color3.fromHSV(h,1,1)
-					local color = Color3.fromHSV(h,s,v) 
-					local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
-					ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
-					ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
-					ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
-					hex = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
-					ColorPicker.HexInput.InputBox.Text = hex
-				end
-				setDisplay()
-				ColorPicker.HexInput.InputBox.FocusLost:Connect(function()
-					if not pcall(function()
-							local r, g, b = string.match(ColorPicker.HexInput.InputBox.Text, "^#?(%w%w)(%w%w)(%w%w)$")
-							local rgbColor = Color3.fromRGB(tonumber(r, 16),tonumber(g, 16), tonumber(b, 16))
-							h,s,v = rgbColor:ToHSV()
-							hex = ColorPicker.HexInput.InputBox.Text
-							setDisplay()
-							ColorPickerSettings.Color = rgbColor
-						end) 
-					then 
-						ColorPicker.HexInput.InputBox.Text = hex 
-					end
-					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
-					local r,g,b = math.floor((h*255)+0.5),math.floor((s*255)+0.5),math.floor((v*255)+0.5)
-					ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
-					if not ColorPickerSettings.Ext then
-						self.SaveConfiguration()
-					end
-				end)
-				--RGB
-				local function rgbBoxes(box,toChange)
-					local value = tonumber(box.Text) 
-					local color = Color3.fromHSV(h,s,v) 
-					local oldR,oldG,oldB = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
-					local save 
-					if toChange == "R" then save = oldR;oldR = value elseif toChange == "G" then save = oldG;oldG = value else save = oldB;oldB = value end
-					if value then 
-						value = math.clamp(value,0,255)
-						h,s,v = Color3.fromRGB(oldR,oldG,oldB):ToHSV()
-	
-						setDisplay()
-					else 
-						box.Text = tostring(save)
-					end
-					local r,g,b = math.floor((h*255)+0.5),math.floor((s*255)+0.5),math.floor((v*255)+0.5)
-					ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
-					if not ColorPickerSettings.Ext then
-						self.SaveConfiguration(ColorPickerSettings.Flag..'\n'..tostring(ColorPickerSettings.Color))
-					end
-				end
-				ColorPicker.RGB.RInput.InputBox.FocusLost:connect(function()
-					rgbBoxes(ColorPicker.RGB.RInput.InputBox,"R")
-					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
-				end)
-				ColorPicker.RGB.GInput.InputBox.FocusLost:connect(function()
-					rgbBoxes(ColorPicker.RGB.GInput.InputBox,"G")
-					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
-				end)
-				ColorPicker.RGB.BInput.InputBox.FocusLost:connect(function()
-					rgbBoxes(ColorPicker.RGB.BInput.InputBox,"B")
-					pcall(function()ColorPickerSettings.Callback(Color3.fromHSV(h,s,v))end)
-				end)
-	
-				local prevH, prevS, prevV = h, s, v
-				self.RunService.RenderStepped:connect(function()
-					if mainDragging then
-						local localX = math.clamp(mouse.X-self.Main.AbsolutePosition.X,0,self.Main.AbsoluteSize.X)
-						local localY = math.clamp(mouse.Y-self.Main.AbsolutePosition.Y,0,self.Main.AbsoluteSize.Y)
-						self.Main.MainPoint.Position = UDim2.new(0,localX-self.Main.MainPoint.AbsoluteSize.X/2,0,localY-self.Main.MainPoint.AbsoluteSize.Y/2)
-						s = localX / self.Main.AbsoluteSize.X
-						v = 1 - (localY / self.Main.AbsoluteSize.Y)
-						local color = Color3.fromHSV(h,s,v)
-						Display.BackgroundColor3 = color
-						self.Main.MainPoint.ImageColor3 = color
-						Background.BackgroundColor3 = Color3.fromHSV(h,1,1)
-						local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
-						ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
-						ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
-						ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
-						ColorPicker.HexInput.InputBox.Text = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
-						ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
-						if h ~= prevH or s ~= prevS or v ~= prevV then
-							prevH, prevS, prevV = h, s, v
-							pcall(ColorPickerSettings.Callback, color)
-						end
-					end
-					if sliderDragging then
-						local localX = math.clamp(mouse.X-Slider.AbsolutePosition.X,0,Slider.AbsoluteSize.X)
-						h = localX / Slider.AbsoluteSize.X
-						local color = Color3.fromHSV(h,s,v)
-						local hueColor = Color3.fromHSV(h,1,1)
-						Display.BackgroundColor3 = color
-						Slider.SliderPoint.Position = UDim2.new(0,localX-Slider.SliderPoint.AbsoluteSize.X/2,0.5,0)
-						Slider.SliderPoint.ImageColor3 = hueColor
-						Background.BackgroundColor3 = hueColor
-						self.Main.MainPoint.ImageColor3 = color
-						local r,g,b = math.floor((color.R*255)+0.5),math.floor((color.G*255)+0.5),math.floor((color.B*255)+0.5)
-						ColorPicker.RGB.RInput.InputBox.Text = tostring(r)
-						ColorPicker.RGB.GInput.InputBox.Text = tostring(g)
-						ColorPicker.RGB.BInput.InputBox.Text = tostring(b)
-						ColorPicker.HexInput.InputBox.Text = string.format("#%02X%02X%02X",color.R*0xFF,color.G*0xFF,color.B*0xFF)
-						ColorPickerSettings.Color = Color3.fromRGB(r,g,b)
-						if h ~= prevH or s ~= prevS or v ~= prevV then
-							prevH, prevS, prevV = h, s, v
-							pcall(ColorPickerSettings.Callback, color)
-						end
-					end
-				end)
-	
-				if Settings.ConfigurationSaving then
-					if Settings.ConfigurationSaving.Enabled and ColorPickerSettings.Flag then
-						self.RayfieldLibrary.Flags[ColorPickerSettings.Flag] = ColorPickerSettings
-					end
-				end
-	
-				function ColorPickerSettings:Set(RGBColor)
-					ColorPickerSettings.Color = RGBColor
-					h,s,v = ColorPickerSettings.Color:ToHSV()
-					color = Color3.fromHSV(h,s,v)
-					setDisplay()
-				end
-	
-				local colorPickerHoverBindingKey = registerHoverBinding(ColorPicker,
-					function()
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
-					end,
-					function()
-						self.Animation:Create(ColorPicker, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
-					end
-				)
-	
-				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
-					for _, rgbinput in ipairs(ColorPicker.RGB:GetChildren()) do
-						if rgbinput:IsA("Frame") then
-							rgbinput.BackgroundColor3 = self.getSelectedTheme().InputBackground
-							rgbinput.UIStroke.Color = self.getSelectedTheme().InputStroke
-						end
-					end
-	
-					ColorPicker.HexInput.BackgroundColor3 = self.getSelectedTheme().InputBackground
-					ColorPicker.HexInput.UIStroke.Color = self.getSelectedTheme().InputStroke
-				end)
-	
-				function ColorPickerSettings:Destroy()
-					ColorPicker:Destroy()
-				end
-	
-				-- Add extended API
-				addExtendedAPI(ColorPickerSettings, ColorPickerSettings.Name, "ColorPicker", ColorPicker, colorPickerHoverBindingKey)
-	
-				return ColorPickerSettings
+				return moduleValue[factoryMethod]({
+					self = self,
+					Tab = Tab,
+					TabPage = TabPage,
+					Settings = Settings,
+					addExtendedAPI = addExtendedAPI,
+					registerHoverBinding = registerHoverBinding,
+					connectThemeRefresh = connectThemeRefresh,
+					resolveElementParentFromSettings = resolveElementParentFromSettings,
+					cloneSerializable = cloneSerializable,
+					clampNumber = clampNumber,
+					roundToPrecision = roundToPrecision,
+					emitUICue = emitUICue,
+					Players = game:GetService("Players")
+				}, settingsOrArg1, arg2, arg3, arg4)
 			end
-	
+			function Tab:CreateColorPicker(ColorPickerSettings) -- by Throit
+				return createComponentWidget("createColorPicker", ColorPickerSettings)
+			end
+
+			local function createSectionWidget(factoryMethod, sectionSettings)
+				local moduleValue = resolveSectionFactory()
+				if type(moduleValue) ~= "table" or type(moduleValue[factoryMethod]) ~= "function" then
+					warn("Rayfield | Section factory module unavailable for method: " .. tostring(factoryMethod))
+					return nil
+				end
+				return moduleValue[factoryMethod]({
+					self = self,
+					Tab = Tab,
+					TabPage = TabPage,
+					Settings = Settings,
+					tabPersistenceId = tabPersistenceId,
+					addExtendedAPI = addExtendedAPI,
+					getCollapsedSectionsMap = getCollapsedSectionsMap,
+					persistCollapsedState = persistCollapsedState,
+					getCurrentImplicitSection = function()
+						return currentImplicitSection
+					end,
+					setCurrentImplicitSection = function(value)
+						currentImplicitSection = value
+					end,
+					tabSections = TabSections,
+					tabElements = TabElements,
+					getSectionSpacingDone = function()
+						return SDone == true
+					end,
+					setSectionSpacingDone = function(value)
+						SDone = value == true
+					end
+				}, sectionSettings)
+			end
+
 			-- Section
 			function Tab:CreateSection(SectionName)
-				currentImplicitSection = nil
-
-				local SectionValue = {}
-	
-				if SDone then
-					local SectionSpace = self.Elements.Template.SectionSpacing:Clone()
-					SectionSpace.Visible = true
-					SectionSpace.Parent = TabPage
-				end
-	
-				local Section = self.Elements.Template.SectionTitle:Clone()
-				Section.Title.Text = SectionName
-				Section.Visible = true
-				Section.Parent = TabPage
-	
-				Section.Title.TextTransparency = 1
-				self.Animation:Create(Section.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0.4}):Play()
-	
-				function SectionValue:Set(NewSection)
-					Section.Title.Text = NewSection
-				end
-	
-				function SectionValue:Destroy()
-					Section:Destroy()
-				end
-	
-				-- Add extended API
-				addExtendedAPI(SectionValue, SectionName, "Section", Section)
-	
-				SDone = true
-
-				return SectionValue
+				return createSectionWidget("createSection", SectionName)
 			end
 
 			function Tab:CreateCollapsibleSection(sectionSettings)
-				local settingsValue = sectionSettings
-				if type(settingsValue) == "string" then
-					settingsValue = { Name = settingsValue }
-				end
-				settingsValue = settingsValue or {}
-				local sectionName = tostring(settingsValue.Name or settingsValue.Title or "Section")
-				local sectionId = tostring(settingsValue.Id or sectionName)
-				local sectionKey = tostring(tabPersistenceId) .. "::" .. sectionId
-				local persistState = settingsValue.PersistState ~= false
-				local implicitScope = settingsValue.ImplicitScope ~= false
-
-				local collapsedMap = getCollapsedSectionsMap()
-				local initialCollapsed = settingsValue.Collapsed == true
-				if persistState and type(collapsedMap[sectionKey]) == "boolean" then
-					initialCollapsed = collapsedMap[sectionKey]
-				end
-
-				local root = Instance.new("Frame")
-				root.Name = "CollapsibleSection"
-				root.Size = UDim2.new(1, -10, 0, 28)
-				root.AutomaticSize = Enum.AutomaticSize.Y
-				root.BackgroundTransparency = 1
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local rootList = Instance.new("UIListLayout")
-				rootList.SortOrder = Enum.SortOrder.LayoutOrder
-				rootList.Padding = UDim.new(0, 6)
-				rootList.Parent = root
-
-				local header = Instance.new("Frame")
-				header.Name = "Header"
-				header.Size = UDim2.new(1, 0, 0, 26)
-				header.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-				header.BorderSizePixel = 0
-				header.Parent = root
-
-				local headerCorner = Instance.new("UICorner")
-				headerCorner.CornerRadius = UDim.new(0, 6)
-				headerCorner.Parent = header
-
-				local headerStroke = Instance.new("UIStroke")
-				headerStroke.Color = self.getSelectedTheme().SecondaryElementStroke
-				headerStroke.Parent = header
-
-				local titleLabel = Instance.new("TextLabel")
-				titleLabel.BackgroundTransparency = 1
-				titleLabel.Position = UDim2.new(0, 10, 0, 0)
-				titleLabel.Size = UDim2.new(1, -38, 1, 0)
-				titleLabel.Font = Enum.Font.GothamSemibold
-				titleLabel.TextSize = 13
-				titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-				titleLabel.TextColor3 = self.getSelectedTheme().TextColor
-				titleLabel.Text = sectionName
-				titleLabel.Parent = header
-
-				local chevron = Instance.new("TextLabel")
-				chevron.BackgroundTransparency = 1
-				chevron.AnchorPoint = Vector2.new(1, 0.5)
-				chevron.Position = UDim2.new(1, -10, 0.5, 0)
-				chevron.Size = UDim2.new(0, 16, 0, 16)
-				chevron.Font = Enum.Font.GothamBold
-				chevron.TextSize = 15
-				chevron.TextColor3 = self.getSelectedTheme().SectionChevron or self.getSelectedTheme().TextColor
-				chevron.Text = "v"
-				chevron.Parent = header
-
-				local interact = Instance.new("TextButton")
-				interact.BackgroundTransparency = 1
-				interact.Size = UDim2.new(1, 0, 1, 0)
-				interact.Text = ""
-				interact.Parent = header
-
-				local content = Instance.new("Frame")
-				content.Name = "Content"
-				content.BackgroundTransparency = 1
-				content.BorderSizePixel = 0
-				content.Size = UDim2.new(1, 0, 0, 0)
-				content.AutomaticSize = Enum.AutomaticSize.Y
-				content.Parent = root
-
-				local contentLayout = Instance.new("UIListLayout")
-				contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-				contentLayout.Padding = UDim.new(0, 6)
-				contentLayout.Parent = content
-
-				local sectionRecord = {
-					Key = sectionKey,
-					Root = root,
-					Header = header,
-					ContentFrame = content,
-					Collapsed = false,
-					ImplicitScope = implicitScope
-				}
-
-				local sectionValue = {
-					__SectionContentFrame = content,
-					__SectionRecord = sectionRecord
-				}
-
-				local function applyCollapsedState(nextCollapsed, persist)
-					sectionRecord.Collapsed = nextCollapsed == true
-					content.Visible = not sectionRecord.Collapsed
-					chevron.Text = sectionRecord.Collapsed and ">" or "v"
-					if persist ~= false and persistState then
-						persistCollapsedState(sectionKey, sectionRecord.Collapsed)
-					end
-				end
-
-				function sectionValue:Set(newName)
-					sectionName = tostring(newName or sectionName)
-					titleLabel.Text = sectionName
-				end
-
-				function sectionValue:Collapse()
-					applyCollapsedState(true, true)
-				end
-
-				function sectionValue:Expand()
-					applyCollapsedState(false, true)
-				end
-
-				function sectionValue:Toggle()
-					applyCollapsedState(not sectionRecord.Collapsed, true)
-				end
-
-				function sectionValue:IsCollapsed()
-					return sectionRecord.Collapsed == true
-				end
-
-				function sectionValue:Destroy()
-					if currentImplicitSection == sectionRecord then
-						currentImplicitSection = nil
-					end
-					local snapshot = {}
-					for _, tracked in ipairs(TabElements) do
-						snapshot[#snapshot + 1] = tracked
-					end
-					for _, tracked in ipairs(snapshot) do
-						if tracked.GuiObject and tracked.GuiObject:IsDescendantOf(content) and tracked.Object and type(tracked.Object.Destroy) == "function" then
-							tracked.Object:Destroy()
-						end
-					end
-					root:Destroy()
-				end
-
-				interact.MouseButton1Click:Connect(function()
-					sectionValue:Toggle()
-				end)
-
-				self.Rayfield.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
-					if not root.Parent then
-						return
-					end
-					header.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-					headerStroke.Color = self.getSelectedTheme().SecondaryElementStroke
-					titleLabel.TextColor3 = self.getSelectedTheme().TextColor
-					chevron.TextColor3 = self.getSelectedTheme().SectionChevron or self.getSelectedTheme().TextColor
-				end)
-
-				applyCollapsedState(initialCollapsed, false)
-				currentImplicitSection = implicitScope and sectionRecord or nil
-				table.insert(TabSections, sectionRecord)
-				addExtendedAPI(sectionValue, sectionName, "CollapsibleSection", root)
-				return sectionValue
+				return createSectionWidget("createCollapsibleSection", sectionSettings)
 			end
 
-			local function resolveElementParentFromSettings(elementObject, sourceSettings)
+			resolveElementParentFromSettings = function(elementObject, sourceSettings)
 				if type(sourceSettings) == "table" and type(sourceSettings.ParentSection) == "table" then
 					elementObject.__ParentSection = sourceSettings.ParentSection
 				end
@@ -21709,7 +22969,7 @@ function ElementsModule.init(ctx)
 				end
 			end
 
-			local function connectThemeRefresh(handler)
+			connectThemeRefresh = function(handler)
 				if type(handler) ~= "function" then
 					return
 				end
@@ -21744,800 +23004,19 @@ function ElementsModule.init(ctx)
 			end
 
 			function Tab:CreateNumberStepper(stepperSettings)
-				local settingsValue = stepperSettings or {}
-				local stepper = {}
-				stepper.Name = tostring(settingsValue.Name or "Number Stepper")
-				stepper.Flag = settingsValue.Flag
-				stepper.CurrentValue = clampNumber(settingsValue.CurrentValue, settingsValue.Min, settingsValue.Max, 0)
-
-				local minValue = tonumber(settingsValue.Min)
-				local maxValue = tonumber(settingsValue.Max)
-				local stepValue = math.max(0.0001, tonumber(settingsValue.Step) or 1)
-				local precision = math.max(0, math.floor(tonumber(settingsValue.Precision) or 2))
-				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
-
-				local root = Instance.new("Frame")
-				root.Name = stepper.Name
-				root.Size = UDim2.new(1, -10, 0, 45)
-				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local corner = Instance.new("UICorner")
-				corner.CornerRadius = UDim.new(0, 6)
-				corner.Parent = root
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = self.getSelectedTheme().ElementStroke
-				stroke.Parent = root
-
-				local title = Instance.new("TextLabel")
-				title.BackgroundTransparency = 1
-				title.Position = UDim2.new(0, 10, 0, 0)
-				title.Size = UDim2.new(0.45, -8, 1, 0)
-				title.TextXAlignment = Enum.TextXAlignment.Left
-				title.Font = Enum.Font.GothamMedium
-				title.TextSize = 13
-				title.Text = stepper.Name
-				title.TextColor3 = self.getSelectedTheme().TextColor
-				title.Parent = root
-
-				local minus = Instance.new("TextButton")
-				minus.Name = "Minus"
-				minus.AnchorPoint = Vector2.new(1, 0.5)
-				minus.Position = UDim2.new(1, -78, 0.5, 0)
-				minus.Size = UDim2.new(0, 22, 0, 22)
-				minus.Text = "-"
-				minus.Font = Enum.Font.GothamBold
-				minus.TextSize = 16
-				minus.TextColor3 = self.getSelectedTheme().TextColor
-				minus.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				minus.BorderSizePixel = 0
-				minus.Parent = root
-
-				local valueBox = Instance.new("TextBox")
-				valueBox.Name = "Value"
-				valueBox.AnchorPoint = Vector2.new(1, 0.5)
-				valueBox.Position = UDim2.new(1, -50, 0.5, 0)
-				valueBox.Size = UDim2.new(0, 56, 0, 22)
-				valueBox.ClearTextOnFocus = false
-				valueBox.Font = Enum.Font.Gotham
-				valueBox.TextSize = 13
-				valueBox.TextColor3 = self.getSelectedTheme().TextColor
-				valueBox.PlaceholderText = "0"
-				valueBox.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				valueBox.BorderSizePixel = 0
-				valueBox.Parent = root
-
-				local plus = Instance.new("TextButton")
-				plus.Name = "Plus"
-				plus.AnchorPoint = Vector2.new(1, 0.5)
-				plus.Position = UDim2.new(1, -22, 0.5, 0)
-				plus.Size = UDim2.new(0, 22, 0, 22)
-				plus.Text = "+"
-				plus.Font = Enum.Font.GothamBold
-				plus.TextSize = 16
-				plus.TextColor3 = self.getSelectedTheme().TextColor
-				plus.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				plus.BorderSizePixel = 0
-				plus.Parent = root
-
-				local function formatValue(numberValue)
-					local template = "%." .. tostring(precision) .. "f"
-					return string.format(template, numberValue)
-				end
-
-				local function commitValue(nextValue, options)
-					options = options or {}
-					local normalized = roundToPrecision(clampNumber(nextValue, minValue, maxValue, stepper.CurrentValue), precision)
-					if normalized == stepper.CurrentValue and options.force ~= true then
-						valueBox.Text = formatValue(stepper.CurrentValue)
-						return
-					end
-					stepper.CurrentValue = normalized
-					valueBox.Text = formatValue(normalized)
-					local okCallback, callbackErr = pcall(callback, normalized)
-					if not okCallback then
-						warn("Rayfield | NumberStepper callback failed: " .. tostring(callbackErr))
-					end
-					if settingsValue.Ext ~= true and options.persist ~= false then
-						self.SaveConfiguration()
-					end
-				end
-
-				minus.MouseButton1Click:Connect(function()
-					commitValue(stepper.CurrentValue - stepValue, {persist = true})
-				end)
-				plus.MouseButton1Click:Connect(function()
-					commitValue(stepper.CurrentValue + stepValue, {persist = true})
-				end)
-				valueBox.FocusLost:Connect(function()
-					commitValue(valueBox.Text, {persist = true, force = true})
-				end)
-
-				function stepper:Set(nextValue)
-					commitValue(nextValue, {persist = true, force = true})
-				end
-
-				function stepper:Get()
-					return stepper.CurrentValue
-				end
-
-				function stepper:Increment()
-					commitValue(stepper.CurrentValue + stepValue, {persist = true})
-				end
-
-				function stepper:Decrement()
-					commitValue(stepper.CurrentValue - stepValue, {persist = true})
-				end
-
-				function stepper:Destroy()
-					root:Destroy()
-				end
-
-				connectThemeRefresh(function()
-					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-					stroke.Color = self.getSelectedTheme().ElementStroke
-					title.TextColor3 = self.getSelectedTheme().TextColor
-					minus.TextColor3 = self.getSelectedTheme().TextColor
-					minus.BackgroundColor3 = self.getSelectedTheme().InputBackground
-					plus.TextColor3 = self.getSelectedTheme().TextColor
-					plus.BackgroundColor3 = self.getSelectedTheme().InputBackground
-					valueBox.TextColor3 = self.getSelectedTheme().TextColor
-					valueBox.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				end)
-
-				resolveElementParentFromSettings(stepper, settingsValue)
-				commitValue(stepper.CurrentValue, {persist = false, force = true})
-				addExtendedAPI(stepper, stepper.Name, "NumberStepper", root)
-
-				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and stepper.Flag then
-					self.RayfieldLibrary.Flags[stepper.Flag] = stepper
-				end
-
-				return stepper
+				return createComponentWidget("createNumberStepper", stepperSettings)
 			end
 
 			function Tab:CreateConfirmButton(confirmSettings)
-				local settingsValue = confirmSettings or {}
-				local element = {}
-				element.Name = tostring(settingsValue.Name or "Confirm Button")
-				element.Flag = settingsValue.Flag
-				element.Ext = settingsValue.Ext
-
-				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
-				local mode = tostring(settingsValue.ConfirmMode or "hold"):lower()
-				local holdDuration = clampNumber(settingsValue.HoldDuration, 0.05, 6, 1.2)
-				local doubleWindow = clampNumber(settingsValue.DoubleWindow, 0.05, 4, 0.4)
-				local timeout = clampNumber(settingsValue.Timeout, 0.2, 12, 2)
-				local armed = false
-				local armedToken = 0
-				local lastClickTime = 0
-				local holdActive = false
-				local holdToken = 0
-
-				local root = Instance.new("Frame")
-				root.Name = element.Name
-				root.Size = UDim2.new(1, -10, 0, 45)
-				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local corner = Instance.new("UICorner")
-				corner.CornerRadius = UDim.new(0, 6)
-				corner.Parent = root
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = self.getSelectedTheme().ElementStroke
-				stroke.Parent = root
-
-				local button = Instance.new("TextButton")
-				button.Name = "Interact"
-				button.Size = UDim2.new(1, 0, 1, 0)
-				button.BackgroundTransparency = 1
-				button.Text = element.Name
-				button.Font = Enum.Font.GothamSemibold
-				button.TextSize = 13
-				button.TextColor3 = self.getSelectedTheme().TextColor
-				button.Parent = root
-
-				local function setArmedVisual(value)
-					armed = value == true
-					if armed then
-						root.BackgroundColor3 = self.getSelectedTheme().ConfirmArmed or self.getSelectedTheme().ElementBackgroundHover
-					else
-						root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-					end
-				end
-
-				local function fireConfirmed()
-					setArmedVisual(false)
-					emitUICue("click")
-					local okCallback, callbackErr = pcall(callback)
-					if not okCallback then
-						emitUICue("error")
-						warn("Rayfield | ConfirmButton callback failed: " .. tostring(callbackErr))
-					else
-						emitUICue("success")
-					end
-					if settingsValue.Ext ~= true then
-						self.SaveConfiguration()
-					end
-				end
-
-				local function armWithTimeout()
-					armedToken += 1
-					local localToken = armedToken
-					setArmedVisual(true)
-					task.delay(timeout, function()
-						if armed and armedToken == localToken then
-							setArmedVisual(false)
-						end
-					end)
-				end
-
-				local function isModeEnabled(modeName)
-					return mode == modeName or mode == "either"
-				end
-
-				button.MouseButton1Click:Connect(function()
-					local now = os.clock()
-					if isModeEnabled("double") then
-						if armed and (now - lastClickTime) <= doubleWindow then
-							fireConfirmed()
-							lastClickTime = 0
-							return
-						end
-						lastClickTime = now
-						armWithTimeout()
-						return
-					end
-					if not isModeEnabled("hold") then
-						fireConfirmed()
-					end
-				end)
-
-				button.InputBegan:Connect(function(input)
-					if not isModeEnabled("hold") then
-						return
-					end
-					if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-						return
-					end
-					holdActive = true
-					holdToken += 1
-					local localToken = holdToken
-					setArmedVisual(true)
-					task.delay(holdDuration, function()
-						if holdActive and holdToken == localToken then
-							fireConfirmed()
-						end
-					end)
-				end)
-
-				button.InputEnded:Connect(function(input)
-					if not isModeEnabled("hold") then
-						return
-					end
-					if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-						return
-					end
-					holdActive = false
-					if armed then
-						setArmedVisual(false)
-					end
-				end)
-
-				function element:Arm()
-					armWithTimeout()
-					return true, "armed"
-				end
-
-				function element:Cancel()
-					holdActive = false
-					setArmedVisual(false)
-					return true, "cancelled"
-				end
-
-				function element:SetMode(nextMode)
-					local normalized = tostring(nextMode or "hold"):lower()
-					if normalized ~= "hold" and normalized ~= "double" and normalized ~= "either" then
-						return false, "Invalid mode."
-					end
-					mode = normalized
-					return true, "ok"
-				end
-
-				function element:SetHoldDuration(nextDuration)
-					holdDuration = clampNumber(nextDuration, 0.05, 6, holdDuration)
-					return true, "ok"
-				end
-
-				function element:SetDoubleWindow(nextWindow)
-					doubleWindow = clampNumber(nextWindow, 0.05, 4, doubleWindow)
-					return true, "ok"
-				end
-
-				function element:Destroy()
-					root:Destroy()
-				end
-
-				connectThemeRefresh(function()
-					button.TextColor3 = self.getSelectedTheme().TextColor
-					stroke.Color = self.getSelectedTheme().ElementStroke
-					setArmedVisual(armed)
-				end)
-
-				resolveElementParentFromSettings(element, settingsValue)
-				addExtendedAPI(element, element.Name, "ConfirmButton", root)
-				return element
-			end
-
-			local function resolveImageSourceUri(source)
-				local valueType = typeof(source)
-				if valueType == "nil" then
-					return "rbxassetid://0", nil
-				end
-				if valueType == "number" then
-					return "rbxassetid://" .. tostring(math.floor(source)), nil
-				end
-				if valueType ~= "string" then
-					return "rbxassetid://0", "Image source must be a number or string."
-				end
-				local normalized = tostring(source)
-				if normalized == "" then
-					return "rbxassetid://0", "Image source is empty."
-				end
-				if normalized:match("^rbxassetid://") then
-					return normalized, nil
-				end
-				if normalized:match("^https?://") then
-					local hasBridge = type(getcustomasset) == "function" or type(getsynasset) == "function"
-					if not hasBridge then
-						return "rbxassetid://0", "URL image source unsupported in this executor (no asset bridge)."
-					end
-					return normalized, nil
-				end
-				if tonumber(normalized) then
-					return "rbxassetid://" .. tostring(math.floor(tonumber(normalized))), nil
-				end
-				return normalized, nil
+				return createComponentWidget("createConfirmButton", confirmSettings)
 			end
 
 			function Tab:CreateImage(imageSettings)
-				local settingsValue = imageSettings or {}
-				local imageElement = {}
-				imageElement.Name = tostring(settingsValue.Name or "Image")
-				imageElement.Flag = settingsValue.Flag
-				local initialSource, initialWarning = resolveImageSourceUri(settingsValue.Source)
-				imageElement.CurrentValue = {
-					source = initialSource,
-					fitMode = tostring(settingsValue.FitMode or "fill"):lower(),
-					caption = tostring(settingsValue.Caption or "")
-				}
-				if initialWarning then
-					warn("Rayfield | Image source warning: " .. tostring(initialWarning))
-				end
-
-				local root = Instance.new("Frame")
-				root.Name = imageElement.Name
-				root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 60, 360, 130))
-				root.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local corner = Instance.new("UICorner")
-				corner.CornerRadius = UDim.new(0, clampNumber(settingsValue.CornerRadius, 0, 24, 8))
-				corner.Parent = root
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = self.getSelectedTheme().SecondaryElementStroke
-				stroke.Parent = root
-
-				local image = Instance.new("ImageLabel")
-				image.Name = "Image"
-				image.BackgroundTransparency = 1
-				image.Position = UDim2.new(0, 0, 0, 0)
-				image.Size = UDim2.new(1, 0, 1, -24)
-				image.Image = imageElement.CurrentValue.source
-				image.ScaleType = imageElement.CurrentValue.fitMode == "fit" and Enum.ScaleType.Fit or Enum.ScaleType.Crop
-				image.Parent = root
-
-				local caption = Instance.new("TextLabel")
-				caption.Name = "Caption"
-				caption.BackgroundTransparency = 1
-				caption.AnchorPoint = Vector2.new(0.5, 1)
-				caption.Position = UDim2.new(0.5, 0, 1, -4)
-				caption.Size = UDim2.new(1, -12, 0, 18)
-				caption.Font = Enum.Font.Gotham
-				caption.TextSize = 12
-				caption.TextXAlignment = Enum.TextXAlignment.Left
-				caption.TextColor3 = self.getSelectedTheme().TextColor
-				caption.Text = imageElement.CurrentValue.caption
-				caption.Visible = imageElement.CurrentValue.caption ~= ""
-				caption.Parent = root
-
-				local function persistImageState()
-					if settingsValue.Ext ~= true then
-						self.SaveConfiguration()
-					end
-				end
-
-				function imageElement:SetSource(nextSource)
-					local resolved, warningMessage = resolveImageSourceUri(nextSource)
-					imageElement.CurrentValue.source = resolved
-					image.Image = imageElement.CurrentValue.source
-					persistImageState()
-					if warningMessage then
-						warn("Rayfield | Image source warning: " .. tostring(warningMessage))
-						return false, warningMessage
-					end
-					return true, "ok"
-				end
-
-				function imageElement:GetSource()
-					return imageElement.CurrentValue.source
-				end
-
-				function imageElement:SetFitMode(nextMode)
-					local normalized = tostring(nextMode or "fill"):lower()
-					if normalized ~= "fill" and normalized ~= "fit" then
-						normalized = "fill"
-					end
-					imageElement.CurrentValue.fitMode = normalized
-					image.ScaleType = normalized == "fit" and Enum.ScaleType.Fit or Enum.ScaleType.Crop
-					persistImageState()
-				end
-
-				function imageElement:SetCaption(nextCaption)
-					imageElement.CurrentValue.caption = tostring(nextCaption or "")
-					caption.Text = imageElement.CurrentValue.caption
-					caption.Visible = imageElement.CurrentValue.caption ~= ""
-					persistImageState()
-				end
-
-				function imageElement:GetPersistValue()
-					return cloneSerializable(imageElement.CurrentValue)
-				end
-
-				function imageElement:Set(value)
-					if type(value) == "table" then
-						if value.source ~= nil then
-							imageElement:SetSource(value.source)
-						end
-						if value.fitMode ~= nil then
-							imageElement:SetFitMode(value.fitMode)
-						end
-						if value.caption ~= nil then
-							imageElement:SetCaption(value.caption)
-						end
-					else
-						imageElement:SetSource(value)
-					end
-				end
-
-				function imageElement:Destroy()
-					root:Destroy()
-				end
-
-				connectThemeRefresh(function()
-					root.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-					stroke.Color = self.getSelectedTheme().SecondaryElementStroke
-					caption.TextColor3 = self.getSelectedTheme().TextColor
-				end)
-
-				resolveElementParentFromSettings(imageElement, settingsValue)
-				addExtendedAPI(imageElement, imageElement.Name, "Image", root)
-				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and imageElement.Flag then
-					self.RayfieldLibrary.Flags[imageElement.Flag] = imageElement
-				end
-				return imageElement
+				return createComponentWidget("createImage", imageSettings)
 			end
 
 			function Tab:CreateGallery(gallerySettings)
-				local settingsValue = gallerySettings or {}
-				local gallery = {}
-				gallery.Name = tostring(settingsValue.Name or "Gallery")
-				gallery.Flag = settingsValue.Flag
-				local selectionMode = tostring(settingsValue.SelectionMode or "single"):lower()
-				if selectionMode ~= "single" and selectionMode ~= "multi" then
-					selectionMode = "single"
-				end
-				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
-				local columns = settingsValue.Columns or "auto"
-				local items = {}
-				local selected = {}
-
-				local root = Instance.new("Frame")
-				root.Name = gallery.Name
-				root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 140, 520, 220))
-				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local corner = Instance.new("UICorner")
-				corner.CornerRadius = UDim.new(0, 6)
-				corner.Parent = root
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = self.getSelectedTheme().ElementStroke
-				stroke.Parent = root
-
-				local title = Instance.new("TextLabel")
-				title.BackgroundTransparency = 1
-				title.Position = UDim2.new(0, 10, 0, 0)
-				title.Size = UDim2.new(1, -12, 0, 22)
-				title.Font = Enum.Font.GothamSemibold
-				title.TextXAlignment = Enum.TextXAlignment.Left
-				title.TextSize = 13
-				title.TextColor3 = self.getSelectedTheme().TextColor
-				title.Text = gallery.Name
-				title.Parent = root
-
-				local list = Instance.new("ScrollingFrame")
-				list.Name = "List"
-				list.BackgroundTransparency = 1
-				list.BorderSizePixel = 0
-				list.Position = UDim2.new(0, 6, 0, 24)
-				list.Size = UDim2.new(1, -12, 1, -30)
-				list.CanvasSize = UDim2.new(0, 0, 0, 0)
-				list.ScrollBarImageTransparency = 0.5
-				list.Parent = root
-
-				local grid = Instance.new("UIGridLayout")
-				grid.CellPadding = UDim2.new(0, 8, 0, 8)
-				grid.SortOrder = Enum.SortOrder.LayoutOrder
-				grid.Parent = list
-
-				local function applyGridSizing()
-					local targetColumns = 2
-					if type(columns) == "number" then
-						targetColumns = math.max(1, math.floor(columns))
-					else
-						targetColumns = math.max(1, math.floor((list.AbsoluteSize.X + 8) / 116))
-					end
-					local width = math.max(70, math.floor((list.AbsoluteSize.X - ((targetColumns - 1) * 8)) / targetColumns))
-					grid.CellSize = UDim2.new(0, width, 0, 92)
-				end
-
-				local function snapshotSelection()
-					if selectionMode == "single" then
-						for id in pairs(selected) do
-							return id
-						end
-						return nil
-					end
-					local out = {}
-					for id in pairs(selected) do
-						table.insert(out, id)
-					end
-					table.sort(out)
-					return out
-				end
-
-				local function emitSelection()
-					local okCallback, callbackErr = pcall(callback, snapshotSelection())
-					if not okCallback then
-						warn("Rayfield | Gallery callback failed: " .. tostring(callbackErr))
-					end
-					if settingsValue.Ext ~= true then
-						self.SaveConfiguration()
-					end
-				end
-
-				local cardById = {}
-
-				local function applyCardSelectionVisual(itemId)
-					local card = cardById[itemId]
-					if not card then
-						return
-					end
-					local active = selected[itemId] == true
-					card.BackgroundColor3 = active and (self.getSelectedTheme().DropdownSelected or self.getSelectedTheme().ElementBackgroundHover) or self.getSelectedTheme().SecondaryElementBackground
-				end
-
-				local function renderItems()
-					for _, child in ipairs(list:GetChildren()) do
-						if child:IsA("Frame") then
-							child:Destroy()
-						end
-					end
-					cardById = {}
-
-					for index, item in ipairs(items) do
-						local itemId = tostring(item.id or item.Id or index)
-						local card = Instance.new("Frame")
-						card.Name = "Item_" .. itemId
-						card.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-						card.BorderSizePixel = 0
-						card.LayoutOrder = index
-						card.Parent = list
-
-						local cardCorner = Instance.new("UICorner")
-						cardCorner.CornerRadius = UDim.new(0, 6)
-						cardCorner.Parent = card
-
-						local image = Instance.new("ImageLabel")
-						image.BackgroundTransparency = 1
-						image.Position = UDim2.new(0, 6, 0, 6)
-						image.Size = UDim2.new(1, -12, 1, -30)
-						image.ScaleType = Enum.ScaleType.Crop
-						image.Image = resolveImageSourceUri(item.image or item.Image or item.source or item.Source)
-						image.Parent = card
-
-						local label = Instance.new("TextLabel")
-						label.BackgroundTransparency = 1
-						label.Position = UDim2.new(0, 6, 1, -22)
-						label.Size = UDim2.new(1, -12, 0, 16)
-						label.Font = Enum.Font.Gotham
-						label.TextSize = 11
-						label.TextXAlignment = Enum.TextXAlignment.Left
-						label.TextColor3 = self.getSelectedTheme().TextColor
-						label.Text = tostring(item.name or item.Name or itemId)
-						label.Parent = card
-
-						local interact = Instance.new("TextButton")
-						interact.BackgroundTransparency = 1
-						interact.Size = UDim2.new(1, 0, 1, 0)
-						interact.Text = ""
-						interact.Parent = card
-						interact.MouseButton1Click:Connect(function()
-							if selectionMode == "single" then
-								selected = {}
-								selected[itemId] = true
-							else
-								if selected[itemId] then
-									selected[itemId] = nil
-								else
-									selected[itemId] = true
-								end
-							end
-							for id in pairs(cardById) do
-								applyCardSelectionVisual(id)
-							end
-							emitSelection()
-						end)
-
-						cardById[itemId] = card
-						applyCardSelectionVisual(itemId)
-					end
-
-					task.defer(function()
-						applyGridSizing()
-						list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
-					end)
-				end
-
-				list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-					applyGridSizing()
-					list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
-				end)
-				grid:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-					list.CanvasSize = UDim2.new(0, 0, 0, grid.AbsoluteContentSize.Y + 8)
-				end)
-
-				function gallery:SetItems(nextItems)
-					items = {}
-					if type(nextItems) == "table" then
-						for _, item in ipairs(nextItems) do
-							table.insert(items, cloneSerializable(item))
-						end
-					end
-					renderItems()
-				end
-
-				function gallery:AddItem(item)
-					if type(item) ~= "table" then
-						return
-					end
-					table.insert(items, cloneSerializable(item))
-					renderItems()
-				end
-
-				function gallery:RemoveItem(itemId)
-					local key = tostring(itemId or "")
-					for index, item in ipairs(items) do
-						local id = tostring(item.id or item.Id or index)
-						if id == key then
-							table.remove(items, index)
-							selected[key] = nil
-							break
-						end
-					end
-					renderItems()
-					emitSelection()
-				end
-
-				function gallery:Select(itemId)
-					local key = tostring(itemId or "")
-					if selectionMode == "single" then
-						selected = {}
-					end
-					selected[key] = true
-					applyCardSelectionVisual(key)
-					emitSelection()
-				end
-
-				function gallery:Deselect(itemId)
-					local key = tostring(itemId or "")
-					selected[key] = nil
-					applyCardSelectionVisual(key)
-					emitSelection()
-				end
-
-				function gallery:ClearSelection()
-					selected = {}
-					for id in pairs(cardById) do
-						applyCardSelectionVisual(id)
-					end
-					emitSelection()
-				end
-
-				function gallery:SetSelection(nextSelection)
-					selected = {}
-					if selectionMode == "single" then
-						local value = type(nextSelection) == "table" and nextSelection[1] or nextSelection
-						if value ~= nil then
-							selected[tostring(value)] = true
-						end
-					else
-						if type(nextSelection) == "table" then
-							for _, value in ipairs(nextSelection) do
-								selected[tostring(value)] = true
-							end
-						elseif nextSelection ~= nil then
-							selected[tostring(nextSelection)] = true
-						end
-					end
-					for id in pairs(cardById) do
-						applyCardSelectionVisual(id)
-					end
-					emitSelection()
-				end
-
-				function gallery:GetSelection()
-					return snapshotSelection()
-				end
-
-				function gallery:GetPersistValue()
-					return cloneSerializable(snapshotSelection())
-				end
-
-				function gallery:Set(value)
-					gallery:SetSelection(value)
-				end
-
-				function gallery:Destroy()
-					root:Destroy()
-				end
-
-				connectThemeRefresh(function()
-					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-					stroke.Color = self.getSelectedTheme().ElementStroke
-					title.TextColor3 = self.getSelectedTheme().TextColor
-					for id in pairs(cardById) do
-						local card = cardById[id]
-						if card then
-							local label = card:FindFirstChildOfClass("TextLabel")
-							if label then
-								label.TextColor3 = self.getSelectedTheme().TextColor
-							end
-						end
-						applyCardSelectionVisual(id)
-					end
-				end)
-
-				resolveElementParentFromSettings(gallery, settingsValue)
-				gallery:SetItems(settingsValue.Items or {})
-				addExtendedAPI(gallery, gallery.Name, "Gallery", root)
-				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and gallery.Flag then
-					self.RayfieldLibrary.Flags[gallery.Flag] = gallery
-				end
-				return gallery
+				return createComponentWidget("createGallery", gallerySettings)
 			end
 
 			function Tab:CreateDataGrid(dataGridSettings)
@@ -22650,174 +23129,19 @@ function ElementsModule.init(ctx)
 
 			-- Divider
 			function Tab:CreateDivider()
-				local DividerValue = {}
-	
-				local Divider = self.Elements.Template.Divider:Clone()
-				Divider.Visible = true
-				Divider.Parent = TabPage
-	
-				Divider.Divider.BackgroundTransparency = 1
-				self.Animation:Create(Divider.Divider, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.85}):Play()
-	
-				function DividerValue:Set(Value)
-					Divider.Visible = Value
-				end
-	
-				function DividerValue:Destroy()
-					Divider:Destroy()
-				end
-	
-				-- Add extended API
-				addExtendedAPI(DividerValue, "Divider", "Divider", Divider)
-	
-				return DividerValue
+				return createComponentWidget("createDivider")
 			end
-	
+
 			-- Label
 			function Tab:CreateLabel(LabelText, Icon, Color, IgnoreTheme)
-				local LabelValue = {}
-	
-				local Label = self.Elements.Template.Label:Clone()
-				Label.Title.Text = LabelText
-				Label.Visible = true
-				Label.Parent = TabPage
-	
-				Label.BackgroundColor3 = Color or self.getSelectedTheme().SecondaryElementBackground
-				Label.UIStroke.Color = Color or self.getSelectedTheme().SecondaryElementStroke
-	
-				if Icon then
-					if typeof(Icon) == 'string' and self.Icons then
-						local asset = self.getIcon(Icon)
-	
-						Label.Icon.Image = 'rbxassetid://'..asset.id
-						Label.Icon.ImageRectOffset = asset.imageRectOffset
-						Label.Icon.ImageRectSize = asset.imageRectSize
-					else
-						Label.Icon.Image = self.getAssetUri(Icon)
-					end
-				else
-					Label.Icon.Image = "rbxassetid://" .. 0
-				end
-	
-				if Icon and Label:FindFirstChild('Icon') then
-					Label.Title.Position = UDim2.new(0, 45, 0.5, 0)
-					Label.Title.Size = UDim2.new(1, -100, 0, 14)
-	
-					if Icon then
-						if typeof(Icon) == 'string' and self.Icons then
-							local asset = self.getIcon(Icon)
-	
-							Label.Icon.Image = 'rbxassetid://'..asset.id
-							Label.Icon.ImageRectOffset = asset.imageRectOffset
-							Label.Icon.ImageRectSize = asset.imageRectSize
-						else
-							Label.Icon.Image = self.getAssetUri(Icon)
-						end
-					else
-						Label.Icon.Image = "rbxassetid://" .. 0
-					end
-	
-					Label.Icon.Visible = true
-				end
-	
-				Label.Icon.ImageTransparency = 1
-				Label.BackgroundTransparency = 1
-				Label.UIStroke.Transparency = 1
-				Label.Title.TextTransparency = 1
-	
-				self.Animation:Create(Label, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = Color and 0.8 or 0}):Play()
-				self.Animation:Create(Label.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = Color and 0.7 or 0}):Play()
-				self.Animation:Create(Label.Icon, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-				self.Animation:Create(Label.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = Color and 0.2 or 0}):Play()	
-	
-				function LabelValue:Set(NewLabel, Icon, Color)
-					Label.Title.Text = NewLabel
-	
-					if Color then
-						Label.BackgroundColor3 = Color or self.getSelectedTheme().SecondaryElementBackground
-						Label.UIStroke.Color = Color or self.getSelectedTheme().SecondaryElementStroke
-					end
-	
-					if Icon and Label:FindFirstChild('Icon') then
-						Label.Title.Position = UDim2.new(0, 45, 0.5, 0)
-						Label.Title.Size = UDim2.new(1, -100, 0, 14)
-	
-						if Icon then
-							if typeof(Icon) == 'string' and self.Icons then
-								local asset = self.getIcon(Icon)
-	
-								Label.Icon.Image = 'rbxassetid://'..asset.id
-								Label.Icon.ImageRectOffset = asset.imageRectOffset
-								Label.Icon.ImageRectSize = asset.imageRectSize
-							else
-								Label.Icon.Image = self.getAssetUri(Icon)
-							end
-						else
-							Label.Icon.Image = "rbxassetid://" .. 0
-						end
-	
-						Label.Icon.Visible = true
-					end
-				end
-	
-				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
-					Label.BackgroundColor3 = IgnoreTheme and (Color or Label.BackgroundColor3) or self.getSelectedTheme().SecondaryElementBackground
-					Label.UIStroke.Color = IgnoreTheme and (Color or Label.BackgroundColor3) or self.getSelectedTheme().SecondaryElementStroke
-				end)
-	
-				function LabelValue:Destroy()
-					Label:Destroy()
-				end
-	
-				-- Add extended API
-				addExtendedAPI(LabelValue, LabelText, "Label", Label)
-	
-				return LabelValue
+				return createComponentWidget("createLabel", LabelText, Icon, Color, IgnoreTheme)
 			end
-	
+
 			-- Paragraph
 			function Tab:CreateParagraph(ParagraphSettings)
-				local ParagraphValue = {}
-	
-				local Paragraph = self.Elements.Template.Paragraph:Clone()
-				Paragraph.Title.Text = ParagraphSettings.Title
-				Paragraph.Content.Text = ParagraphSettings.Content
-				Paragraph.Visible = true
-				Paragraph.Parent = TabPage
-	
-				Paragraph.BackgroundTransparency = 1
-				Paragraph.UIStroke.Transparency = 1
-				Paragraph.Title.TextTransparency = 1
-				Paragraph.Content.TextTransparency = 1
-	
-				Paragraph.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-				Paragraph.UIStroke.Color = self.getSelectedTheme().SecondaryElementStroke
-	
-				self.Animation:Create(Paragraph, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-				self.Animation:Create(Paragraph.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-				self.Animation:Create(Paragraph.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-				self.Animation:Create(Paragraph.Content, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-	
-				function ParagraphValue:Set(NewParagraphSettings)
-					Paragraph.Title.Text = NewParagraphSettings.Title
-					Paragraph.Content.Text = NewParagraphSettings.Content
-				end
-	
-				self.Rayfield.Main:GetPropertyChangedSignal('BackgroundColor3'):Connect(function()
-					Paragraph.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-					Paragraph.UIStroke.Color = self.getSelectedTheme().SecondaryElementStroke
-				end)
-	
-				function ParagraphValue:Destroy()
-					Paragraph:Destroy()
-				end
-	
-				-- Add extended API
-				addExtendedAPI(ParagraphValue, ParagraphSettings.Title, "Paragraph", Paragraph)
-	
-				return ParagraphValue
+				return createComponentWidget("createParagraph", ParagraphSettings)
 			end
-	
+
 			-- Input
 			-- Input
 			function Tab:CreateInput(InputSettings)
@@ -23185,21 +23509,18 @@ function ElementsModule.init(ctx)
 		return true
 	end
 	self.getPinBadgesVisible = function()
-		return pinBadgesVisible == true
+		local registry = resolveControlRegistry()
+		if type(registry.getPinBadgesVisible) == "function" then
+			return registry.getPinBadgesVisible()
+		end
+		return false
 	end
 	self.subscribeControlRegistry = function(callback)
-		if type(callback) ~= "function" then
-			return function() end
+		local registry = resolveControlRegistry()
+		if type(registry.subscribe) == "function" then
+			return registry.subscribe(callback)
 		end
-		controlRegistrySubscribers[callback] = true
-		local unsubscribed = false
-		return function()
-			if unsubscribed then
-				return
-			end
-			unsubscribed = true
-			controlRegistrySubscribers[callback] = nil
-		end
+		return function() end
 	end
 	self.getControlRecordById = function(id)
 		return getControlRecordById(id)
@@ -23224,6 +23545,9 @@ function ElementsModule.init(ctx)
 end
 
 return ElementsModule
+
+
+
 
 
 
@@ -23846,6 +24170,122 @@ end
 
 return MathUtils
 ]])
+put("src/ui/elements/factory/providers/logging.lua", [[local LoggingProvider = {}
+
+function LoggingProvider.create(options)
+	options = type(options) == "table" and options or {}
+	local logService = options.logService
+
+	local provider = {
+		connection = nil,
+		subscribers = {}
+	}
+
+	local function ensureConnected()
+		if not logService or provider.connection then
+			return
+		end
+		provider.connection = logService.MessageOut:Connect(function(message, messageType)
+			local level = "info"
+			if messageType == Enum.MessageType.MessageWarning then
+				level = "warn"
+			elseif messageType == Enum.MessageType.MessageError then
+				level = "error"
+			end
+			for callback in pairs(provider.subscribers) do
+				local ok = pcall(callback, level, tostring(message or ""))
+				if not ok then
+					provider.subscribers[callback] = nil
+				end
+			end
+		end)
+	end
+
+	function provider.subscribe(callback)
+		if type(callback) ~= "function" then
+			return function() end
+		end
+		provider.subscribers[callback] = true
+		ensureConnected()
+		local disposed = false
+		return function()
+			if disposed then
+				return
+			end
+			disposed = true
+			provider.subscribers[callback] = nil
+			if not next(provider.subscribers) and provider.connection then
+				provider.connection:Disconnect()
+				provider.connection = nil
+			end
+		end
+	end
+
+	function provider.destroy()
+		for callback in pairs(provider.subscribers) do
+			provider.subscribers[callback] = nil
+		end
+		if provider.connection then
+			provider.connection:Disconnect()
+			provider.connection = nil
+		end
+	end
+
+	return provider
+end
+
+return LoggingProvider
+]])
+put("src/ui/elements/factory/providers/tooltips.lua", [[local TooltipProvider = {}
+
+function TooltipProvider.create(options)
+	options = type(options) == "table" and options or {}
+
+	local tooltipEngineModule = options.tooltipEngineModule
+	local resolveTooltipEngineModule = type(options.resolveTooltipEngineModule) == "function" and options.resolveTooltipEngineModule or nil
+	local engineCreateOptions = type(options.engineCreateOptions) == "table" and options.engineCreateOptions or {}
+
+	local provider = {
+		engine = nil
+	}
+
+	function provider.resolveEngine()
+		if provider.engine then
+			return provider.engine
+		end
+		local moduleValue = tooltipEngineModule
+		if type(moduleValue) ~= "table" and resolveTooltipEngineModule then
+			moduleValue = resolveTooltipEngineModule()
+		end
+		if type(moduleValue) ~= "table" or type(moduleValue.create) ~= "function" then
+			return nil
+		end
+		local okCreate, engineOrErr = pcall(moduleValue.create, engineCreateOptions)
+		if okCreate and type(engineOrErr) == "table" then
+			provider.engine = engineOrErr
+		end
+		return provider.engine
+	end
+
+	function provider.show(key, guiObject, text)
+		local engine = provider.resolveEngine()
+		if engine and type(engine.show) == "function" then
+			engine.show(key, guiObject, text)
+		end
+	end
+
+	function provider.hide(key)
+		local engine = provider.resolveEngine()
+		if engine and type(engine.hide) == "function" then
+			engine.hide(key)
+		end
+	end
+
+	return provider
+end
+
+return TooltipProvider
+]])
 put("src/ui/elements/factory/range-bars-factory.lua", [[local RangeBarsFactory = {}
 
 local function normalizeBarSettings(rawSettings, defaults)
@@ -24307,6 +24747,446 @@ end
 
 return RangeBarsFactory
 ]])
+put("src/ui/elements/factory/registry/controls.lua", [[local ControlRegistry = {}
+
+local function defaultSetGuiTitleText(guiObject, text)
+	if not (guiObject and guiObject.Parent) then
+		return false
+	end
+	local applied = false
+	local function trySet(target)
+		if not target then
+			return
+		end
+		local okSet = pcall(function()
+			target.Text = tostring(text or "")
+		end)
+		if okSet then
+			applied = true
+		end
+	end
+	if guiObject:IsA("TextLabel") or guiObject:IsA("TextButton") then
+		trySet(guiObject)
+	end
+	if not applied then
+		local titleNode = guiObject:FindFirstChild("Title", true)
+		if titleNode then
+			trySet(titleNode)
+		end
+	end
+	return applied
+end
+
+function ControlRegistry.create(options)
+	options = type(options) == "table" and options or {}
+
+	local resolveControlDisplayLabel = type(options.resolveControlDisplayLabel) == "function" and options.resolveControlDisplayLabel or nil
+	local persistControlDisplayLabel = type(options.persistControlDisplayLabel) == "function" and options.persistControlDisplayLabel or nil
+	local resetControlDisplayLabel = type(options.resetControlDisplayLabel) == "function" and options.resetControlDisplayLabel or nil
+	local setGuiTitleText = type(options.setGuiTitleText) == "function" and options.setGuiTitleText or defaultSetGuiTitleText
+
+	local state = {
+		allControlsById = {},
+		controlOrder = {},
+		controlsByFlag = {},
+		pinnedControlIds = {},
+		controlRegistrySubscribers = {},
+		controlIdSalt = 0,
+		pinBadgesVisible = true
+	}
+
+	local registry = {
+		state = state
+	}
+
+	local function emitControlRegistryChange(reason)
+		for callback in pairs(state.controlRegistrySubscribers) do
+			local ok = pcall(callback, tostring(reason or "changed"))
+			if not ok then
+				state.controlRegistrySubscribers[callback] = nil
+			end
+		end
+	end
+
+	local function isControlRecordAlive(record)
+		if type(record) ~= "table" then
+			return false
+		end
+		local guiObject = record.GuiObject
+		return guiObject and guiObject.Parent ~= nil
+	end
+
+	local function applyPinnedVisual(record)
+		if type(record) ~= "table" then
+			return
+		end
+		local pinButton = record.PinButton
+		if not pinButton then
+			return
+		end
+		local pinned = state.pinnedControlIds[record.Id] == true
+		pinButton.Text = pinned and "*" or "o"
+		pinButton.TextColor3 = pinned and Color3.fromRGB(255, 215, 120) or Color3.fromRGB(225, 225, 225)
+	end
+
+	local function getRecordByIdOrFlag(idOrFlag)
+		if type(idOrFlag) ~= "string" then
+			return nil
+		end
+		local key = tostring(idOrFlag)
+		local record = state.allControlsById[key]
+		if record then
+			return record
+		end
+		if state.controlsByFlag[key] then
+			return state.controlsByFlag[key]
+		end
+		local byFlagName = state.controlsByFlag["flag:" .. key]
+		if byFlagName then
+			return byFlagName
+		end
+		return nil
+	end
+
+	local function buildLocalizationKeysForRecord(record)
+		local keys = {}
+		if type(record) ~= "table" then
+			return keys
+		end
+		local flagValue = tostring(record.Flag or "")
+		local idValue = tostring(record.Id or "")
+		local typeValue = tostring(record.Type or "Element")
+		local internalValue = tostring(record.InternalName or record.Name or "")
+		if flagValue ~= "" then
+			table.insert(keys, "flag:" .. flagValue)
+		end
+		if idValue ~= "" then
+			table.insert(keys, "id:" .. idValue)
+		end
+		if internalValue ~= "" then
+			table.insert(keys, string.format("eng:%s:%s", typeValue, internalValue))
+		end
+		return keys
+	end
+
+	local function resolveLocalizationKey(record)
+		local keys = buildLocalizationKeysForRecord(record)
+		return keys[1] or ""
+	end
+
+	local function applyControlDisplayLabel(record, label)
+		if type(record) ~= "table" then
+			return false, "Control record is invalid."
+		end
+		local internalName = tostring(record.InternalName or record.Name or "Unnamed")
+		local value = tostring(label or "")
+		value = value:gsub("^%s+", ""):gsub("%s+$", "")
+		if value == "" then
+			value = internalName
+		end
+		record.DisplayName = value
+		record.Name = value
+		record.LocalizationKey = resolveLocalizationKey(record)
+		if type(record.ElementObject) == "table" then
+			record.ElementObject.DisplayName = value
+			record.ElementObject.LocalizationKey = record.LocalizationKey
+		end
+		if record.GuiObject then
+			if record.GuiObject.SetAttribute then
+				record.GuiObject:SetAttribute("RayfieldLocalizationKey", record.LocalizationKey)
+			end
+			setGuiTitleText(record.GuiObject, value)
+		end
+		return true, value
+	end
+
+	local function setControlPinnedState(record, shouldPin)
+		if type(record) ~= "table" or type(record.Id) ~= "string" then
+			return false, "Control record is invalid."
+		end
+
+		if shouldPin then
+			state.pinnedControlIds[record.Id] = true
+		else
+			state.pinnedControlIds[record.Id] = nil
+		end
+		applyPinnedVisual(record)
+		emitControlRegistryChange(shouldPin and "pin" or "unpin")
+		return true, shouldPin and "Pinned." or "Unpinned."
+	end
+
+	local function pinControl(idOrFlag)
+		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
+		if not record then
+			return false, "Control not found."
+		end
+		return setControlPinnedState(record, true)
+	end
+
+	local function unpinControl(idOrFlag)
+		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
+		if not record then
+			return false, "Control not found."
+		end
+		return setControlPinnedState(record, false)
+	end
+
+	local function getPinnedIds(pruneMissing)
+		local orderedPinned = {}
+		for _, id in ipairs(state.controlOrder) do
+			if state.pinnedControlIds[id] then
+				local record = state.allControlsById[id]
+				if record and isControlRecordAlive(record) then
+					table.insert(orderedPinned, id)
+				elseif pruneMissing == true then
+					state.pinnedControlIds[id] = nil
+				end
+			end
+		end
+		return orderedPinned
+	end
+
+	local function setPinnedIds(ids)
+		for key in pairs(state.pinnedControlIds) do
+			state.pinnedControlIds[key] = nil
+		end
+		if type(ids) == "table" then
+			for _, value in ipairs(ids) do
+				if type(value) == "string" and value ~= "" then
+					state.pinnedControlIds[value] = true
+				end
+			end
+		end
+		for _, record in pairs(state.allControlsById) do
+			applyPinnedVisual(record)
+		end
+		emitControlRegistryChange("set_pinned_ids")
+	end
+
+	local function setPinBadgesVisible(visible)
+		local show = visible ~= false
+		state.pinBadgesVisible = show
+		for _, record in pairs(state.allControlsById) do
+			local pinButton = record.PinButton
+			if pinButton then
+				pinButton.Visible = show
+			end
+		end
+		emitControlRegistryChange("set_pin_badges_visible")
+	end
+
+	local function listControlsForFavorites(pruneMissing)
+		local out = {}
+		for _, id in ipairs(state.controlOrder) do
+			local record = state.allControlsById[id]
+			if record and isControlRecordAlive(record) then
+				table.insert(out, {
+					id = record.Id,
+					tabId = record.TabPersistenceId,
+					name = record.DisplayName or record.Name,
+					displayName = record.DisplayName or record.Name,
+					internalName = record.InternalName or record.Name,
+					type = record.Type,
+					flag = record.Flag,
+					localizationKey = resolveLocalizationKey(record),
+					pinned = state.pinnedControlIds[record.Id] == true
+				})
+			elseif pruneMissing == true and state.pinnedControlIds[id] then
+				state.pinnedControlIds[id] = nil
+			end
+		end
+		return out
+	end
+
+	local function getControlRecordById(id)
+		local record = state.allControlsById[tostring(id or "")]
+		if not record then
+			return nil
+		end
+		if not isControlRecordAlive(record) then
+			return nil
+		end
+		return record
+	end
+
+	local function listControlRecords(pruneMissing)
+		local out = {}
+		for _, id in ipairs(state.controlOrder) do
+			local record = state.allControlsById[id]
+			if record and isControlRecordAlive(record) then
+				table.insert(out, record)
+			elseif pruneMissing == true and state.pinnedControlIds[id] then
+				state.pinnedControlIds[id] = nil
+			end
+		end
+		return out
+	end
+
+	local function setControlDisplayLabelByIdOrFlag(idOrFlag, label, options)
+		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
+		if not record then
+			return false, "Control not found."
+		end
+		options = type(options) == "table" and options or {}
+		local textValue = tostring(label or "")
+		textValue = textValue:gsub("^%s+", ""):gsub("%s+$", "")
+		if textValue == "" then
+			textValue = nil
+		end
+		local okApply, displayName = applyControlDisplayLabel(record, textValue)
+		if not okApply then
+			return false, "Failed to update control label."
+		end
+		if options.persist ~= false and type(persistControlDisplayLabel) == "function" then
+			local okPersist, persistResult = pcall(persistControlDisplayLabel, record, textValue)
+			if not okPersist then
+				return false, tostring(persistResult)
+			end
+		end
+		emitControlRegistryChange("control_renamed")
+		return true, tostring(displayName)
+	end
+
+	local function getControlDisplayLabelByIdOrFlag(idOrFlag)
+		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
+		if not record then
+			return nil, nil
+		end
+		return tostring(record.DisplayName or record.Name or ""), resolveLocalizationKey(record)
+	end
+
+	local function resetControlDisplayLabelByIdOrFlag(idOrFlag, options)
+		local record = getRecordByIdOrFlag(tostring(idOrFlag or ""))
+		if not record then
+			return false, "Control not found."
+		end
+		options = type(options) == "table" and options or {}
+		local okApply = applyControlDisplayLabel(record, nil)
+		if not okApply then
+			return false, "Failed to reset control label."
+		end
+		if options.persist ~= false then
+			if type(resetControlDisplayLabel) == "function" then
+				local okReset, resetResult = pcall(resetControlDisplayLabel, record)
+				if not okReset then
+					return false, tostring(resetResult)
+				end
+			elseif type(persistControlDisplayLabel) == "function" then
+				pcall(persistControlDisplayLabel, record, nil)
+			end
+		end
+		emitControlRegistryChange("control_renamed")
+		return true, tostring(record.DisplayName or record.Name or "")
+	end
+
+	local function resolveInitialDisplayLabel(record)
+		if type(resolveControlDisplayLabel) == "function" then
+			local okLabel, label = pcall(resolveControlDisplayLabel, {
+				id = record.Id,
+				flag = record.Flag,
+				type = record.Type,
+				internalName = record.InternalName,
+				localizationKey = record.LocalizationKey
+			})
+			if okLabel and type(label) == "string" and label ~= "" then
+				return applyControlDisplayLabel(record, label)
+			end
+		end
+		return applyControlDisplayLabel(record, nil)
+	end
+
+	local function allocateUniqueControlId(baseFavoriteId, guiObject)
+		local baseId = tostring(baseFavoriteId or "")
+		if baseId == "" then
+			baseId = "control"
+		end
+		local favoriteId = baseId
+		while state.allControlsById[favoriteId] and state.allControlsById[favoriteId].GuiObject ~= guiObject do
+			state.controlIdSalt = state.controlIdSalt + 1
+			favoriteId = baseId .. "#" .. tostring(state.controlIdSalt)
+		end
+		return favoriteId
+	end
+
+	local function registerControlRecord(record)
+		if type(record) ~= "table" or type(record.Id) ~= "string" or record.Id == "" then
+			return false
+		end
+		state.allControlsById[record.Id] = record
+		table.insert(state.controlOrder, record.Id)
+		if record.Flag then
+			state.controlsByFlag[record.Flag] = record
+			state.controlsByFlag["flag:" .. record.Flag] = record
+		end
+		return true
+	end
+
+	local function unregisterControlRecord(recordOrId)
+		local record = nil
+		if type(recordOrId) == "table" then
+			record = recordOrId
+		else
+			record = state.allControlsById[tostring(recordOrId or "")]
+		end
+		if type(record) ~= "table" or type(record.Id) ~= "string" then
+			return false
+		end
+		state.allControlsById[record.Id] = nil
+		state.pinnedControlIds[record.Id] = nil
+		if record.Flag then
+			state.controlsByFlag[record.Flag] = nil
+			state.controlsByFlag["flag:" .. record.Flag] = nil
+		end
+		return true
+	end
+
+	local function subscribe(callback)
+		if type(callback) ~= "function" then
+			return function() end
+		end
+		state.controlRegistrySubscribers[callback] = true
+		local unsubscribed = false
+		return function()
+			if unsubscribed then
+				return
+			end
+			unsubscribed = true
+			state.controlRegistrySubscribers[callback] = nil
+		end
+	end
+
+	registry.emitControlRegistryChange = emitControlRegistryChange
+	registry.isControlRecordAlive = isControlRecordAlive
+	registry.applyPinnedVisual = applyPinnedVisual
+	registry.getRecordByIdOrFlag = getRecordByIdOrFlag
+	registry.buildLocalizationKeysForRecord = buildLocalizationKeysForRecord
+	registry.resolveLocalizationKey = resolveLocalizationKey
+	registry.applyControlDisplayLabel = applyControlDisplayLabel
+	registry.pinControl = pinControl
+	registry.unpinControl = unpinControl
+	registry.getPinnedIds = getPinnedIds
+	registry.setPinnedIds = setPinnedIds
+	registry.setPinBadgesVisible = setPinBadgesVisible
+	registry.getPinBadgesVisible = function()
+		return state.pinBadgesVisible == true
+	end
+	registry.listControlsForFavorites = listControlsForFavorites
+	registry.getControlRecordById = getControlRecordById
+	registry.listControlRecords = listControlRecords
+	registry.setControlDisplayLabelByIdOrFlag = setControlDisplayLabelByIdOrFlag
+	registry.getControlDisplayLabelByIdOrFlag = getControlDisplayLabelByIdOrFlag
+	registry.resetControlDisplayLabelByIdOrFlag = resetControlDisplayLabelByIdOrFlag
+	registry.resolveInitialDisplayLabel = resolveInitialDisplayLabel
+	registry.allocateUniqueControlId = allocateUniqueControlId
+	registry.registerControlRecord = registerControlRecord
+	registry.unregisterControlRecord = unregisterControlRecord
+	registry.subscribe = subscribe
+
+	return registry
+end
+
+return ControlRegistry
+]])
 put("src/ui/elements/factory/resource-guard.lua", [[local ResourceGuard = {}
 
 local function defaultCleanupOptions(options)
@@ -24384,6 +25264,245 @@ function ResourceGuard.create(options)
 end
 
 return ResourceGuard
+]])
+put("src/ui/elements/factory/section-factory.lua", [[local SectionFactory = {}
+
+function SectionFactory.createSection(context, sectionName)
+	context = type(context) == "table" and context or {}
+	local self = context.self
+	local TabPage = context.TabPage
+	local addExtendedAPI = context.addExtendedAPI
+	local getSectionSpacingDone = context.getSectionSpacingDone or function()
+		return false
+	end
+	local setSectionSpacingDone = context.setSectionSpacingDone or function() end
+	local setCurrentImplicitSection = context.setCurrentImplicitSection or function() end
+
+	if type(self) ~= "table" or typeof(TabPage) ~= "Instance" then
+		return nil
+	end
+
+	setCurrentImplicitSection(nil)
+
+	local sectionTitle = tostring(sectionName or "Section")
+	local sectionValue = {}
+
+	if getSectionSpacingDone() then
+		local sectionSpace = self.Elements.Template.SectionSpacing:Clone()
+		sectionSpace.Visible = true
+		sectionSpace.Parent = TabPage
+	end
+
+	local section = self.Elements.Template.SectionTitle:Clone()
+	section.Title.Text = sectionTitle
+	section.Visible = true
+	section.Parent = TabPage
+
+	section.Title.TextTransparency = 1
+	self.Animation:Create(section.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), { TextTransparency = 0.4 }):Play()
+
+	function sectionValue:Set(newSection)
+		section.Title.Text = tostring(newSection or "")
+	end
+
+	function sectionValue:Destroy()
+		section:Destroy()
+	end
+
+	addExtendedAPI(sectionValue, sectionTitle, "Section", section)
+	setSectionSpacingDone(true)
+	return sectionValue
+end
+
+function SectionFactory.createCollapsibleSection(context, sectionSettings)
+	context = type(context) == "table" and context or {}
+	local self = context.self
+	local TabPage = context.TabPage
+	local tabPersistenceId = tostring(context.tabPersistenceId or "")
+	local addExtendedAPI = context.addExtendedAPI
+	local getCollapsedSectionsMap = context.getCollapsedSectionsMap or function()
+		return {}
+	end
+	local persistCollapsedState = context.persistCollapsedState or function() end
+	local getCurrentImplicitSection = context.getCurrentImplicitSection or function()
+		return nil
+	end
+	local setCurrentImplicitSection = context.setCurrentImplicitSection or function() end
+	local tabSections = type(context.tabSections) == "table" and context.tabSections or {}
+	local tabElements = type(context.tabElements) == "table" and context.tabElements or {}
+	if type(self) ~= "table" or typeof(TabPage) ~= "Instance" then
+		return nil
+	end
+
+	local settingsValue = sectionSettings
+	if type(settingsValue) == "string" then
+		settingsValue = { Name = settingsValue }
+	end
+	settingsValue = settingsValue or {}
+	local sectionName = tostring(settingsValue.Name or settingsValue.Title or "Section")
+	local sectionId = tostring(settingsValue.Id or sectionName)
+	local sectionKey = tostring(tabPersistenceId) .. "::" .. sectionId
+	local persistState = settingsValue.PersistState ~= false
+	local implicitScope = settingsValue.ImplicitScope ~= false
+
+	local collapsedMap = getCollapsedSectionsMap()
+	local initialCollapsed = settingsValue.Collapsed == true
+	if persistState and type(collapsedMap[sectionKey]) == "boolean" then
+		initialCollapsed = collapsedMap[sectionKey]
+	end
+
+	local root = Instance.new("Frame")
+	root.Name = "CollapsibleSection"
+	root.Size = UDim2.new(1, -10, 0, 28)
+	root.AutomaticSize = Enum.AutomaticSize.Y
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Visible = true
+	root.Parent = TabPage
+
+	local rootList = Instance.new("UIListLayout")
+	rootList.SortOrder = Enum.SortOrder.LayoutOrder
+	rootList.Padding = UDim.new(0, 6)
+	rootList.Parent = root
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.Size = UDim2.new(1, 0, 0, 26)
+	header.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+	header.BorderSizePixel = 0
+	header.Parent = root
+
+	local headerCorner = Instance.new("UICorner")
+	headerCorner.CornerRadius = UDim.new(0, 6)
+	headerCorner.Parent = header
+
+	local headerStroke = Instance.new("UIStroke")
+	headerStroke.Color = self.getSelectedTheme().SecondaryElementStroke
+	headerStroke.Parent = header
+
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Position = UDim2.new(0, 10, 0, 0)
+	titleLabel.Size = UDim2.new(1, -38, 1, 0)
+	titleLabel.Font = Enum.Font.GothamSemibold
+	titleLabel.TextSize = 13
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	titleLabel.TextColor3 = self.getSelectedTheme().TextColor
+	titleLabel.Text = sectionName
+	titleLabel.Parent = header
+
+	local chevron = Instance.new("TextLabel")
+	chevron.BackgroundTransparency = 1
+	chevron.AnchorPoint = Vector2.new(1, 0.5)
+	chevron.Position = UDim2.new(1, -10, 0.5, 0)
+	chevron.Size = UDim2.new(0, 16, 0, 16)
+	chevron.Font = Enum.Font.GothamBold
+	chevron.TextSize = 15
+	chevron.TextColor3 = self.getSelectedTheme().SectionChevron or self.getSelectedTheme().TextColor
+	chevron.Text = "v"
+	chevron.Parent = header
+
+	local interact = Instance.new("TextButton")
+	interact.BackgroundTransparency = 1
+	interact.Size = UDim2.new(1, 0, 1, 0)
+	interact.Text = ""
+	interact.Parent = header
+
+	local content = Instance.new("Frame")
+	content.Name = "Content"
+	content.BackgroundTransparency = 1
+	content.BorderSizePixel = 0
+	content.Size = UDim2.new(1, 0, 0, 0)
+	content.AutomaticSize = Enum.AutomaticSize.Y
+	content.Parent = root
+
+	local contentLayout = Instance.new("UIListLayout")
+	contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	contentLayout.Padding = UDim.new(0, 6)
+	contentLayout.Parent = content
+
+	local sectionRecord = {
+		Key = sectionKey,
+		Root = root,
+		Header = header,
+		ContentFrame = content,
+		Collapsed = false,
+		ImplicitScope = implicitScope
+	}
+
+	local sectionValue = {
+		__SectionContentFrame = content,
+		__SectionRecord = sectionRecord
+	}
+
+	local function applyCollapsedState(nextCollapsed, persist)
+		sectionRecord.Collapsed = nextCollapsed == true
+		content.Visible = not sectionRecord.Collapsed
+		chevron.Text = sectionRecord.Collapsed and ">" or "v"
+		if persist ~= false and persistState then
+			persistCollapsedState(sectionKey, sectionRecord.Collapsed)
+		end
+	end
+
+	function sectionValue:Set(newName)
+		sectionName = tostring(newName or sectionName)
+		titleLabel.Text = sectionName
+	end
+
+	function sectionValue:Collapse()
+		applyCollapsedState(true, true)
+	end
+
+	function sectionValue:Expand()
+		applyCollapsedState(false, true)
+	end
+
+	function sectionValue:Toggle()
+		applyCollapsedState(not sectionRecord.Collapsed, true)
+	end
+
+	function sectionValue:IsCollapsed()
+		return sectionRecord.Collapsed == true
+	end
+
+	function sectionValue:Destroy()
+		if getCurrentImplicitSection() == sectionRecord then
+			setCurrentImplicitSection(nil)
+		end
+		local snapshot = {}
+		for _, tracked in ipairs(tabElements) do
+			snapshot[#snapshot + 1] = tracked
+		end
+		for _, tracked in ipairs(snapshot) do
+			if tracked.GuiObject and tracked.GuiObject:IsDescendantOf(content) and tracked.Object and type(tracked.Object.Destroy) == "function" then
+				tracked.Object:Destroy()
+			end
+		end
+		root:Destroy()
+	end
+
+	interact.MouseButton1Click:Connect(function()
+		sectionValue:Toggle()
+	end)
+
+	self.Rayfield.Main:GetPropertyChangedSignal("BackgroundColor3"):Connect(function()
+		if not root.Parent then
+			return
+		end
+		header.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+		headerStroke.Color = self.getSelectedTheme().SecondaryElementStroke
+		titleLabel.TextColor3 = self.getSelectedTheme().TextColor
+		chevron.TextColor3 = self.getSelectedTheme().SectionChevron or self.getSelectedTheme().TextColor
+	end)
+
+	applyCollapsedState(initialCollapsed, false)
+	setCurrentImplicitSection(implicitScope and sectionRecord or nil)
+	table.insert(tabSections, sectionRecord)
+	addExtendedAPI(sectionValue, sectionName, "CollapsibleSection", root)
+	return sectionValue
+end
+
+return SectionFactory
 ]])
 put("src/ui/elements/factory/slider-factory.lua", [[local SliderFactory = {}
 
@@ -26444,6 +27563,6 @@ return WindowUi]])
 
 return {
 	name = BUNDLE_NAME,
-	count = 120,
+	count = 128,
 	bundle = bundle
 }

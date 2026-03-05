@@ -1104,6 +1104,38 @@ if type(tabAdvanced.CreateLogConsole) == "function" then
 	sampleLog("info", "Advanced elements tab initialized.")
 end
 
+tabCore:CreateButton({
+    Name = "Trigger Notification",
+    Callback = function()
+        Rayfield:Notify({
+            Title = "Showcase Notification",
+            Content = "This is a standard notification from the showcase script.",
+            Duration = 3,
+            Image = 4483362458,
+            Actions = {
+                Ignore = {
+                    Name = "Okay!",
+                    Callback = function()
+                        print("The user tapped Okay!")
+                    end
+                },
+            },
+        })
+    end,
+})
+
+local elContextLabel = tabCore:CreateLabel("Right Click Me!")
+
+-- Some elements support context menus or right click
+-- Add tooltips
+tabAdvanced:CreateButton({
+    Name = "Hover over me for Tooltip!",
+    Tooltip = "This is an example tooltip that appears when observing the element.",
+    Callback = function()
+        print("Tooltip button clicked!")
+    end
+})
+
 -- Settings tab
 local themeNames = sortedThemeNames(Rayfield)
 tabSettings:CreateDropdown({
@@ -1459,6 +1491,7 @@ local function runShowcaseChecks()
 			and type(Rayfield.RegisterHubMetadata) == "function"
 			and type(Rayfield.OpenLiveThemeEditor) == "function"
 			and type(Rayfield.ExportLiveThemeDraftLua) == "function"
+			and type(Rayfield.Notify) == "function"
 	end)
 
 	runCheck("DataGrid API available (if supported)", function()

@@ -145,6 +145,21 @@ local CONFIG = {
 	}
 }
 
+local function logInfo(...)
+	print("[Rayfield]", ...)
+end
+
+local function logWarn(message)
+	warn("[Rayfield] " .. tostring(message))
+end
+
+local function logBanner(title)
+	print("")
+	print("[Rayfield] ========================================")
+	print("[Rayfield] " .. tostring(title))
+	print("[Rayfield] ========================================")
+end
+
 -- ============================================
 -- CACHE SYSTEM
 -- ============================================
@@ -153,7 +168,7 @@ _G.RayfieldCache = _G.RayfieldCache or {}
 
 local function getCached(key)
 	if CONFIG.CACHE_ENABLED and _G.RayfieldCache[key] then
-		print("📦 [Rayfield] Using cached:", key)
+		logInfo("Using cached module:", key)
 		return _G.RayfieldCache[key]
 	end
 	return nil
@@ -197,30 +212,27 @@ end
 local function loadModule(name, url)
 	local cacheKey = getCacheKey(name, url)
 
-	-- Check cache
 	local cached = getCached(cacheKey)
 	if cached then
 		if isCachedModuleUsable(name, cached) then
 			return cached
 		end
 		_G.RayfieldCache[cacheKey] = nil
-		print("♻️ [Rayfield] Cache invalidated:", cacheKey)
+		logInfo("Cache invalidated:", cacheKey)
 	end
-	
-	print("⬇️ [Rayfield] Loading:", name)
-	
+
+	logInfo("Loading module:", name)
+
 	local success, result = pcall(function()
 		return ApiClient.fetchAndExecute(url)
 	end)
-	
+
 	if not success then
-		error("❌ Failed to load " .. name .. ": " .. tostring(result))
+		error("[Rayfield] Failed to load " .. name .. ": " .. tostring(result))
 	end
-	
-	-- Cache result
+
 	setCache(cacheKey, result)
-	
-	print("✅ [Rayfield] Loaded:", name)
+	logInfo("Loaded module:", name)
 	return result
 end
 
@@ -378,7 +390,7 @@ local function stopAutoReloadWatcher(silent)
 	AutoReloadState.running = false
 	AutoReloadState.token = (AutoReloadState.token or 0) + 1
 	if not silent then
-		print("🛑 [Rayfield] Auto reload stopped")
+		logInfo("Auto reload stopped")
 	end
 end
 
@@ -411,9 +423,9 @@ local function startAutoReloadWatcher()
 	local initialCommit, initialError = fetchLatestCommit()
 	if initialCommit then
 		AutoReloadState.lastCommit = initialCommit
-		print("🔄 [Rayfield] Auto reload watching " .. repo .. "@" .. branch .. " (" .. shortCommit(initialCommit) .. ")")
+		logInfo("Auto reload watching " .. repo .. "@" .. branch .. " (" .. shortCommit(initialCommit) .. ")")
 	elseif initialError then
-		warn("⚠️ [Rayfield] Auto reload initial check failed: " .. tostring(initialError))
+		logWarn("Auto reload initial check failed: " .. tostring(initialError))
 	end
 
 	task.spawn(function()
@@ -427,18 +439,18 @@ local function startAutoReloadWatcher()
 			if latestCommit then
 				local knownCommit = AutoReloadState.lastCommit
 				if knownCommit and knownCommit ~= latestCommit then
-					print("🆕 [Rayfield] New commit detected: " .. shortCommit(knownCommit) .. " -> " .. shortCommit(latestCommit))
+					logInfo("New commit detected: " .. shortCommit(knownCommit) .. " -> " .. shortCommit(latestCommit))
 					local okReload, reloadError = reloadForNewCommit(latestCommit)
 					if okReload then
-						print("♻️ [Rayfield] UI reloaded from latest commit (" .. shortCommit(latestCommit) .. ")")
+						logInfo("UI reloaded from latest commit (" .. shortCommit(latestCommit) .. ")")
 					else
-						warn("⚠️ [Rayfield] Auto reload failed: " .. tostring(reloadError))
+						logWarn("Auto reload failed: " .. tostring(reloadError))
 					end
 				elseif not knownCommit then
 					AutoReloadState.lastCommit = latestCommit
 				end
 			elseif err then
-				warn("⚠️ [Rayfield] Auto reload check failed: " .. tostring(err))
+				logWarn("Auto reload check failed: " .. tostring(err))
 			end
 		end
 	end)
@@ -450,7 +462,7 @@ local function startAutoReloadWatcherAsync(errorPrefix)
 	task.spawn(function()
 		local okStart, errStart = startAutoReloadWatcher()
 		if not okStart and errStart then
-			warn((errorPrefix or "⚠️ [Rayfield] Auto reload start failed: ") .. tostring(errStart))
+			logWarn((errorPrefix or "Auto reload start failed: ") .. tostring(errStart))
 		end
 	end)
 end
@@ -460,15 +472,9 @@ end
 -- ============================================
 
 function AllInOne.loadBase()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🚀 Rayfield All-in-One: Base Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Base Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
-	
-	print("✅ Ready: Base UI")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+	logInfo("Ready: Base UI")
 	return {
 		Rayfield = Rayfield,
 		mode = "base"
@@ -476,19 +482,14 @@ function AllInOne.loadBase()
 end
 
 function AllInOne.loadEnhanced()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🛡️ Rayfield All-in-One: Enhanced Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Enhanced Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
 	local Enhancement = loadModule("enhanced", getModuleUrl("enhanced"))
-	
-	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler = 
+
+	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 		Enhancement.createEnhancedRayfield(Rayfield)
-	
-	print("✅ Ready: Base + Enhanced V2")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+
+	logInfo("Ready: Base + Enhanced V2")
 	return {
 		Rayfield = EnhancedRayfield,
 		ErrorManager = ErrorMgr,
@@ -502,20 +503,15 @@ function AllInOne.loadEnhanced()
 end
 
 function AllInOne.loadAdvanced()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("⚡ Rayfield All-in-One: Advanced Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Advanced Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
 	local Enhancement = loadModule("enhanced", getModuleUrl("enhanced"))
 	local Advanced = loadModule("advanced", getModuleUrl("advanced"))
-	
-	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler = 
+
+	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 		Enhancement.createEnhancedRayfield(Rayfield)
-	
-	print("✅ Ready: Full Stack (Base + Enhanced + Advanced)")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+
+	logInfo("Ready: Full Stack (Base + Enhanced + Advanced)")
 	return {
 		Rayfield = EnhancedRayfield,
 		ErrorManager = ErrorMgr,
@@ -597,7 +593,7 @@ function AllInOne.quickSetup(config)
 	AllInOne.currentUI = UI
 
 	if CONFIG.AUTO_RELOAD_ENABLED and not AutoReloadState.running then
-		startAutoReloadWatcherAsync("⚠️ [Rayfield] Auto reload is enabled but failed to start: ")
+		startAutoReloadWatcherAsync("Auto reload is enabled but failed to start: ")
 	end
 	
 	return UI
@@ -611,21 +607,21 @@ function AllInOne.configure(config)
 	if config.baseUrl then
 		CONFIG.BASE_URL = config.baseUrl
 	end
-	
+
 	if config.usePastebin ~= nil then
 		CONFIG.USE_PASTEBIN = config.usePastebin
 	end
-	
+
 	if config.pastebinCodes then
 		for k, v in pairs(config.pastebinCodes) do
 			CONFIG.PASTEBIN_CODES[k] = v
 		end
 	end
-	
+
 	if config.cacheEnabled ~= nil then
 		CONFIG.CACHE_ENABLED = config.cacheEnabled
 	end
-	
+
 	if config.autoMode then
 		CONFIG.AUTO_MODE = config.autoMode
 	end
@@ -639,7 +635,7 @@ function AllInOne.configure(config)
 		if mode == "loader" or mode == "ui" or mode == "none" then
 			CONFIG.AUTO_EXECUTE_RETURN = mode
 		else
-			warn("⚠️ [Rayfield] Invalid autoExecuteReturn: " .. tostring(config.autoExecuteReturn) .. " (use 'loader', 'ui', or 'none')")
+			logWarn("Invalid autoExecuteReturn: " .. tostring(config.autoExecuteReturn) .. " (use 'loader', 'ui', or 'none')")
 		end
 	end
 
@@ -656,7 +652,7 @@ function AllInOne.configure(config)
 		if interval and interval > 0 then
 			CONFIG.AUTO_RELOAD_INTERVAL = interval
 		else
-			warn("⚠️ [Rayfield] Invalid autoReloadInterval: " .. tostring(config.autoReloadInterval))
+			logWarn("Invalid autoReloadInterval: " .. tostring(config.autoReloadInterval))
 		end
 	end
 
@@ -676,7 +672,7 @@ function AllInOne.configure(config)
 		if type(config.autoReloadCallback) == "function" then
 			AutoReloadState.onReload = config.autoReloadCallback
 		else
-			warn("⚠️ [Rayfield] autoReloadCallback must be a function")
+			logWarn("autoReloadCallback must be a function")
 		end
 	end
 
@@ -686,13 +682,13 @@ function AllInOne.configure(config)
 		end
 		local okStart, errStart = startAutoReloadWatcher()
 		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload start failed: " .. tostring(errStart))
+			logWarn("Auto reload start failed: " .. tostring(errStart))
 		end
 	else
 		stopAutoReloadWatcher(true)
 	end
-	
-	print("✅ [Rayfield] Configuration updated")
+
+	logInfo("Configuration updated")
 end
 
 -- ============================================
@@ -704,7 +700,7 @@ function AllInOne.clearCache()
 	if type(_G.__RayfieldApiModuleCache) == "table" then
 		table.clear(_G.__RayfieldApiModuleCache)
 	end
-	print("🗑️ [Rayfield] Cache cleared")
+	logInfo("Cache cleared")
 end
 
 function AllInOne.checkForUpdates()
@@ -752,31 +748,30 @@ function AllInOne.setAutoReloadCallback(callback)
 end
 
 function AllInOne.info()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📦 Rayfield All-in-One Loader")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("Version: 2.1.0")
-	print("Cache Enabled:", CONFIG.CACHE_ENABLED)
-	print("Auto Mode:", CONFIG.AUTO_MODE)
-	print("Auto Execute:", CONFIG.AUTO_EXECUTE)
-	print("Auto Execute Return:", CONFIG.AUTO_EXECUTE_RETURN)
-	print("Auto Reload:", CONFIG.AUTO_RELOAD_ENABLED)
-	print("Auto Reload Interval:", CONFIG.AUTO_RELOAD_INTERVAL)
-	print("Auto Reload Repo:", CONFIG.AUTO_RELOAD_REPO .. "@" .. CONFIG.AUTO_RELOAD_BRANCH)
-	print("Last Seen Commit:", AutoReloadState.lastCommit and shortCommit(AutoReloadState.lastCommit) or "n/a")
-	print("\nCached Modules:")
+	logBanner("All-in-One Loader")
+	logInfo("Version:", "2.1.0")
+	logInfo("Cache Enabled:", CONFIG.CACHE_ENABLED)
+	logInfo("Auto Mode:", CONFIG.AUTO_MODE)
+	logInfo("Auto Execute:", CONFIG.AUTO_EXECUTE)
+	logInfo("Auto Execute Return:", CONFIG.AUTO_EXECUTE_RETURN)
+	logInfo("Auto Reload:", CONFIG.AUTO_RELOAD_ENABLED)
+	logInfo("Auto Reload Interval:", CONFIG.AUTO_RELOAD_INTERVAL)
+	logInfo("Auto Reload Repo:", CONFIG.AUTO_RELOAD_REPO .. "@" .. CONFIG.AUTO_RELOAD_BRANCH)
+	logInfo("Last Seen Commit:", AutoReloadState.lastCommit and shortCommit(AutoReloadState.lastCommit) or "n/a")
+
+	logInfo("Cached Modules:")
 	for name, _ in pairs(_G.RayfieldCache) do
-		print("  ✅", name)
+		logInfo(" -", name)
 	end
-	print("\nAvailable Modes:")
-	print("  • loadBase() - Base UI only")
-	print("  • loadEnhanced() - Base + Enhanced V2")
-	print("  • loadAdvanced() - Full Stack")
-	print("  • loadAll() - Same as loadAdvanced()")
-	print("  • quickSetup({mode = 'enhanced'}) - Quick setup")
-	print("  • startAutoReload() / stopAutoReload()")
-	print("  • checkForUpdates() / reloadNow()")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+	logInfo("Available Modes:")
+	logInfo(" - loadBase() - Base UI only")
+	logInfo(" - loadEnhanced() - Base + Enhanced V2")
+	logInfo(" - loadAdvanced() - Full Stack")
+	logInfo(" - loadAll() - Same as loadAdvanced()")
+	logInfo(" - quickSetup({mode = 'enhanced'}) - Quick setup")
+	logInfo(" - startAutoReload() / stopAutoReload()")
+	logInfo(" - checkForUpdates() / reloadNow()")
 end
 
 -- ============================================
@@ -789,13 +784,9 @@ end
 if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	_G.RayfieldAllInOneLoaded = true
 
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🚀 Rayfield All-in-One Auto-Loading")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("Mode:", CONFIG.AUTO_MODE)
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	logBanner("All-in-One Auto-Loading")
+	logInfo("Mode:", CONFIG.AUTO_MODE)
 
-	-- Auto load theo config
 	local UI = AllInOne.quickSetup({
 		mode = CONFIG.AUTO_MODE,
 		errorThreshold = CONFIG.DEFAULT_SETTINGS.errorThreshold,
@@ -803,16 +794,14 @@ if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 		autoCleanup = CONFIG.DEFAULT_SETTINGS.autoCleanup
 	})
 
-	-- Export to global
 	_G.Rayfield = UI.Rayfield
 	_G.RayfieldUI = UI
 	AllInOne.currentUI = UI
 
-	print("✅ [Rayfield] Auto-loaded successfully!")
-	print("Access via: _G.Rayfield or _G.RayfieldUI")
-	print("Return mode:", CONFIG.AUTO_EXECUTE_RETURN, "\n")
+	logInfo("Auto-loaded successfully")
+	logInfo("Access via: _G.Rayfield or _G.RayfieldUI")
+	logInfo("Return mode:", CONFIG.AUTO_EXECUTE_RETURN)
 
-	-- Return lightweight loader by default to avoid executor freeze on large return objects
 	if CONFIG.AUTO_EXECUTE_RETURN == "ui" then
 		return UI
 	elseif CONFIG.AUTO_EXECUTE_RETURN == "none" then
@@ -823,3 +812,4 @@ end
 
 -- Return loader table on subsequent executions (allows manual control)
 return AllInOne
+

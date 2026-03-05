@@ -882,7 +882,10 @@ return {
 	httpLoaderService = entry("src/services/http-loader.lua", nil, "http-loader-service"),
 	analyticsReporterService = entry("src/services/analytics-reporter.lua", nil, "analytics-reporter-service"),
 	analyticsProviderService = entry("src/services/analytics/analytics-provider.lua", nil, "analytics-provider-service"),
+	analyticsManagerService = entry("src/services/analytics-manager.lua", nil, "analytics-manager-service"),
+	loaderHelpersService = entry("src/services/loader-helpers.lua", nil, "loader-helpers-service"),
 	runtimeLoaderHelpersService = entry("src/services/runtime-loader-helpers.lua", nil, "runtime-loader-helpers-service"),
+	compatibilityInitService = entry("src/services/compatibility-init.lua", nil, "compatibility-init-service"),
 	tabSplit = entry("src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua", "rayfield-tab-split"),
 	miniWindow = entry("src/feature/mini-window/init.lua", "feature/mini-window-system.lua", "mini-window-system"),
 	enhanced = entry("src/feature/enhanced/init.lua", "feature/rayfield-enhanced.lua", "rayfield-enhanced"),
@@ -912,6 +915,11 @@ return {
 	runtimeLocalizationService = entry("src/core/runtime/localization-service.lua", nil, "runtime-localization-service"),
 	runtimeUIStringRegistry = entry("src/core/runtime/ui-string-registry.lua", nil, "runtime-ui-string-registry"),
 	runtimeShareCodeService = entry("src/core/runtime/share-code-service.lua", nil, "runtime-share-code-service"),
+	entryDiscordInviteService = entry("src/entry/services/discord-invite.lua", nil, "entry-discord-invite-service"),
+	entryKeySystemService = entry("src/entry/services/key-system.lua", nil, "entry-key-system-service"),
+	runtimeModuleLoader = entry("src/core/runtime/module-loader.lua", nil, "runtime-module-loader"),
+	runtimeFallbackModules = entry("src/core/runtime/fallback-modules.lua", nil, "runtime-fallback-modules"),
+	runtimeModuleRegistryLoader = entry("src/core/runtime/module-registry-loader.lua", nil, "runtime-module-registry-loader"),
 	runtimePerformanceHUDService = entry("src/core/runtime/performance-hud-service.lua", nil, "runtime-performance-hud-service"),
 	runtimeBindingsUX = entry("src/core/runtime/bindings/ux.lua", nil, "runtime-bindings-ux"),
 	runtimeBindingsAudio = entry("src/core/runtime/bindings/audio.lua", nil, "runtime-bindings-audio"),
@@ -942,6 +950,11 @@ return {
 	elementsWidgetAPIInjector = entry("src/ui/elements/factory/widget-api-injector.lua", nil, "elements-widget-api-injector"),
 	elementsMathUtils = entry("src/ui/elements/factory/math-utils.lua", nil, "elements-math-utils"),
 	elementsResourceGuard = entry("src/ui/elements/factory/resource-guard.lua", nil, "elements-resource-guard"),
+	elementsSectionFactory = entry("src/ui/elements/factory/section-factory.lua", nil, "elements-section-factory"),
+	elementsControlRegistry = entry("src/ui/elements/factory/registry/controls.lua", nil, "elements-control-registry"),
+	elementsLoggingProvider = entry("src/ui/elements/factory/providers/logging.lua", nil, "elements-logging-provider"),
+	elementsTooltipProvider = entry("src/ui/elements/factory/providers/tooltips.lua", nil, "elements-tooltip-provider"),
+	elementsComponentWidgetsFactory = entry("src/ui/elements/factory/component-widgets-factory.lua", nil, "elements-component-widgets-factory"),
 	elementsRangeBarsFactory = entry("src/ui/elements/factory/range-bars-factory.lua", nil, "elements-range-bars-factory"),
 	elementsFeedbackWidgetsFactory = entry("src/ui/elements/factory/feedback-widgets-factory.lua", nil, "elements-feedback-widgets-factory"),
 	elementsGridBuilder = entry("src/ui/elements/factory/widget-builders/grid-builder.lua", nil, "elements-grid-builder"),
@@ -4621,7 +4634,16 @@ function RuntimeBootstrapper.create(options)
 	local AnalyticsProviderServiceLib = loadService(serviceLoadContext, "src/services/analytics/analytics-provider.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
+	local AnalyticsManagerServiceLib = loadService(serviceLoadContext, "src/services/analytics-manager.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
 	local RuntimeLoaderHelpersServiceLib = loadService(serviceLoadContext, "src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+	local LoaderHelpersFallbackServiceLib = loadService(serviceLoadContext, "src/services/loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.createFallback) == "function"
+	end)
+	local CompatibilityInitServiceLib = loadService(serviceLoadContext, "src/services/compatibility-init.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
 
@@ -4740,7 +4762,10 @@ function RuntimeBootstrapper.create(options)
 		HttpLoaderServiceLib = HttpLoaderServiceLib,
 		AnalyticsReporterServiceLib = AnalyticsReporterServiceLib,
 		AnalyticsProviderServiceLib = AnalyticsProviderServiceLib,
+		AnalyticsManagerServiceLib = AnalyticsManagerServiceLib,
 		RuntimeLoaderHelpersServiceLib = RuntimeLoaderHelpersServiceLib,
+		LoaderHelpersFallbackServiceLib = LoaderHelpersFallbackServiceLib,
+		CompatibilityInitServiceLib = CompatibilityInitServiceLib,
 		ExecPolicy = ExecPolicy,
 		HttpLoaderService = HttpLoaderService,
 		loadWithTimeout = loadWithTimeout,
@@ -6360,6 +6385,151 @@ end
 
 return ExperienceBindings
 ]])
+put("src/core/runtime/fallback-modules.lua", [[local RuntimeFallbackModules = {}
+
+RuntimeFallbackModules.FallbackElementSyncModule = {
+	init = function()
+		return nil
+	end
+}
+
+RuntimeFallbackModules.FallbackOwnershipTrackerModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			createScope = function(scopeId)
+				return tostring(scopeId or "")
+			end,
+			makeScopeId = function(kind, id)
+				return tostring(kind or "scope") .. ":" .. tostring(id or "")
+			end,
+			claimInstance = noopReturnFalse,
+			trackConnection = noopReturnFalse,
+			trackTask = noopReturnFalse,
+			trackCleanup = noopReturnFalse,
+			cleanupScope = noopReturnFalse,
+			cleanupByInstance = noopReturnFalse,
+			cleanupSession = noopReturnFalse,
+			getStats = function()
+				return {
+					scopes = 0,
+					instances = 0,
+					connections = 0,
+					tasks = 0,
+					cleanups = 0
+				}
+			end,
+			getSignature = noopReturnNil
+		}
+	end
+}
+
+RuntimeFallbackModules.FallbackDragModule = {
+	init = function()
+		local function noop() end
+		return {
+			makeElementDetachable = function()
+				return nil
+			end,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function()
+				return {}
+			end,
+			applyLayoutSnapshot = function()
+				return false
+			end
+		}
+	end
+}
+
+RuntimeFallbackModules.FallbackTabSplitModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerTab = noop,
+			unregisterTab = noop,
+			splitTab = function()
+				return false
+			end,
+			dockTab = function()
+				return false
+			end,
+			layoutPanels = noop,
+			syncHidden = noop,
+			syncMinimized = noop,
+			setLayoutDirtyCallback = noop,
+			getLayoutSnapshot = function()
+				return {}
+			end,
+			applyLayoutSnapshot = function()
+				return false
+			end,
+			destroy = noop
+		}
+	end
+}
+
+RuntimeFallbackModules.FallbackLayoutPersistenceModule = {
+	init = function()
+		local function noop() end
+		return {
+			registerProvider = noop,
+			unregisterProvider = noop,
+			getLayoutSnapshot = function()
+				return nil
+			end,
+			applyLayoutSnapshot = function()
+				return false
+			end,
+			markDirty = noop,
+			flush = noop,
+			isApplying = function()
+				return false
+			end,
+			isDirty = function()
+				return false
+			end
+		}
+	end
+}
+
+RuntimeFallbackModules.FallbackViewportVirtualizationModule = {
+	init = function()
+		local function noopReturnFalse()
+			return false
+		end
+		local function noopReturnNil()
+			return nil
+		end
+		return {
+			registerHost = noopReturnFalse,
+			unregisterHost = noopReturnFalse,
+			refreshHost = noopReturnFalse,
+			setHostSuppressed = noopReturnFalse,
+			registerElement = noopReturnNil,
+			unregisterElement = noopReturnFalse,
+			moveElementToHost = noopReturnFalse,
+			setElementBusy = noopReturnFalse,
+			notifyElementHostChanged = noopReturnFalse,
+			getStats = function()
+				return {
+					hosts = 0,
+					elements = 0,
+					sleeping = 0
+				}
+			end,
+			destroy = function() end
+		}
+	end
+}
+
+return RuntimeFallbackModules
+]])
 put("src/core/runtime/localization-service.lua", [[local LocalizationService = {}
 
 local FILE_VERSION = 1
@@ -7389,6 +7559,416 @@ function MacroRecorderService.create(ctx)
 end
 
 return MacroRecorderService
+]])
+put("src/core/runtime/module-loader.lua", [[local RuntimeModuleLoader = {}
+
+local function createResolver(optionalModuleWithContract, state, key, validatorFn, hint)
+	return function()
+		local current = state[key]
+		if validatorFn(current) then
+			return current
+		end
+		state[key] = optionalModuleWithContract(key, validatorFn, hint)
+		return state[key]
+	end
+end
+
+function RuntimeModuleLoader.create(options)
+	options = type(options) == "table" and options or {}
+	local optionalModuleWithContract = type(options.optionalModuleWithContract) == "function" and options.optionalModuleWithContract or function()
+		return nil
+	end
+
+	local state = {}
+	local api = {}
+
+	api.resolveDataGridFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsDataGridFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"DataGrid elements will be unavailable."
+	)
+
+	api.resolveChartFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsChartFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Chart elements will be unavailable."
+	)
+
+	api.resolveButtonFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsButtonFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Button elements will use built-in fallback."
+	)
+
+	api.resolveInputFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsInputFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Input elements will use built-in fallback."
+	)
+
+	api.resolveDropdownFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsDropdownFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Dropdown elements will use built-in fallback."
+	)
+
+	api.resolveKeybindFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsKeybindFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Keybind elements will use built-in fallback."
+	)
+
+	api.resolveToggleFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsToggleFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Toggle elements will use built-in fallback."
+	)
+
+	api.resolveSliderFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsSliderFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Slider elements will use built-in fallback."
+	)
+
+	api.resolveTabManagerModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsTabManager",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tab manager will use built-in fallback."
+	)
+
+	api.resolveHoverProviderModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsHoverProvider",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Hover provider will use built-in fallback."
+	)
+
+	api.resolveTooltipEngineModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsTooltipEngine",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tooltip engine will use built-in fallback."
+	)
+
+	api.resolveWidgetAPIInjectorModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsWidgetAPIInjector",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.inject) == "function"
+		end,
+		"Widget injector will use built-in fallback."
+	)
+
+	api.resolveMathUtilsModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsMathUtils",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.clampNumber) == "function"
+		end,
+		"Math utility helpers will use built-in fallback."
+	)
+
+	api.resolveResourceGuardModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsResourceGuard",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Resource guard will use built-in fallback."
+	)
+
+	api.resolveSectionFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsSectionFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createSection) == "function"
+				and type(moduleValue.createCollapsibleSection) == "function"
+		end,
+		"Section factory will use built-in fallback."
+	)
+
+	api.resolveControlRegistryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsControlRegistry",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Control registry will use built-in fallback."
+	)
+
+	api.resolveLoggingProviderModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsLoggingProvider",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Element logging provider will use built-in fallback."
+	)
+
+	api.resolveTooltipProviderModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsTooltipProvider",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tooltip provider will use built-in fallback."
+	)
+
+	api.resolveGridBuilderModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsGridBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Grid builder will use direct factory fallback."
+	)
+
+	api.resolveChartBuilderModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsChartBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Chart builder will use direct factory fallback."
+	)
+
+	api.resolveRangeBarsFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsRangeBarsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createTrackBar) == "function"
+				and type(moduleValue.createStatusBar) == "function"
+		end,
+		"Range bar widgets will be unavailable."
+	)
+
+	api.resolveFeedbackWidgetsFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsFeedbackWidgetsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createLogConsole) == "function"
+				and type(moduleValue.createLoadingSpinner) == "function"
+				and type(moduleValue.createLoadingBar) == "function"
+		end,
+		"Feedback widgets will be unavailable."
+	)
+
+	api.resolveComponentWidgetsFactoryModule = createResolver(
+		optionalModuleWithContract,
+		state,
+		"elementsComponentWidgetsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createColorPicker) == "function"
+				and type(moduleValue.createNumberStepper) == "function"
+				and type(moduleValue.createConfirmButton) == "function"
+				and type(moduleValue.createImage) == "function"
+				and type(moduleValue.createGallery) == "function"
+				and type(moduleValue.createDivider) == "function"
+				and type(moduleValue.createLabel) == "function"
+				and type(moduleValue.createParagraph) == "function"
+		end,
+		"Component widgets will use built-in fallback."
+	)
+
+	function api.getLoaded(key)
+		return state[tostring(key or "")]
+	end
+
+	return api
+end
+
+return RuntimeModuleLoader
+]])
+put("src/core/runtime/module-registry-loader.lua", [[local RuntimeModuleRegistryLoader = {}
+
+local MODULE_SPECS = {
+	{ field = "ThemeModule", module = "theme", mode = "required" },
+	{ field = "ThemePresetsModuleLib", module = "themePresets", mode = "required" },
+	{ field = "ThemeDefaultThemesModuleLib", module = "themeDefaultThemes", mode = "required" },
+	{ field = "UtilitiesModuleLib", module = "utilities", mode = "required" },
+	{ field = "SettingsModuleLib", module = "settings", mode = "required" },
+	{ field = "SettingsStoreModuleLib", module = "settingsStore", mode = "required" },
+	{ field = "SettingsPersistenceModuleLib", module = "settingsPersistence", mode = "required" },
+	{ field = "SettingsUIModuleLib", module = "settingsUI", mode = "required" },
+	{ field = "SettingsShareCodeModuleLib", module = "settingsShareCode", mode = "required" },
+	{
+		field = "OwnershipTrackerModuleLib",
+		module = "ownershipTracker",
+		mode = "optional",
+		fallback = "FallbackOwnershipTrackerModule",
+		hint = "Scoped ownership cleanup will run in compatibility mode."
+	},
+	{
+		field = "ElementSyncModuleLib",
+		module = "elementSync",
+		mode = "optional",
+		fallback = "FallbackElementSyncModule",
+		hint = "Element state sync will run in compatibility mode."
+	},
+	{ field = "KeybindSequenceLib", module = "keybindSequence", mode = "required" },
+	{
+		field = "DragModuleLib",
+		module = "drag",
+		mode = "optional",
+		fallback = "FallbackDragModule",
+		hint = "Detach/reorder advanced drag features are disabled for this session."
+	},
+	{ field = "UIStateModuleLib", module = "uiState", mode = "required" },
+	{ field = "UIStateNotificationManagerLib", module = "uiStateNotificationManager", mode = "required" },
+	{ field = "UIStateSearchEngineLib", module = "uiStateSearchEngine", mode = "required" },
+	{ field = "UIStateWindowManagerLib", module = "uiStateWindowManager", mode = "required" },
+	{ field = "ElementsModuleLib", module = "elements", mode = "required" },
+	{ field = "ConfigModuleLib", module = "config", mode = "required" },
+	{ field = "ConfigStorageAdapterModuleLib", module = "configStorageAdapter", mode = "required" },
+	{
+		field = "LayoutPersistenceModuleLib",
+		module = "layoutPersistence",
+		mode = "optional",
+		fallback = "FallbackLayoutPersistenceModule",
+		hint = "Layout persistence is disabled for this session."
+	},
+	{
+		field = "ViewportVirtualizationModuleLib",
+		module = "viewportVirtualization",
+		mode = "optional",
+		fallback = "FallbackViewportVirtualizationModule",
+		hint = "Viewport virtualization is disabled for this session."
+	},
+	{ field = "VirtualizationEngineModuleLib", module = "virtualizationEngine", mode = "required" },
+	{ field = "VirtualHostManagerModuleLib", module = "virtualHostManager", mode = "required" },
+	{
+		field = "TabSplitModuleLib",
+		module = "tabSplit",
+		mode = "optional",
+		fallback = "FallbackTabSplitModule",
+		hint = "Tab split features are disabled for this session."
+	},
+	{ field = "AnimationEngineLib", module = "animationEngine", mode = "required" },
+	{ field = "AnimationPublicLib", module = "animationPublic", mode = "required" },
+	{ field = "AnimationSequenceLib", module = "animationSequence", mode = "required" },
+	{ field = "AnimationUILib", module = "animationUI", mode = "required" },
+	{ field = "AnimationTextLib", module = "animationText", mode = "required" },
+	{ field = "AnimationCleanupLib", module = "animationCleanup", mode = "required" },
+	{ field = "AnimationConstantsLib", module = "animationConstants", mode = "required" },
+	{ field = "AnimationSchedulerLib", module = "animationScheduler", mode = "required" },
+	{ field = "MainShellModuleLib", module = "uiShellMainShell", mode = "required" },
+	{ field = "VisibilityControllerLib", module = "runtimeVisibilityController", mode = "required" },
+	{ field = "ExperienceBindingsLib", module = "runtimeExperienceBindings", mode = "required" },
+	{ field = "RuntimeBindingsUXLib", module = "runtimeBindingsUX", mode = "required" },
+	{ field = "RuntimeBindingsAudioLib", module = "runtimeBindingsAudio", mode = "required" },
+	{ field = "RuntimeBindingsThemeLib", module = "runtimeBindingsTheme", mode = "required" },
+	{ field = "RuntimeBindingsFavoritesLib", module = "runtimeBindingsFavorites", mode = "required" },
+	{ field = "RuntimeBindingsPersistenceLib", module = "runtimeBindingsPersistence", mode = "required" },
+	{ field = "RuntimeBindingsDiagnosticsLib", module = "runtimeBindingsDiagnostics", mode = "required" },
+	{ field = "RuntimeBindingsAutomationLib", module = "runtimeBindingsAutomation", mode = "required" },
+	{ field = "RuntimeBindingsDiscoveryLib", module = "runtimeBindingsDiscovery", mode = "required" },
+	{ field = "RuntimeBindingsAIAssistantLib", module = "runtimeBindingsAIAssistant", mode = "required" },
+	{ field = "RuntimeBindingsCommunicationLib", module = "runtimeBindingsCommunication", mode = "required" },
+	{ field = "RuntimeBindingsLocalizationLib", module = "runtimeBindingsLocalization", mode = "required" },
+	{ field = "RuntimeBindingsUIEventsLib", module = "runtimeBindingsUIEvents", mode = "required" },
+	{ field = "RuntimeBindingsMovementEventsLib", module = "runtimeBindingsMovementEvents", mode = "required" },
+	{ field = "RuntimeBindingsCombatEventsLib", module = "runtimeBindingsCombatEvents", mode = "required" },
+	{ field = "WorkspaceServiceLib", module = "runtimeWorkspaceService", mode = "required" },
+	{ field = "CommandPaletteServiceLib", module = "runtimeCommandPaletteService", mode = "required" },
+	{ field = "CommandPaletteSearchAlgorithmsLib", module = "runtimeCommandPaletteSearchAlgorithms", mode = "required" },
+	{ field = "SmartSearchServiceLib", module = "runtimeSmartSearchService", mode = "required" },
+	{ field = "MultiInstanceBridgeServiceLib", module = "runtimeMultiInstanceBridgeService", mode = "required" },
+	{ field = "AutomationEngineServiceLib", module = "runtimeAutomationEngineService", mode = "required" },
+	{ field = "UsageAnalyticsServiceLib", module = "runtimeUsageAnalyticsService", mode = "required" },
+	{ field = "MacroRecorderServiceLib", module = "runtimeMacroRecorderService", mode = "required" },
+	{ field = "DevExperienceServiceLib", module = "runtimeDevExperienceService", mode = "required" },
+	{ field = "LocalizationServiceLib", module = "runtimeLocalizationService", mode = "required" },
+	{ field = "UIStringRegistryLib", module = "runtimeUIStringRegistry", mode = "required" },
+	{ field = "ShareCodeServiceLib", module = "runtimeShareCodeService", mode = "required" },
+	{ field = "EntryDiscordInviteServiceLib", module = "entryDiscordInviteService", mode = "required" },
+	{ field = "EntryKeySystemServiceLib", module = "entryKeySystemService", mode = "required" },
+	{ field = "RuntimeModuleLoaderLib", module = "runtimeModuleLoader", mode = "required" },
+	{ field = "PerformanceHUDServiceLib", module = "runtimePerformanceHUDService", mode = "required" },
+	{ field = "RuntimeApiLib", module = "runtimeApi", mode = "required" }
+}
+
+function RuntimeModuleRegistryLoader.load(options)
+	options = type(options) == "table" and options or {}
+	local requireModule = type(options.requireModule) == "function" and options.requireModule or nil
+	local optionalModule = type(options.optionalModule) == "function" and options.optionalModule or nil
+	local fallbacks = type(options.fallbacks) == "table" and options.fallbacks or {}
+
+	if not requireModule then
+		error("RuntimeModuleRegistryLoader.load requires requireModule")
+	end
+	if not optionalModule then
+		error("RuntimeModuleRegistryLoader.load requires optionalModule")
+	end
+
+	local modules = {}
+	for _, spec in ipairs(MODULE_SPECS) do
+		if spec.mode == "required" then
+			modules[spec.field] = requireModule(spec.module)
+		else
+			modules[spec.field] = optionalModule(spec.module, fallbacks[spec.fallback], spec.hint)
+		end
+	end
+	return modules
+end
+
+return RuntimeModuleRegistryLoader
 ]])
 put("src/core/runtime/multi-instance-bridge-service.lua", [[local MultiInstanceBridgeService = {}
 
@@ -13161,7 +13741,10 @@ return {
 	httpLoaderService = row("src/services/http-loader.lua"),
 	analyticsReporterService = row("src/services/analytics-reporter.lua"),
 	analyticsProviderService = row("src/services/analytics/analytics-provider.lua"),
+	analyticsManagerService = row("src/services/analytics-manager.lua"),
+	loaderHelpersService = row("src/services/loader-helpers.lua"),
 	runtimeLoaderHelpersService = row("src/services/runtime-loader-helpers.lua"),
+	compatibilityInitService = row("src/services/compatibility-init.lua"),
 	uiState = row("src/core/ui-state.lua", "feature/rayfield-ui-state.lua"),
 	uiStateNotificationManager = row("src/core/ui-state/notification-manager.lua"),
 	uiStateSearchEngine = row("src/core/ui-state/search-engine.lua"),
@@ -13199,6 +13782,11 @@ return {
 	runtimeLocalizationService = row("src/core/runtime/localization-service.lua"),
 	runtimeUIStringRegistry = row("src/core/runtime/ui-string-registry.lua"),
 	runtimeShareCodeService = row("src/core/runtime/share-code-service.lua"),
+	entryDiscordInviteService = row("src/entry/services/discord-invite.lua"),
+	entryKeySystemService = row("src/entry/services/key-system.lua"),
+	runtimeModuleLoader = row("src/core/runtime/module-loader.lua"),
+	runtimeFallbackModules = row("src/core/runtime/fallback-modules.lua"),
+	runtimeModuleRegistryLoader = row("src/core/runtime/module-registry-loader.lua"),
 	runtimePerformanceHUDService = row("src/core/runtime/performance-hud-service.lua"),
 	runtimeBindingsUX = row("src/core/runtime/bindings/ux.lua"),
 	runtimeBindingsAudio = row("src/core/runtime/bindings/audio.lua"),
@@ -13229,6 +13817,11 @@ return {
 	elementsWidgetAPIInjector = row("src/ui/elements/factory/widget-api-injector.lua"),
 	elementsMathUtils = row("src/ui/elements/factory/math-utils.lua"),
 	elementsResourceGuard = row("src/ui/elements/factory/resource-guard.lua"),
+	elementsSectionFactory = row("src/ui/elements/factory/section-factory.lua"),
+	elementsControlRegistry = row("src/ui/elements/factory/registry/controls.lua"),
+	elementsLoggingProvider = row("src/ui/elements/factory/providers/logging.lua"),
+	elementsTooltipProvider = row("src/ui/elements/factory/providers/tooltips.lua"),
+	elementsComponentWidgetsFactory = row("src/ui/elements/factory/component-widgets-factory.lua"),
 	elementsRangeBarsFactory = row("src/ui/elements/factory/range-bars-factory.lua"),
 	elementsFeedbackWidgetsFactory = row("src/ui/elements/factory/feedback-widgets-factory.lua"),
 	elementsGridBuilder = row("src/ui/elements/factory/widget-builders/grid-builder.lua"),
@@ -13384,6 +13977,21 @@ local CONFIG = {
 	}
 }
 
+local function logInfo(...)
+	print("[Rayfield]", ...)
+end
+
+local function logWarn(message)
+	warn("[Rayfield] " .. tostring(message))
+end
+
+local function logBanner(title)
+	print("")
+	print("[Rayfield] ========================================")
+	print("[Rayfield] " .. tostring(title))
+	print("[Rayfield] ========================================")
+end
+
 -- ============================================
 -- CACHE SYSTEM
 -- ============================================
@@ -13392,7 +14000,7 @@ _G.RayfieldCache = _G.RayfieldCache or {}
 
 local function getCached(key)
 	if CONFIG.CACHE_ENABLED and _G.RayfieldCache[key] then
-		print("📦 [Rayfield] Using cached:", key)
+		logInfo("Using cached module:", key)
 		return _G.RayfieldCache[key]
 	end
 	return nil
@@ -13436,30 +14044,27 @@ end
 local function loadModule(name, url)
 	local cacheKey = getCacheKey(name, url)
 
-	-- Check cache
 	local cached = getCached(cacheKey)
 	if cached then
 		if isCachedModuleUsable(name, cached) then
 			return cached
 		end
 		_G.RayfieldCache[cacheKey] = nil
-		print("♻️ [Rayfield] Cache invalidated:", cacheKey)
+		logInfo("Cache invalidated:", cacheKey)
 	end
-	
-	print("⬇️ [Rayfield] Loading:", name)
-	
+
+	logInfo("Loading module:", name)
+
 	local success, result = pcall(function()
 		return ApiClient.fetchAndExecute(url)
 	end)
-	
+
 	if not success then
-		error("❌ Failed to load " .. name .. ": " .. tostring(result))
+		error("[Rayfield] Failed to load " .. name .. ": " .. tostring(result))
 	end
-	
-	-- Cache result
+
 	setCache(cacheKey, result)
-	
-	print("✅ [Rayfield] Loaded:", name)
+	logInfo("Loaded module:", name)
 	return result
 end
 
@@ -13617,7 +14222,7 @@ local function stopAutoReloadWatcher(silent)
 	AutoReloadState.running = false
 	AutoReloadState.token = (AutoReloadState.token or 0) + 1
 	if not silent then
-		print("🛑 [Rayfield] Auto reload stopped")
+		logInfo("Auto reload stopped")
 	end
 end
 
@@ -13650,9 +14255,9 @@ local function startAutoReloadWatcher()
 	local initialCommit, initialError = fetchLatestCommit()
 	if initialCommit then
 		AutoReloadState.lastCommit = initialCommit
-		print("🔄 [Rayfield] Auto reload watching " .. repo .. "@" .. branch .. " (" .. shortCommit(initialCommit) .. ")")
+		logInfo("Auto reload watching " .. repo .. "@" .. branch .. " (" .. shortCommit(initialCommit) .. ")")
 	elseif initialError then
-		warn("⚠️ [Rayfield] Auto reload initial check failed: " .. tostring(initialError))
+		logWarn("Auto reload initial check failed: " .. tostring(initialError))
 	end
 
 	task.spawn(function()
@@ -13666,18 +14271,18 @@ local function startAutoReloadWatcher()
 			if latestCommit then
 				local knownCommit = AutoReloadState.lastCommit
 				if knownCommit and knownCommit ~= latestCommit then
-					print("🆕 [Rayfield] New commit detected: " .. shortCommit(knownCommit) .. " -> " .. shortCommit(latestCommit))
+					logInfo("New commit detected: " .. shortCommit(knownCommit) .. " -> " .. shortCommit(latestCommit))
 					local okReload, reloadError = reloadForNewCommit(latestCommit)
 					if okReload then
-						print("♻️ [Rayfield] UI reloaded from latest commit (" .. shortCommit(latestCommit) .. ")")
+						logInfo("UI reloaded from latest commit (" .. shortCommit(latestCommit) .. ")")
 					else
-						warn("⚠️ [Rayfield] Auto reload failed: " .. tostring(reloadError))
+						logWarn("Auto reload failed: " .. tostring(reloadError))
 					end
 				elseif not knownCommit then
 					AutoReloadState.lastCommit = latestCommit
 				end
 			elseif err then
-				warn("⚠️ [Rayfield] Auto reload check failed: " .. tostring(err))
+				logWarn("Auto reload check failed: " .. tostring(err))
 			end
 		end
 	end)
@@ -13689,7 +14294,7 @@ local function startAutoReloadWatcherAsync(errorPrefix)
 	task.spawn(function()
 		local okStart, errStart = startAutoReloadWatcher()
 		if not okStart and errStart then
-			warn((errorPrefix or "⚠️ [Rayfield] Auto reload start failed: ") .. tostring(errStart))
+			logWarn((errorPrefix or "Auto reload start failed: ") .. tostring(errStart))
 		end
 	end)
 end
@@ -13699,15 +14304,9 @@ end
 -- ============================================
 
 function AllInOne.loadBase()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🚀 Rayfield All-in-One: Base Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Base Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
-	
-	print("✅ Ready: Base UI")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+	logInfo("Ready: Base UI")
 	return {
 		Rayfield = Rayfield,
 		mode = "base"
@@ -13715,19 +14314,14 @@ function AllInOne.loadBase()
 end
 
 function AllInOne.loadEnhanced()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🛡️ Rayfield All-in-One: Enhanced Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Enhanced Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
 	local Enhancement = loadModule("enhanced", getModuleUrl("enhanced"))
-	
-	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler = 
+
+	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 		Enhancement.createEnhancedRayfield(Rayfield)
-	
-	print("✅ Ready: Base + Enhanced V2")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+
+	logInfo("Ready: Base + Enhanced V2")
 	return {
 		Rayfield = EnhancedRayfield,
 		ErrorManager = ErrorMgr,
@@ -13741,20 +14335,15 @@ function AllInOne.loadEnhanced()
 end
 
 function AllInOne.loadAdvanced()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("⚡ Rayfield All-in-One: Advanced Mode")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	
+	logBanner("All-in-One: Advanced Mode")
 	local Rayfield = loadModule("base", getModuleUrl("base"))
 	local Enhancement = loadModule("enhanced", getModuleUrl("enhanced"))
 	local Advanced = loadModule("advanced", getModuleUrl("advanced"))
-	
-	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler = 
+
+	local EnhancedRayfield, ErrorMgr, GC, RemoteProt, LeakDetector, Profiler =
 		Enhancement.createEnhancedRayfield(Rayfield)
-	
-	print("✅ Ready: Full Stack (Base + Enhanced + Advanced)")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	
+
+	logInfo("Ready: Full Stack (Base + Enhanced + Advanced)")
 	return {
 		Rayfield = EnhancedRayfield,
 		ErrorManager = ErrorMgr,
@@ -13836,7 +14425,7 @@ function AllInOne.quickSetup(config)
 	AllInOne.currentUI = UI
 
 	if CONFIG.AUTO_RELOAD_ENABLED and not AutoReloadState.running then
-		startAutoReloadWatcherAsync("⚠️ [Rayfield] Auto reload is enabled but failed to start: ")
+		startAutoReloadWatcherAsync("Auto reload is enabled but failed to start: ")
 	end
 	
 	return UI
@@ -13850,21 +14439,21 @@ function AllInOne.configure(config)
 	if config.baseUrl then
 		CONFIG.BASE_URL = config.baseUrl
 	end
-	
+
 	if config.usePastebin ~= nil then
 		CONFIG.USE_PASTEBIN = config.usePastebin
 	end
-	
+
 	if config.pastebinCodes then
 		for k, v in pairs(config.pastebinCodes) do
 			CONFIG.PASTEBIN_CODES[k] = v
 		end
 	end
-	
+
 	if config.cacheEnabled ~= nil then
 		CONFIG.CACHE_ENABLED = config.cacheEnabled
 	end
-	
+
 	if config.autoMode then
 		CONFIG.AUTO_MODE = config.autoMode
 	end
@@ -13878,7 +14467,7 @@ function AllInOne.configure(config)
 		if mode == "loader" or mode == "ui" or mode == "none" then
 			CONFIG.AUTO_EXECUTE_RETURN = mode
 		else
-			warn("⚠️ [Rayfield] Invalid autoExecuteReturn: " .. tostring(config.autoExecuteReturn) .. " (use 'loader', 'ui', or 'none')")
+			logWarn("Invalid autoExecuteReturn: " .. tostring(config.autoExecuteReturn) .. " (use 'loader', 'ui', or 'none')")
 		end
 	end
 
@@ -13895,7 +14484,7 @@ function AllInOne.configure(config)
 		if interval and interval > 0 then
 			CONFIG.AUTO_RELOAD_INTERVAL = interval
 		else
-			warn("⚠️ [Rayfield] Invalid autoReloadInterval: " .. tostring(config.autoReloadInterval))
+			logWarn("Invalid autoReloadInterval: " .. tostring(config.autoReloadInterval))
 		end
 	end
 
@@ -13915,7 +14504,7 @@ function AllInOne.configure(config)
 		if type(config.autoReloadCallback) == "function" then
 			AutoReloadState.onReload = config.autoReloadCallback
 		else
-			warn("⚠️ [Rayfield] autoReloadCallback must be a function")
+			logWarn("autoReloadCallback must be a function")
 		end
 	end
 
@@ -13925,13 +14514,13 @@ function AllInOne.configure(config)
 		end
 		local okStart, errStart = startAutoReloadWatcher()
 		if not okStart and errStart then
-			warn("⚠️ [Rayfield] Auto reload start failed: " .. tostring(errStart))
+			logWarn("Auto reload start failed: " .. tostring(errStart))
 		end
 	else
 		stopAutoReloadWatcher(true)
 	end
-	
-	print("✅ [Rayfield] Configuration updated")
+
+	logInfo("Configuration updated")
 end
 
 -- ============================================
@@ -13943,7 +14532,7 @@ function AllInOne.clearCache()
 	if type(_G.__RayfieldApiModuleCache) == "table" then
 		table.clear(_G.__RayfieldApiModuleCache)
 	end
-	print("🗑️ [Rayfield] Cache cleared")
+	logInfo("Cache cleared")
 end
 
 function AllInOne.checkForUpdates()
@@ -13991,31 +14580,30 @@ function AllInOne.setAutoReloadCallback(callback)
 end
 
 function AllInOne.info()
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📦 Rayfield All-in-One Loader")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("Version: 2.1.0")
-	print("Cache Enabled:", CONFIG.CACHE_ENABLED)
-	print("Auto Mode:", CONFIG.AUTO_MODE)
-	print("Auto Execute:", CONFIG.AUTO_EXECUTE)
-	print("Auto Execute Return:", CONFIG.AUTO_EXECUTE_RETURN)
-	print("Auto Reload:", CONFIG.AUTO_RELOAD_ENABLED)
-	print("Auto Reload Interval:", CONFIG.AUTO_RELOAD_INTERVAL)
-	print("Auto Reload Repo:", CONFIG.AUTO_RELOAD_REPO .. "@" .. CONFIG.AUTO_RELOAD_BRANCH)
-	print("Last Seen Commit:", AutoReloadState.lastCommit and shortCommit(AutoReloadState.lastCommit) or "n/a")
-	print("\nCached Modules:")
+	logBanner("All-in-One Loader")
+	logInfo("Version:", "2.1.0")
+	logInfo("Cache Enabled:", CONFIG.CACHE_ENABLED)
+	logInfo("Auto Mode:", CONFIG.AUTO_MODE)
+	logInfo("Auto Execute:", CONFIG.AUTO_EXECUTE)
+	logInfo("Auto Execute Return:", CONFIG.AUTO_EXECUTE_RETURN)
+	logInfo("Auto Reload:", CONFIG.AUTO_RELOAD_ENABLED)
+	logInfo("Auto Reload Interval:", CONFIG.AUTO_RELOAD_INTERVAL)
+	logInfo("Auto Reload Repo:", CONFIG.AUTO_RELOAD_REPO .. "@" .. CONFIG.AUTO_RELOAD_BRANCH)
+	logInfo("Last Seen Commit:", AutoReloadState.lastCommit and shortCommit(AutoReloadState.lastCommit) or "n/a")
+
+	logInfo("Cached Modules:")
 	for name, _ in pairs(_G.RayfieldCache) do
-		print("  ✅", name)
+		logInfo(" -", name)
 	end
-	print("\nAvailable Modes:")
-	print("  • loadBase() - Base UI only")
-	print("  • loadEnhanced() - Base + Enhanced V2")
-	print("  • loadAdvanced() - Full Stack")
-	print("  • loadAll() - Same as loadAdvanced()")
-	print("  • quickSetup({mode = 'enhanced'}) - Quick setup")
-	print("  • startAutoReload() / stopAutoReload()")
-	print("  • checkForUpdates() / reloadNow()")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+	logInfo("Available Modes:")
+	logInfo(" - loadBase() - Base UI only")
+	logInfo(" - loadEnhanced() - Base + Enhanced V2")
+	logInfo(" - loadAdvanced() - Full Stack")
+	logInfo(" - loadAll() - Same as loadAdvanced()")
+	logInfo(" - quickSetup({mode = 'enhanced'}) - Quick setup")
+	logInfo(" - startAutoReload() / stopAutoReload()")
+	logInfo(" - checkForUpdates() / reloadNow()")
 end
 
 -- ============================================
@@ -14028,13 +14616,9 @@ end
 if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 	_G.RayfieldAllInOneLoaded = true
 
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🚀 Rayfield All-in-One Auto-Loading")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("Mode:", CONFIG.AUTO_MODE)
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	logBanner("All-in-One Auto-Loading")
+	logInfo("Mode:", CONFIG.AUTO_MODE)
 
-	-- Auto load theo config
 	local UI = AllInOne.quickSetup({
 		mode = CONFIG.AUTO_MODE,
 		errorThreshold = CONFIG.DEFAULT_SETTINGS.errorThreshold,
@@ -14042,16 +14626,14 @@ if CONFIG.AUTO_EXECUTE and not _G.RayfieldAllInOneLoaded then
 		autoCleanup = CONFIG.DEFAULT_SETTINGS.autoCleanup
 	})
 
-	-- Export to global
 	_G.Rayfield = UI.Rayfield
 	_G.RayfieldUI = UI
 	AllInOne.currentUI = UI
 
-	print("✅ [Rayfield] Auto-loaded successfully!")
-	print("Access via: _G.Rayfield or _G.RayfieldUI")
-	print("Return mode:", CONFIG.AUTO_EXECUTE_RETURN, "\n")
+	logInfo("Auto-loaded successfully")
+	logInfo("Access via: _G.Rayfield or _G.RayfieldUI")
+	logInfo("Return mode:", CONFIG.AUTO_EXECUTE_RETURN)
 
-	-- Return lightweight loader by default to avoid executor freeze on large return objects
 	if CONFIG.AUTO_EXECUTE_RETURN == "ui" then
 		return UI
 	elseif CONFIG.AUTO_EXECUTE_RETURN == "none" then
@@ -14062,6 +14644,7 @@ end
 
 -- Return loader table on subsequent executions (allows manual control)
 return AllInOne
+
 ]=])
 put("src/entry/rayfield-enhanced.entry.lua", [[local compileString = loadstring or load
 if not compileString then
@@ -14233,7 +14816,10 @@ local ExecutionPolicyServiceLib = RuntimeBootstrap and RuntimeBootstrap.Executio
 local HttpLoaderServiceLib = RuntimeBootstrap and RuntimeBootstrap.HttpLoaderServiceLib
 local AnalyticsReporterServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsReporterServiceLib
 local AnalyticsProviderServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsProviderServiceLib
+local AnalyticsManagerServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsManagerServiceLib
 local RuntimeLoaderHelpersServiceLib = RuntimeBootstrap and RuntimeBootstrap.RuntimeLoaderHelpersServiceLib
+local LoaderHelpersFallbackServiceLib = RuntimeBootstrap and RuntimeBootstrap.LoaderHelpersFallbackServiceLib
+local CompatibilityInitServiceLib = RuntimeBootstrap and RuntimeBootstrap.CompatibilityInitServiceLib
 
 if type(ExecutionPolicyServiceLib) ~= "table" or type(ExecutionPolicyServiceLib.ensure) ~= "function" then
 	ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
@@ -14255,8 +14841,23 @@ if type(AnalyticsProviderServiceLib) ~= "table" or type(AnalyticsProviderService
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
 end
+if type(AnalyticsManagerServiceLib) ~= "table" or type(AnalyticsManagerServiceLib.create) ~= "function" then
+	AnalyticsManagerServiceLib = loadBootstrapService("src/services/analytics-manager.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
 if type(RuntimeLoaderHelpersServiceLib) ~= "table" or type(RuntimeLoaderHelpersServiceLib.create) ~= "function" then
 	RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(LoaderHelpersFallbackServiceLib) ~= "table" or type(LoaderHelpersFallbackServiceLib.createFallback) ~= "function" then
+	LoaderHelpersFallbackServiceLib = loadBootstrapService("src/services/loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.createFallback) == "function"
+	end)
+end
+if type(CompatibilityInitServiceLib) ~= "table" or type(CompatibilityInitServiceLib.create) ~= "function" then
+	CompatibilityInitServiceLib = loadBootstrapService("src/services/compatibility-init.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
 end
@@ -14402,70 +15003,24 @@ if debugX then
 end
 
 local sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
-if RuntimeBootstrap and type(RuntimeBootstrap.createAnalyticsSender) == "function" then
-	sendReport = RuntimeBootstrap.createAnalyticsSender({
+if type(AnalyticsManagerServiceLib) == "table" and type(AnalyticsManagerServiceLib.create) == "function" then
+	local analyticsManager = AnalyticsManagerServiceLib.create({
+		runtimeBootstrap = RuntimeBootstrap,
+		analyticsProviderServiceLib = AnalyticsProviderServiceLib,
+		analyticsReporterServiceLib = AnalyticsReporterServiceLib,
 		requestsDisabled = requestsDisabled,
 		useStudio = useStudio,
 		debug = debugX == true,
 		release = Release,
 		interfaceBuild = InterfaceBuild,
 		scriptName = "Rayfield",
-		warn = warn,
-		print = print
-	})
-elseif type(AnalyticsProviderServiceLib) == "table" and type(AnalyticsProviderServiceLib.create) == "function" then
-	local analyticsProvider = AnalyticsProviderServiceLib.create({
-		reporterModule = AnalyticsReporterServiceLib,
-		requestsDisabled = requestsDisabled,
-		useStudio = useStudio,
-		debug = debugX == true,
-		release = Release,
-		interfaceBuild = InterfaceBuild,
 		loadWithTimeout = loadWithTimeout,
-		scriptName = "Rayfield",
 		warn = warn,
 		print = print
 	})
-	if type(analyticsProvider) == "table" then
-		if type(analyticsProvider.init) == "function" then
-			pcall(analyticsProvider.init)
-		end
-		if type(analyticsProvider.sendReport) == "function" then
-			sendReport = function(ev_n, sc_n)
-				local okReport, reportErr = pcall(analyticsProvider.sendReport, ev_n, sc_n)
-				if not okReport then
-					warn("Analytics report error: " .. tostring(reportErr))
-				end
-			end
-		end
+	if type(analyticsManager) == "table" and type(analyticsManager.sendReport) == "function" then
+		sendReport = analyticsManager.sendReport
 	end
-elseif type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
-	local analyticsReporter = AnalyticsReporterServiceLib.create({
-		requestsDisabled = requestsDisabled,
-		useStudio = useStudio,
-		debug = debugX == true,
-		release = Release,
-		interfaceBuild = InterfaceBuild,
-		loadWithTimeout = loadWithTimeout,
-		scriptName = "Rayfield",
-		warn = warn,
-		print = print
-	})
-	if type(analyticsReporter) == "table" then
-		if type(analyticsReporter.init) == "function" then
-			pcall(analyticsReporter.init)
-		end
-		if type(analyticsReporter.sendReport) == "function" then
-			sendReport = function(ev_n, sc_n)
-				local okReport, reportErr = pcall(analyticsReporter.sendReport, ev_n, sc_n)
-				if not okReport then
-					warn("Analytics report error: " .. tostring(reportErr))
-				end
-			end
-		end
-	end
-elseif not requestsDisabled then
-	warn("Rayfield Mod: [W_ANALYTICS_SERVICE] Analytics reporter service unavailable.")
 end
 
 local promptUser = 2
@@ -14521,201 +15076,65 @@ if type(RuntimeLoaderHelpersServiceLib) == "table" and type(RuntimeLoaderHelpers
 end
 
 if type(LoaderHelpers) ~= "table" then
-	local loaderDiagnosticsFallback = {
-		optionalFailed = {},
-		notified = false,
-		performanceProfile = nil
-	}
-	if _G then
-		_G.__RAYFIELD_LOADER_DIAGNOSTICS = loaderDiagnosticsFallback
+	if type(LoaderHelpersFallbackServiceLib) == "table"
+		and type(LoaderHelpersFallbackServiceLib.createFallback) == "function" then
+		local okFallback, fallbackOrErr = pcall(LoaderHelpersFallbackServiceLib.createFallback, {
+			rootUrl = MODULE_ROOT_URL,
+			apiClient = ApiClient,
+			useStudio = useStudio,
+			getScriptRef = getScriptRef,
+			warn = warn,
+			globalEnv = _G
+		})
+		if okFallback and type(fallbackOrErr) == "table" then
+			LoaderHelpers = fallbackOrErr
+		else
+			warn("Rayfield Mod: [W_LOADER_HELPERS] Failed to initialize loader helpers fallback: " .. tostring(fallbackOrErr))
+		end
 	end
+end
 
-	local apiLoaderFallback = nil
-	local function loadModuleFallback(moduleName)
-		if type(apiLoaderFallback) ~= "table" or type(apiLoaderFallback.load) ~= "function" then
-			return false, "API loader unavailable"
-		end
-		local opts = {
-			tryStudioRequire = useStudio,
-			scriptRef = getScriptRef(),
-			allowLegacyFallback = true
-		}
-		if type(apiLoaderFallback.tryLoad) == "function" then
-			return apiLoaderFallback.tryLoad(moduleName, opts)
-		end
-		local okLoad, result = pcall(apiLoaderFallback.load, moduleName, opts)
-		if okLoad then
-			return true, result
-		end
-		return false, tostring(result)
+if type(LoaderHelpers) ~= "table" then
+	error("Rayfield Mod: [E_LOADER_HELPERS] Failed to initialize loader helpers.")
+end
+
+local compatibilityInit = nil
+if type(CompatibilityInitServiceLib) == "table" and type(CompatibilityInitServiceLib.create) == "function" then
+	local okCompatibilityInit, compatibilityInitOrErr = pcall(CompatibilityInitServiceLib.create, {
+		loaderHelpers = LoaderHelpers,
+		apiClient = ApiClient,
+		moduleRootUrl = MODULE_ROOT_URL,
+		compileString = compileString,
+		useStudio = useStudio,
+		warn = warn,
+		globalEnv = _G
+	})
+	if okCompatibilityInit and type(compatibilityInitOrErr) == "table" then
+		compatibilityInit = compatibilityInitOrErr
+	else
+		warn("Rayfield Mod: [W_COMPAT_INIT] Failed to initialize compatibility bootstrap: " .. tostring(compatibilityInitOrErr))
 	end
-
-	local function formatLoaderError(code, message)
-		return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
-	end
-
-	LoaderHelpers = {
-		fetchExecuteSafely = function(path)
-			local ok, result = pcall(ApiClient.fetchAndExecute, MODULE_ROOT_URL .. tostring(path))
-			if ok then
-				return true, result
-			end
-			return false, tostring(result)
-		end,
-		setApiLoader = function(loader)
-			apiLoaderFallback = loader
-			return true
-		end,
-		requireModule = function(moduleName, hint)
-			local okLoad, result = loadModuleFallback(moduleName)
-			if okLoad then
-				return result
-			end
-			local reason = tostring(result)
-			if hint then
-				reason = tostring(hint) .. "\n" .. reason
-			end
-			error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
-		end,
-		optionalModule = function(moduleName, fallbackModule, hint)
-			local okLoad, result = loadModuleFallback(moduleName)
-			if okLoad then
-				return result
-			end
-			table.insert(loaderDiagnosticsFallback.optionalFailed, {
-				module = moduleName,
-				error = tostring(result)
-			})
-			local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
-			if hint then
-				message = message .. " " .. tostring(hint)
-			end
-			warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
-			return fallbackModule
-		end,
-		optionalModuleWithContract = function(moduleName, validatorFn, hint)
-			local okLoad, result = loadModuleFallback(moduleName)
-			if okLoad and type(validatorFn) == "function" and validatorFn(result) then
-				return result
-			end
-			table.insert(loaderDiagnosticsFallback.optionalFailed, {
-				module = moduleName,
-				error = okLoad and "Invalid module contract" or tostring(result)
-			})
-			local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Feature disabled."
-			if hint then
-				message = message .. " " .. tostring(hint)
-			end
-			local detail = okLoad and "Invalid module contract" or tostring(result)
-			warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. detail))
-			return nil
-		end,
-		maybeNotifyFallback = function(notifyFn)
-			if loaderDiagnosticsFallback.notified or #loaderDiagnosticsFallback.optionalFailed == 0 then
-				return
-			end
-			loaderDiagnosticsFallback.notified = true
-			local moduleNames = {}
-			for _, item in ipairs(loaderDiagnosticsFallback.optionalFailed) do
-				table.insert(moduleNames, tostring(item.module))
-			end
-			local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
-			if type(notifyFn) == "function" then
-				local okNotify, notifyErr = pcall(notifyFn, message)
-				if not okNotify then
-					warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | notify failed: " .. tostring(notifyErr)))
-				end
-				return
-			end
-			warn(formatLoaderError("W_OPTIONAL_MODULE", message))
-		end,
-		getDiagnostics = function()
-			return loaderDiagnosticsFallback
-		end
-	}
 end
 
-local function fetchExecuteSafely(path)
-	return LoaderHelpers.fetchExecuteSafely(path)
+if type(compatibilityInit) ~= "table" then
+	error("Rayfield Mod: [E_BOOTSTRAP_COMPAT_INIT] Failed to initialize compatibility bootstrap service.")
 end
 
-local okCompatibility, compatibilityResult = fetchExecuteSafely("src/services/compatibility.lua")
-if okCompatibility and type(compatibilityResult) == "table" then
-	Compatibility = compatibilityResult
-else
-	warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT] Failed to load compatibility service; using fallback compatibility.")
-	if not okCompatibility then
-		warn("Rayfield Mod: [W_BOOTSTRAP_COMPAT_REASON] " .. tostring(compatibilityResult))
-	end
-	Compatibility = {
-		getService = function(name)
-			return game:GetService(name)
-		end,
-		getCompileString = function()
-			return compileString
-		end,
-		protectAndParent = function(gui, preferredContainer, opts)
-			local inStudio = opts and opts.useStudio
-			if inStudio then
-				return nil
-			end
-			local okCore, core = pcall(function()
-				return game:GetService("CoreGui")
-			end)
-			if okCore and core then
-				gui.Parent = core
-				return core
-			end
-			return nil
-		end,
-		dedupeGuiByName = function()
-			return
-		end
-	}
-end
-if _G then
-	_G.__RayfieldCompatibility = Compatibility
-end
-if type(Compatibility.getService) == "function" then
-	getService = Compatibility.getService
-end
-if type(Compatibility.getCompileString) == "function" then
-	compileString = Compatibility.getCompileString()
-end
+Compatibility = compatibilityInit.Compatibility
+local WidgetBootstrap = compatibilityInit.WidgetBootstrap
+local ApiLoader = compatibilityInit.ApiLoader
 
-local okWidgetBootstrap, widgetBootstrapResult = fetchExecuteSafely("src/ui/elements/widgets/bootstrap.lua")
-local WidgetBootstrap = okWidgetBootstrap and widgetBootstrapResult or nil
-if type(WidgetBootstrap) ~= "table" or type(WidgetBootstrap.bootstrapWidget) ~= "function" then
-	warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS] Failed to load widget bootstrap; using fallback widget loader.")
-	if not okWidgetBootstrap then
-		warn("Rayfield Mod: [W_BOOTSTRAP_WIDGETS_REASON] " .. tostring(widgetBootstrapResult))
-	end
-	WidgetBootstrap = {
-		bootstrapWidget = function(widgetName, targetPath, exportAdapter, opts)
-			local moduleValue = ApiClient.fetchAndExecute(MODULE_ROOT_URL .. tostring(targetPath))
-			if opts and opts.expectedType and type(moduleValue) ~= opts.expectedType then
-				error("Rayfield Mod: [E_WIDGET_BOOTSTRAP] " .. tostring(widgetName) .. " expected " .. tostring(opts.expectedType) .. ", got " .. type(moduleValue))
-			end
-			if type(exportAdapter) == "function" then
-				return exportAdapter(moduleValue)
-			end
-			return moduleValue
-		end
-	}
+if type(compatibilityInit.getService) == "function" then
+	getService = compatibilityInit.getService
 end
-if _G then
-	_G.__RayfieldWidgetBootstrap = WidgetBootstrap
+if type(compatibilityInit.compileString) == "function" then
+	compileString = compatibilityInit.compileString
 end
-local okApiLoader, apiLoaderResult = fetchExecuteSafely("src/api/loader.lua")
-if not okApiLoader then
-	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Failed to load API loader: " .. tostring(apiLoaderResult))
-end
-local ApiLoader = apiLoaderResult
 if type(ApiLoader) ~= "table" or type(ApiLoader.load) ~= "function" then
 	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Invalid API loader contract")
 end
-if type(LoaderHelpers.setApiLoader) == "function" then
-	LoaderHelpers.setApiLoader(ApiLoader)
+if type(WidgetBootstrap) ~= "table" or type(WidgetBootstrap.bootstrapWidget) ~= "function" then
+	error("Rayfield Mod: [E_BOOTSTRAP_WIDGETS] Invalid widget bootstrap contract")
 end
 
 local function requireModule(moduleName, hint)
@@ -14749,457 +15168,218 @@ local function maybeNotifyLoaderFallback()
 	end)
 end
 
-local FallbackElementSyncModule = {
-	init = function()
-		return nil
-	end
-}
+local RuntimeFallbackModulesLib = requireModule("runtimeFallbackModules")
+local FallbackElementSyncModule = RuntimeFallbackModulesLib.FallbackElementSyncModule
+local FallbackOwnershipTrackerModule = RuntimeFallbackModulesLib.FallbackOwnershipTrackerModule
+local FallbackDragModule = RuntimeFallbackModulesLib.FallbackDragModule
+local FallbackTabSplitModule = RuntimeFallbackModulesLib.FallbackTabSplitModule
+local FallbackLayoutPersistenceModule = RuntimeFallbackModulesLib.FallbackLayoutPersistenceModule
+local FallbackViewportVirtualizationModule = RuntimeFallbackModulesLib.FallbackViewportVirtualizationModule
 
-local FallbackOwnershipTrackerModule = {
-	init = function()
-		local function noopReturnFalse()
-			return false
-		end
-		local function noopReturnNil()
+local RuntimeModuleRegistryLoaderLib = requireModule("runtimeModuleRegistryLoader")
+local RuntimeModules = RuntimeModuleRegistryLoaderLib.load({
+	requireModule = requireModule,
+	optionalModule = optionalModule,
+	fallbacks = {
+		FallbackElementSyncModule = FallbackElementSyncModule,
+		FallbackOwnershipTrackerModule = FallbackOwnershipTrackerModule,
+		FallbackDragModule = FallbackDragModule,
+		FallbackTabSplitModule = FallbackTabSplitModule,
+		FallbackLayoutPersistenceModule = FallbackLayoutPersistenceModule,
+		FallbackViewportVirtualizationModule = FallbackViewportVirtualizationModule
+	}
+})
+
+local ThemeModule = RuntimeModules.ThemeModule
+local ThemePresetsModuleLib = RuntimeModules.ThemePresetsModuleLib
+local ThemeDefaultThemesModuleLib = RuntimeModules.ThemeDefaultThemesModuleLib
+local UtilitiesModuleLib = RuntimeModules.UtilitiesModuleLib
+local SettingsModuleLib = RuntimeModules.SettingsModuleLib
+local SettingsStoreModuleLib = RuntimeModules.SettingsStoreModuleLib
+local SettingsPersistenceModuleLib = RuntimeModules.SettingsPersistenceModuleLib
+local SettingsUIModuleLib = RuntimeModules.SettingsUIModuleLib
+local SettingsShareCodeModuleLib = RuntimeModules.SettingsShareCodeModuleLib
+local OwnershipTrackerModuleLib = RuntimeModules.OwnershipTrackerModuleLib
+local ElementSyncModuleLib = RuntimeModules.ElementSyncModuleLib
+local KeybindSequenceLib = RuntimeModules.KeybindSequenceLib
+local DragModuleLib = RuntimeModules.DragModuleLib
+local UIStateModuleLib = RuntimeModules.UIStateModuleLib
+local UIStateNotificationManagerLib = RuntimeModules.UIStateNotificationManagerLib
+local UIStateSearchEngineLib = RuntimeModules.UIStateSearchEngineLib
+local UIStateWindowManagerLib = RuntimeModules.UIStateWindowManagerLib
+local ElementsModuleLib = RuntimeModules.ElementsModuleLib
+local ConfigModuleLib = RuntimeModules.ConfigModuleLib
+local ConfigStorageAdapterModuleLib = RuntimeModules.ConfigStorageAdapterModuleLib
+local LayoutPersistenceModuleLib = RuntimeModules.LayoutPersistenceModuleLib
+local ViewportVirtualizationModuleLib = RuntimeModules.ViewportVirtualizationModuleLib
+local VirtualizationEngineModuleLib = RuntimeModules.VirtualizationEngineModuleLib
+local VirtualHostManagerModuleLib = RuntimeModules.VirtualHostManagerModuleLib
+local TabSplitModuleLib = RuntimeModules.TabSplitModuleLib
+local AnimationEngineLib = RuntimeModules.AnimationEngineLib
+local AnimationPublicLib = RuntimeModules.AnimationPublicLib
+local AnimationSequenceLib = RuntimeModules.AnimationSequenceLib
+local AnimationUILib = RuntimeModules.AnimationUILib
+local AnimationTextLib = RuntimeModules.AnimationTextLib
+local AnimationCleanupLib = RuntimeModules.AnimationCleanupLib
+local AnimationConstantsLib = RuntimeModules.AnimationConstantsLib
+local AnimationSchedulerLib = RuntimeModules.AnimationSchedulerLib
+local MainShellModuleLib = RuntimeModules.MainShellModuleLib
+local VisibilityControllerLib = RuntimeModules.VisibilityControllerLib
+local ExperienceBindingsLib = RuntimeModules.ExperienceBindingsLib
+local RuntimeBindingsUXLib = RuntimeModules.RuntimeBindingsUXLib
+local RuntimeBindingsAudioLib = RuntimeModules.RuntimeBindingsAudioLib
+local RuntimeBindingsThemeLib = RuntimeModules.RuntimeBindingsThemeLib
+local RuntimeBindingsFavoritesLib = RuntimeModules.RuntimeBindingsFavoritesLib
+local RuntimeBindingsPersistenceLib = RuntimeModules.RuntimeBindingsPersistenceLib
+local RuntimeBindingsDiagnosticsLib = RuntimeModules.RuntimeBindingsDiagnosticsLib
+local RuntimeBindingsAutomationLib = RuntimeModules.RuntimeBindingsAutomationLib
+local RuntimeBindingsDiscoveryLib = RuntimeModules.RuntimeBindingsDiscoveryLib
+local RuntimeBindingsAIAssistantLib = RuntimeModules.RuntimeBindingsAIAssistantLib
+local RuntimeBindingsCommunicationLib = RuntimeModules.RuntimeBindingsCommunicationLib
+local RuntimeBindingsLocalizationLib = RuntimeModules.RuntimeBindingsLocalizationLib
+local RuntimeBindingsUIEventsLib = RuntimeModules.RuntimeBindingsUIEventsLib
+local RuntimeBindingsMovementEventsLib = RuntimeModules.RuntimeBindingsMovementEventsLib
+local RuntimeBindingsCombatEventsLib = RuntimeModules.RuntimeBindingsCombatEventsLib
+local WorkspaceServiceLib = RuntimeModules.WorkspaceServiceLib
+local CommandPaletteServiceLib = RuntimeModules.CommandPaletteServiceLib
+local CommandPaletteSearchAlgorithmsLib = RuntimeModules.CommandPaletteSearchAlgorithmsLib
+local SmartSearchServiceLib = RuntimeModules.SmartSearchServiceLib
+local MultiInstanceBridgeServiceLib = RuntimeModules.MultiInstanceBridgeServiceLib
+local AutomationEngineServiceLib = RuntimeModules.AutomationEngineServiceLib
+local UsageAnalyticsServiceLib = RuntimeModules.UsageAnalyticsServiceLib
+local MacroRecorderServiceLib = RuntimeModules.MacroRecorderServiceLib
+local DevExperienceServiceLib = RuntimeModules.DevExperienceServiceLib
+local LocalizationServiceLib = RuntimeModules.LocalizationServiceLib
+local UIStringRegistryLib = RuntimeModules.UIStringRegistryLib
+local ShareCodeServiceLib = RuntimeModules.ShareCodeServiceLib
+local EntryDiscordInviteServiceLib = RuntimeModules.EntryDiscordInviteServiceLib
+local EntryKeySystemServiceLib = RuntimeModules.EntryKeySystemServiceLib
+local RuntimeModuleLoaderLib = RuntimeModules.RuntimeModuleLoaderLib
+local PerformanceHUDServiceLib = RuntimeModules.PerformanceHUDServiceLib
+local RuntimeApiLib = RuntimeModules.RuntimeApiLib
+local RuntimeModuleLoader = nil
+if type(RuntimeModuleLoaderLib) == "table" and type(RuntimeModuleLoaderLib.create) == "function" then
+	local okModuleLoader, loaderOrErr = pcall(RuntimeModuleLoaderLib.create, {
+		optionalModuleWithContract = optionalModuleWithContract
+	})
+	if okModuleLoader and type(loaderOrErr) == "table" then
+		RuntimeModuleLoader = loaderOrErr
+	else
+		warn("Rayfield Mod: [W_RUNTIME_MODULE_LOADER] Failed to initialize runtime module loader: " .. tostring(loaderOrErr))
+	end
+end
+if type(RuntimeModuleLoader) ~= "table" then
+	RuntimeModuleLoader = {
+		getLoaded = function()
 			return nil
 		end
-		return {
-			createScope = function(scopeId)
-				return tostring(scopeId or "")
-			end,
-			makeScopeId = function(kind, id)
-				return tostring(kind or "scope") .. ":" .. tostring(id or "")
-			end,
-			claimInstance = noopReturnFalse,
-			trackConnection = noopReturnFalse,
-			trackTask = noopReturnFalse,
-			trackCleanup = noopReturnFalse,
-			cleanupScope = noopReturnFalse,
-			cleanupByInstance = noopReturnFalse,
-			cleanupSession = noopReturnFalse,
-			getStats = function()
-				return {
-					scopes = 0,
-					instances = 0,
-					connections = 0,
-					tasks = 0,
-					cleanups = 0
-				}
-			end,
-			getSignature = noopReturnNil
-		}
-	end
-}
+	}
+end
 
-local FallbackDragModule = {
-	init = function()
-		local function noop() end
-		return {
-			makeElementDetachable = function()
-				return nil
-			end,
-			setLayoutDirtyCallback = noop,
-			getLayoutSnapshot = function()
-				return {}
-			end,
-			applyLayoutSnapshot = function()
-				return false
-			end
-		}
+local function resolveRuntimeModule(resolverName)
+	if type(RuntimeModuleLoader[resolverName]) == "function" then
+		return RuntimeModuleLoader[resolverName]()
 	end
-}
+	return nil
+end
 
-local FallbackTabSplitModule = {
-	init = function()
-		local function noop() end
-		return {
-			registerTab = noop,
-			unregisterTab = noop,
-			splitTab = function() return false end,
-			dockTab = function() return false end,
-			layoutPanels = noop,
-			syncHidden = noop,
-			syncMinimized = noop,
-			setLayoutDirtyCallback = noop,
-			getLayoutSnapshot = function() return {} end,
-			applyLayoutSnapshot = function() return false end,
-			destroy = noop
-		}
+local function getLoadedRuntimeModule(moduleKey)
+	if type(RuntimeModuleLoader.getLoaded) == "function" then
+		return RuntimeModuleLoader.getLoaded(moduleKey)
 	end
-}
+	return nil
+end
 
-local FallbackLayoutPersistenceModule = {
-	init = function()
-		local function noop() end
-		return {
-			registerProvider = noop,
-			unregisterProvider = noop,
-			getLayoutSnapshot = function() return nil end,
-			applyLayoutSnapshot = function() return false end,
-			markDirty = noop,
-			flush = noop,
-			isApplying = function() return false end,
-			isDirty = function() return false end
-		}
-	end
-}
-
-local FallbackViewportVirtualizationModule = {
-	init = function()
-		local function noopReturnFalse()
-			return false
-		end
-		local function noopReturnNil()
-			return nil
-		end
-		return {
-			registerHost = noopReturnFalse,
-			unregisterHost = noopReturnFalse,
-			refreshHost = noopReturnFalse,
-			setHostSuppressed = noopReturnFalse,
-			registerElement = noopReturnNil,
-			unregisterElement = noopReturnFalse,
-			moveElementToHost = noopReturnFalse,
-			setElementBusy = noopReturnFalse,
-			notifyElementHostChanged = noopReturnFalse,
-			getStats = function()
-				return {
-					hosts = 0,
-					elements = 0,
-					sleeping = 0
-				}
-			end,
-			destroy = function() end
-		}
-	end
-}
-
-local ThemeModule = requireModule("theme")
-local ThemePresetsModuleLib = requireModule("themePresets")
-local ThemeDefaultThemesModuleLib = requireModule("themeDefaultThemes")
--- Load utilities early so shared helpers are registered globally before other services initialize.
-local UtilitiesModuleLib = requireModule("utilities")
-local SettingsModuleLib = requireModule("settings")
-local SettingsStoreModuleLib = requireModule("settingsStore")
-local SettingsPersistenceModuleLib = requireModule("settingsPersistence")
-local SettingsUIModuleLib = requireModule("settingsUI")
-local SettingsShareCodeModuleLib = requireModule("settingsShareCode")
-local OwnershipTrackerModuleLib = optionalModule("ownershipTracker", FallbackOwnershipTrackerModule, "Scoped ownership cleanup will run in compatibility mode.")
-local ElementSyncModuleLib = optionalModule("elementSync", FallbackElementSyncModule, "Element state sync will run in compatibility mode.")
-local KeybindSequenceLib = requireModule("keybindSequence")
-local DragModuleLib = optionalModule("drag", FallbackDragModule, "Detach/reorder advanced drag features are disabled for this session.")
-local UIStateModuleLib = requireModule("uiState")
-local UIStateNotificationManagerLib = requireModule("uiStateNotificationManager")
-local UIStateSearchEngineLib = requireModule("uiStateSearchEngine")
-local UIStateWindowManagerLib = requireModule("uiStateWindowManager")
-local ElementsModuleLib = requireModule("elements")
-local ConfigModuleLib = requireModule("config")
-local ConfigStorageAdapterModuleLib = requireModule("configStorageAdapter")
-local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
-local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
-local VirtualizationEngineModuleLib = requireModule("virtualizationEngine")
-local VirtualHostManagerModuleLib = requireModule("virtualHostManager")
-local TabSplitModuleLib = optionalModule("tabSplit", FallbackTabSplitModule, "Tab split features are disabled for this session.")
-local AnimationEngineLib = requireModule("animationEngine")
-local AnimationPublicLib = requireModule("animationPublic")
-local AnimationSequenceLib = requireModule("animationSequence")
-local AnimationUILib = requireModule("animationUI")
-local AnimationTextLib = requireModule("animationText")
-local AnimationCleanupLib = requireModule("animationCleanup")
-local AnimationConstantsLib = requireModule("animationConstants")
-local AnimationSchedulerLib = requireModule("animationScheduler")
-local MainShellModuleLib = requireModule("uiShellMainShell")
-local VisibilityControllerLib = requireModule("runtimeVisibilityController")
-local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
-local RuntimeBindingsUXLib = requireModule("runtimeBindingsUX")
-local RuntimeBindingsAudioLib = requireModule("runtimeBindingsAudio")
-local RuntimeBindingsThemeLib = requireModule("runtimeBindingsTheme")
-local RuntimeBindingsFavoritesLib = requireModule("runtimeBindingsFavorites")
-local RuntimeBindingsPersistenceLib = requireModule("runtimeBindingsPersistence")
-local RuntimeBindingsDiagnosticsLib = requireModule("runtimeBindingsDiagnostics")
-local RuntimeBindingsAutomationLib = requireModule("runtimeBindingsAutomation")
-local RuntimeBindingsDiscoveryLib = requireModule("runtimeBindingsDiscovery")
-local RuntimeBindingsAIAssistantLib = requireModule("runtimeBindingsAIAssistant")
-local RuntimeBindingsCommunicationLib = requireModule("runtimeBindingsCommunication")
-local RuntimeBindingsLocalizationLib = requireModule("runtimeBindingsLocalization")
-local RuntimeBindingsUIEventsLib = requireModule("runtimeBindingsUIEvents")
-local RuntimeBindingsMovementEventsLib = requireModule("runtimeBindingsMovementEvents")
-local RuntimeBindingsCombatEventsLib = requireModule("runtimeBindingsCombatEvents")
-local WorkspaceServiceLib = requireModule("runtimeWorkspaceService")
-local CommandPaletteServiceLib = requireModule("runtimeCommandPaletteService")
-local CommandPaletteSearchAlgorithmsLib = requireModule("runtimeCommandPaletteSearchAlgorithms")
-local SmartSearchServiceLib = requireModule("runtimeSmartSearchService")
-local MultiInstanceBridgeServiceLib = requireModule("runtimeMultiInstanceBridgeService")
-local AutomationEngineServiceLib = requireModule("runtimeAutomationEngineService")
-local UsageAnalyticsServiceLib = requireModule("runtimeUsageAnalyticsService")
-local MacroRecorderServiceLib = requireModule("runtimeMacroRecorderService")
-local DevExperienceServiceLib = requireModule("runtimeDevExperienceService")
-local LocalizationServiceLib = requireModule("runtimeLocalizationService")
-local UIStringRegistryLib = requireModule("runtimeUIStringRegistry")
-local ShareCodeServiceLib = requireModule("runtimeShareCodeService")
-local PerformanceHUDServiceLib = requireModule("runtimePerformanceHUDService")
-local RuntimeApiLib = requireModule("runtimeApi")
-local DataGridFactoryModuleLib = nil
-local ChartFactoryModuleLib = nil
-local ButtonFactoryModuleLib = nil
-local InputFactoryModuleLib = nil
-local DropdownFactoryModuleLib = nil
-local KeybindFactoryModuleLib = nil
-local ToggleFactoryModuleLib = nil
-local SliderFactoryModuleLib = nil
-local TabManagerModuleLib = nil
-local HoverProviderModuleLib = nil
-local TooltipEngineModuleLib = nil
-local WidgetAPIInjectorModuleLib = nil
-local MathUtilsModuleLib = nil
-local ResourceGuardModuleLib = nil
-local GridBuilderModuleLib = nil
-local ChartBuilderModuleLib = nil
-local RangeBarsFactoryModuleLib = nil
-local FeedbackWidgetsFactoryModuleLib = nil
 local function resolveDataGridFactoryModule()
-	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
-		return DataGridFactoryModuleLib
-	end
-	DataGridFactoryModuleLib = optionalModuleWithContract(
-		"elementsDataGridFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"DataGrid elements will be unavailable."
-	)
-	return DataGridFactoryModuleLib
+	return resolveRuntimeModule("resolveDataGridFactoryModule")
 end
+
 local function resolveChartFactoryModule()
-	if type(ChartFactoryModuleLib) == "table" and type(ChartFactoryModuleLib.create) == "function" then
-		return ChartFactoryModuleLib
-	end
-	ChartFactoryModuleLib = optionalModuleWithContract(
-		"elementsChartFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Chart elements will be unavailable."
-	)
-	return ChartFactoryModuleLib
+	return resolveRuntimeModule("resolveChartFactoryModule")
 end
+
 local function resolveButtonFactoryModule()
-	if type(ButtonFactoryModuleLib) == "table" and type(ButtonFactoryModuleLib.create) == "function" then
-		return ButtonFactoryModuleLib
-	end
-	ButtonFactoryModuleLib = optionalModuleWithContract(
-		"elementsButtonFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Button elements will use built-in fallback."
-	)
-	return ButtonFactoryModuleLib
+	return resolveRuntimeModule("resolveButtonFactoryModule")
 end
+
 local function resolveInputFactoryModule()
-	if type(InputFactoryModuleLib) == "table" and type(InputFactoryModuleLib.create) == "function" then
-		return InputFactoryModuleLib
-	end
-	InputFactoryModuleLib = optionalModuleWithContract(
-		"elementsInputFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Input elements will use built-in fallback."
-	)
-	return InputFactoryModuleLib
+	return resolveRuntimeModule("resolveInputFactoryModule")
 end
+
 local function resolveDropdownFactoryModule()
-	if type(DropdownFactoryModuleLib) == "table" and type(DropdownFactoryModuleLib.create) == "function" then
-		return DropdownFactoryModuleLib
-	end
-	DropdownFactoryModuleLib = optionalModuleWithContract(
-		"elementsDropdownFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Dropdown elements will use built-in fallback."
-	)
-	return DropdownFactoryModuleLib
+	return resolveRuntimeModule("resolveDropdownFactoryModule")
 end
+
 local function resolveKeybindFactoryModule()
-	if type(KeybindFactoryModuleLib) == "table" and type(KeybindFactoryModuleLib.create) == "function" then
-		return KeybindFactoryModuleLib
-	end
-	KeybindFactoryModuleLib = optionalModuleWithContract(
-		"elementsKeybindFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Keybind elements will use built-in fallback."
-	)
-	return KeybindFactoryModuleLib
+	return resolveRuntimeModule("resolveKeybindFactoryModule")
 end
+
 local function resolveToggleFactoryModule()
-	if type(ToggleFactoryModuleLib) == "table" and type(ToggleFactoryModuleLib.create) == "function" then
-		return ToggleFactoryModuleLib
-	end
-	ToggleFactoryModuleLib = optionalModuleWithContract(
-		"elementsToggleFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Toggle elements will use built-in fallback."
-	)
-	return ToggleFactoryModuleLib
+	return resolveRuntimeModule("resolveToggleFactoryModule")
 end
+
 local function resolveSliderFactoryModule()
-	if type(SliderFactoryModuleLib) == "table" and type(SliderFactoryModuleLib.create) == "function" then
-		return SliderFactoryModuleLib
-	end
-	SliderFactoryModuleLib = optionalModuleWithContract(
-		"elementsSliderFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Slider elements will use built-in fallback."
-	)
-	return SliderFactoryModuleLib
+	return resolveRuntimeModule("resolveSliderFactoryModule")
 end
+
 local function resolveTabManagerModule()
-	if type(TabManagerModuleLib) == "table" and type(TabManagerModuleLib.create) == "function" then
-		return TabManagerModuleLib
-	end
-	TabManagerModuleLib = optionalModuleWithContract(
-		"elementsTabManager",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Tab manager will use built-in fallback."
-	)
-	return TabManagerModuleLib
+	return resolveRuntimeModule("resolveTabManagerModule")
 end
+
 local function resolveHoverProviderModule()
-	if type(HoverProviderModuleLib) == "table" and type(HoverProviderModuleLib.create) == "function" then
-		return HoverProviderModuleLib
-	end
-	HoverProviderModuleLib = optionalModuleWithContract(
-		"elementsHoverProvider",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Hover provider will use built-in fallback."
-	)
-	return HoverProviderModuleLib
+	return resolveRuntimeModule("resolveHoverProviderModule")
 end
+
 local function resolveTooltipEngineModule()
-	if type(TooltipEngineModuleLib) == "table" and type(TooltipEngineModuleLib.create) == "function" then
-		return TooltipEngineModuleLib
-	end
-	TooltipEngineModuleLib = optionalModuleWithContract(
-		"elementsTooltipEngine",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Tooltip engine will use built-in fallback."
-	)
-	return TooltipEngineModuleLib
+	return resolveRuntimeModule("resolveTooltipEngineModule")
 end
+
 local function resolveWidgetAPIInjectorModule()
-	if type(WidgetAPIInjectorModuleLib) == "table" and type(WidgetAPIInjectorModuleLib.inject) == "function" then
-		return WidgetAPIInjectorModuleLib
-	end
-	WidgetAPIInjectorModuleLib = optionalModuleWithContract(
-		"elementsWidgetAPIInjector",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.inject) == "function"
-		end,
-		"Widget injector will use built-in fallback."
-	)
-	return WidgetAPIInjectorModuleLib
+	return resolveRuntimeModule("resolveWidgetAPIInjectorModule")
 end
+
 local function resolveMathUtilsModule()
-	if type(MathUtilsModuleLib) == "table" then
-		return MathUtilsModuleLib
-	end
-	MathUtilsModuleLib = optionalModuleWithContract(
-		"elementsMathUtils",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.clampNumber) == "function"
-		end,
-		"Math utility helpers will use built-in fallback."
-	)
-	return MathUtilsModuleLib
+	return resolveRuntimeModule("resolveMathUtilsModule")
 end
+
 local function resolveResourceGuardModule()
-	if type(ResourceGuardModuleLib) == "table" and type(ResourceGuardModuleLib.create) == "function" then
-		return ResourceGuardModuleLib
-	end
-	ResourceGuardModuleLib = optionalModuleWithContract(
-		"elementsResourceGuard",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Resource guard will use built-in fallback."
-	)
-	return ResourceGuardModuleLib
+	return resolveRuntimeModule("resolveResourceGuardModule")
 end
+
+local function resolveSectionFactoryModule()
+	return resolveRuntimeModule("resolveSectionFactoryModule")
+end
+
+local function resolveControlRegistryModule()
+	return resolveRuntimeModule("resolveControlRegistryModule")
+end
+
+local function resolveLoggingProviderModule()
+	return resolveRuntimeModule("resolveLoggingProviderModule")
+end
+
+local function resolveTooltipProviderModule()
+	return resolveRuntimeModule("resolveTooltipProviderModule")
+end
+
 local function resolveGridBuilderModule()
-	if type(GridBuilderModuleLib) == "table" and type(GridBuilderModuleLib.create) == "function" then
-		return GridBuilderModuleLib
-	end
-	GridBuilderModuleLib = optionalModuleWithContract(
-		"elementsGridBuilder",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Grid builder will use direct factory fallback."
-	)
-	return GridBuilderModuleLib
+	return resolveRuntimeModule("resolveGridBuilderModule")
 end
+
 local function resolveChartBuilderModule()
-	if type(ChartBuilderModuleLib) == "table" and type(ChartBuilderModuleLib.create) == "function" then
-		return ChartBuilderModuleLib
-	end
-	ChartBuilderModuleLib = optionalModuleWithContract(
-		"elementsChartBuilder",
-		function(moduleValue)
-			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-		end,
-		"Chart builder will use direct factory fallback."
-	)
-	return ChartBuilderModuleLib
+	return resolveRuntimeModule("resolveChartBuilderModule")
 end
+
 local function resolveRangeBarsFactoryModule()
-	if type(RangeBarsFactoryModuleLib) == "table"
-		and type(RangeBarsFactoryModuleLib.createTrackBar) == "function"
-		and type(RangeBarsFactoryModuleLib.createStatusBar) == "function" then
-		return RangeBarsFactoryModuleLib
-	end
-	RangeBarsFactoryModuleLib = optionalModuleWithContract(
-		"elementsRangeBarsFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table"
-				and type(moduleValue.createTrackBar) == "function"
-				and type(moduleValue.createStatusBar) == "function"
-		end,
-		"Range bar widgets will be unavailable."
-	)
-	return RangeBarsFactoryModuleLib
+	return resolveRuntimeModule("resolveRangeBarsFactoryModule")
 end
+
 local function resolveFeedbackWidgetsFactoryModule()
-	if type(FeedbackWidgetsFactoryModuleLib) == "table"
-		and type(FeedbackWidgetsFactoryModuleLib.createLogConsole) == "function"
-		and type(FeedbackWidgetsFactoryModuleLib.createLoadingSpinner) == "function"
-		and type(FeedbackWidgetsFactoryModuleLib.createLoadingBar) == "function" then
-		return FeedbackWidgetsFactoryModuleLib
-	end
-	FeedbackWidgetsFactoryModuleLib = optionalModuleWithContract(
-		"elementsFeedbackWidgetsFactory",
-		function(moduleValue)
-			return type(moduleValue) == "table"
-				and type(moduleValue.createLogConsole) == "function"
-				and type(moduleValue.createLoadingSpinner) == "function"
-				and type(moduleValue.createLoadingBar) == "function"
-		end,
-		"Feedback widgets will be unavailable."
-	)
-	return FeedbackWidgetsFactoryModuleLib
+	return resolveRuntimeModule("resolveFeedbackWidgetsFactoryModule")
+end
+
+local function resolveComponentWidgetsFactoryModule()
+	return resolveRuntimeModule("resolveComponentWidgetsFactoryModule")
 end
 
 -- Services
@@ -16060,6 +16240,82 @@ if type(ShareCodeSystem) ~= "table" then
 		end,
 		notifyStatus = function()
 			return
+		end
+	}
+end
+
+local DiscordInviteSystem = nil
+if type(EntryDiscordInviteServiceLib) == "table" and type(EntryDiscordInviteServiceLib.create) == "function" then
+	local okDiscordInvite, discordInviteOrErr = pcall(EntryDiscordInviteServiceLib.create, {
+		ensureFolder = ensureFolder,
+		callSafely = callSafely,
+		isfileFn = isfile,
+		writefileFn = writefile,
+		requestFunc = requestFunc,
+		httpService = HttpService,
+		rayfieldFolder = RayfieldFolder,
+		configurationExtension = ConfigurationExtension,
+		useStudio = useStudio
+	})
+	if okDiscordInvite and type(discordInviteOrErr) == "table" then
+		DiscordInviteSystem = discordInviteOrErr
+	else
+		warn("Rayfield Mod: [W_DISCORD_INVITE_SERVICE] " .. tostring(discordInviteOrErr))
+	end
+end
+
+if type(DiscordInviteSystem) ~= "table" then
+	DiscordInviteSystem = {
+		handle = function()
+			return false, "Discord invite service unavailable."
+		end
+	}
+end
+
+local KeySystemRuntime = nil
+if type(EntryKeySystemServiceLib) == "table" and type(EntryKeySystemServiceLib.create) == "function" then
+	local okKeySystem, keySystemOrErr = pcall(EntryKeySystemServiceLib.create, {
+		ensureFolder = ensureFolder,
+		callSafely = callSafely,
+		isfileFn = isfile,
+		readfileFn = readfile,
+		writefileFn = writefile,
+		rayfieldFolder = RayfieldFolder,
+		configurationExtension = ConfigurationExtension,
+		requestHttpGet = function(url)
+			return game:HttpGet(url)
+		end,
+		requestObjects = function(assetId)
+			return game:GetObjects(assetId)
+		end,
+		players = Players,
+		coreGui = CoreGui,
+		gameRef = game,
+		animation = Animation,
+		tweenInfo = TweenInfo,
+		enumTable = Enum,
+		taskLib = task,
+		print = print,
+		warn = warn,
+		useStudio = useStudio
+	})
+	if okKeySystem and type(keySystemOrErr) == "table" then
+		KeySystemRuntime = keySystemOrErr
+	else
+		warn("Rayfield Mod: [W_KEY_SYSTEM_SERVICE] " .. tostring(keySystemOrErr))
+	end
+end
+
+if type(KeySystemRuntime) ~= "table" then
+	KeySystemRuntime = {
+		handle = function(_, runtimeOptions)
+			if type(runtimeOptions) == "table" and type(runtimeOptions.setPassthrough) == "function" then
+				runtimeOptions.setPassthrough(true)
+			end
+			return {
+				handled = false,
+				abortWindowCreation = false
+			}
 		end
 	}
 end
@@ -19570,220 +19826,31 @@ function RayfieldLibrary:CreateWindow(Settings)
 		end
 	end
 
-	if Settings.Discord and Settings.Discord.Enabled and not useStudio then
-		ensureFolder(RayfieldFolder.."/Discord Invites")
-
-		if callSafely(isfile, RayfieldFolder.."/Discord Invites".."/"..Settings.Discord.Invite..ConfigurationExtension) then
-			if requestFunc then
-				pcall(function()
-					requestFunc({
-						Url = 'http://127.0.0.1:6463/rpc?v=1',
-						Method = 'POST',
-						Headers = {
-							['Content-Type'] = 'application/json',
-							Origin = 'https://discord.com'
-						},
-						Body = HttpService:JSONEncode({
-							cmd = 'INVITE_BROWSER',
-							nonce = HttpService:GenerateGUID(false),
-							args = {code = Settings.Discord.Invite}
-						})
-					})
-				end)
-			end
-
-			if Settings.Discord.RememberJoins then -- We do logic this way so if the developer changes this setting, the user still won't be prompted, only new users
-				callSafely(writefile, RayfieldFolder.."/Discord Invites".."/"..Settings.Discord.Invite..ConfigurationExtension,"Rayfield RememberJoins is true for this invite, this invite will not ask you to join again")
-			end
+	if type(DiscordInviteSystem) == "table" and type(DiscordInviteSystem.handle) == "function" then
+		local okDiscordInvite, discordInviteErr = pcall(DiscordInviteSystem.handle, Settings, {
+			useStudio = useStudio
+		})
+		if not okDiscordInvite then
+			warn("Rayfield Mod: [W_DISCORD_INVITE_RUNTIME] " .. tostring(discordInviteErr))
 		end
 	end
 
-	if (Settings.KeySystem) then
-		if not Settings.KeySettings then
+	if Settings.KeySystem then
+		local okKeyRuntime, keyRuntimeOrErr = pcall(KeySystemRuntime.handle, Settings, {
+			useStudio = useStudio,
+			scriptRef = script,
+			compatibility = Compatibility,
+			rayfield = Rayfield,
+			rayfieldLibrary = RayfieldLibrary,
+			setPassthrough = function(value)
+				Passthrough = value == true
+			end
+		})
+		if not okKeyRuntime then
+			warn("Rayfield Mod: [W_KEY_SYSTEM_RUNTIME] " .. tostring(keyRuntimeOrErr))
 			Passthrough = true
+		elseif type(keyRuntimeOrErr) == "table" and keyRuntimeOrErr.abortWindowCreation == true then
 			return
-		end
-
-		ensureFolder(RayfieldFolder.."/Key System")
-
-		if typeof(Settings.KeySettings.Key) == "string" then Settings.KeySettings.Key = {Settings.KeySettings.Key} end
-
-		if Settings.KeySettings.GrabKeyFromSite then
-			for i, Key in ipairs(Settings.KeySettings.Key) do
-				local Success, Response = pcall(function()
-					Settings.KeySettings.Key[i] = tostring(game:HttpGet(Key):gsub("[\n\r]", " "))
-					Settings.KeySettings.Key[i] = string.gsub(Settings.KeySettings.Key[i], " ", "")
-				end)
-				if not Success then
-					print("Rayfield | "..Key.." Error " ..tostring(Response))
-					warn('Check docs.sirius.menu for help with Rayfield specific development.')
-				end
-			end
-		end
-
-		if not Settings.KeySettings.FileName then
-			Settings.KeySettings.FileName = "No file name specified"
-		end
-
-		if callSafely(isfile, RayfieldFolder.."/Key System".."/"..Settings.KeySettings.FileName..ConfigurationExtension) then
-			for _, MKey in ipairs(Settings.KeySettings.Key) do
-				local savedKeys = callSafely(readfile, RayfieldFolder.."/Key System".."/"..Settings.KeySettings.FileName..ConfigurationExtension)
-				if savedKeys and string.find(savedKeys, MKey) then
-					Passthrough = true
-				end
-			end
-		end
-
-		if not Passthrough then
-			local AttemptsRemaining = math.random(2, 5)
-			Rayfield.Enabled = false
-			local KeyUI = useStudio and script.Parent:FindFirstChild('Key') or game:GetObjects("rbxassetid://11380036235")[1]
-
-			KeyUI.Enabled = true
-
-			local keyUiContainer = nil
-			if Compatibility and type(Compatibility.protectAndParent) == "function" then
-				keyUiContainer = Compatibility.protectAndParent(KeyUI, nil, {
-					useStudio = useStudio
-				})
-			elseif not useStudio then
-				KeyUI.Parent = CoreGui
-				keyUiContainer = CoreGui
-			end
-
-			if Compatibility and type(Compatibility.dedupeGuiByName) == "function" then
-				Compatibility.dedupeGuiByName(keyUiContainer, KeyUI.Name, KeyUI, "-Old")
-			elseif not useStudio and keyUiContainer then
-				for _, Interface in ipairs(keyUiContainer:GetChildren()) do
-					if Interface.Name == KeyUI.Name and Interface ~= KeyUI then
-						Interface.Enabled = false
-						Interface.Name = "KeyUI-Old"
-					end
-				end
-			end
-
-			local KeyMain = KeyUI.Main
-			KeyMain.Title.Text = Settings.KeySettings.Title or Settings.Name
-			KeyMain.Subtitle.Text = Settings.KeySettings.Subtitle or "Key System"
-			KeyMain.NoteMessage.Text = Settings.KeySettings.Note or "No instructions"
-
-			KeyMain.Size = UDim2.new(0, 467, 0, 175)
-			KeyMain.BackgroundTransparency = 1
-			KeyMain.Shadow.Image.ImageTransparency = 1
-			KeyMain.Title.TextTransparency = 1
-			KeyMain.Subtitle.TextTransparency = 1
-			KeyMain.KeyNote.TextTransparency = 1
-			KeyMain.Input.BackgroundTransparency = 1
-			KeyMain.Input.UIStroke.Transparency = 1
-			KeyMain.Input.InputBox.TextTransparency = 1
-			KeyMain.NoteTitle.TextTransparency = 1
-			KeyMain.NoteMessage.TextTransparency = 1
-			KeyMain.Hide.ImageTransparency = 1
-
-			Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-			Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 187)}):Play()
-			Animation:Create(KeyMain.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 0.5}):Play()
-			task.wait(0.05)
-			Animation:Create(KeyMain.Title, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			Animation:Create(KeyMain.Subtitle, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			task.wait(0.05)
-			Animation:Create(KeyMain.KeyNote, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			Animation:Create(KeyMain.Input, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0}):Play()
-			Animation:Create(KeyMain.Input.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
-			Animation:Create(KeyMain.Input.InputBox, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			task.wait(0.05)
-			Animation:Create(KeyMain.NoteTitle, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			Animation:Create(KeyMain.NoteMessage, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 0}):Play()
-			task.wait(0.15)
-			Animation:Create(KeyMain.Hide, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {ImageTransparency = 0.3}):Play()
-
-
-			KeyUI.Main.Input.InputBox.FocusLost:Connect(function()
-				if #KeyUI.Main.Input.InputBox.Text == 0 then return end
-				local KeyFound = false
-				local FoundKey = ''
-				for _, MKey in ipairs(Settings.KeySettings.Key) do
-					--if string.find(KeyMain.Input.InputBox.Text, MKey) then
-					--	KeyFound = true
-					--	FoundKey = MKey
-					--end
-
-
-					-- stricter key check
-					if KeyMain.Input.InputBox.Text == MKey then
-						KeyFound = true
-						FoundKey = MKey
-					end
-				end
-				if KeyFound then 
-					Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-					Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 467, 0, 175)}):Play()
-					Animation:Create(KeyMain.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-					Animation:Create(KeyMain.Title, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.Subtitle, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.KeyNote, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.Input, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-					Animation:Create(KeyMain.Input.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-					Animation:Create(KeyMain.Input.InputBox, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.NoteTitle, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.NoteMessage, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-					Animation:Create(KeyMain.Hide, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-					task.wait(0.51)
-					Passthrough = true
-					KeyMain.Visible = false
-					if Settings.KeySettings.SaveKey then
-						callSafely(writefile, RayfieldFolder.."/Key System".."/"..Settings.KeySettings.FileName..ConfigurationExtension, FoundKey)
-						RayfieldLibrary:Notify({Title = "Key System", Content = "The key for this script has been saved successfully.", Image = 3605522284})
-					end
-				else
-					if AttemptsRemaining == 0 then
-						Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-						Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 467, 0, 175)}):Play()
-						Animation:Create(KeyMain.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-						Animation:Create(KeyMain.Title, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.Subtitle, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.KeyNote, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.Input, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-						Animation:Create(KeyMain.Input.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-						Animation:Create(KeyMain.Input.InputBox, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.NoteTitle, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.NoteMessage, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-						Animation:Create(KeyMain.Hide, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-						task.wait(0.45)
-						Players.LocalPlayer:Kick("No Attempts Remaining")
-						game:Shutdown()
-					end
-					KeyMain.Input.InputBox.Text = ""
-					AttemptsRemaining = AttemptsRemaining - 1
-					Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 467, 0, 175)}):Play()
-					Animation:Create(KeyMain, TweenInfo.new(0.4, Enum.EasingStyle.Elastic), {Position = UDim2.new(0.495,0,0.5,0)}):Play()
-					task.wait(0.1)
-					Animation:Create(KeyMain, TweenInfo.new(0.4, Enum.EasingStyle.Elastic), {Position = UDim2.new(0.505,0,0.5,0)}):Play()
-					task.wait(0.1)
-					Animation:Create(KeyMain, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {Position = UDim2.new(0.5,0,0.5,0)}):Play()
-					Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 500, 0, 187)}):Play()
-				end
-			end)
-
-			KeyMain.Hide.MouseButton1Click:Connect(function()
-				Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				Animation:Create(KeyMain, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Size = UDim2.new(0, 467, 0, 175)}):Play()
-				Animation:Create(KeyMain.Shadow.Image, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				Animation:Create(KeyMain.Title, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.Subtitle, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.KeyNote, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.Input, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {BackgroundTransparency = 1}):Play()
-				Animation:Create(KeyMain.Input.UIStroke, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
-				Animation:Create(KeyMain.Input.InputBox, TweenInfo.new(0.5, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.NoteTitle, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.NoteMessage, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
-				Animation:Create(KeyMain.Hide, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {ImageTransparency = 1}):Play()
-				task.wait(0.51)
-				RayfieldLibrary:Destroy()
-				KeyUI:Destroy()
-			end)
-		else
-			Passthrough = true
 		end
 	end
 	if Settings.KeySystem then
@@ -19943,42 +20010,52 @@ function RayfieldLibrary:CreateWindow(Settings)
 			return false, "Localization reset unavailable."
 		end,
 		localizeSystemString = localizeString,
-		DataGridFactoryModule = DataGridFactoryModuleLib,
+		DataGridFactoryModule = getLoadedRuntimeModule("elementsDataGridFactory"),
 		ResolveDataGridFactory = resolveDataGridFactoryModule,
-		ChartFactoryModule = ChartFactoryModuleLib,
+		ChartFactoryModule = getLoadedRuntimeModule("elementsChartFactory"),
 		ResolveChartFactory = resolveChartFactoryModule,
-		GridBuilderModule = GridBuilderModuleLib,
+		GridBuilderModule = getLoadedRuntimeModule("elementsGridBuilder"),
 		ResolveGridBuilderModule = resolveGridBuilderModule,
-		ChartBuilderModule = ChartBuilderModuleLib,
+		ChartBuilderModule = getLoadedRuntimeModule("elementsChartBuilder"),
 		ResolveChartBuilderModule = resolveChartBuilderModule,
-		RangeBarsFactoryModule = RangeBarsFactoryModuleLib,
+		RangeBarsFactoryModule = getLoadedRuntimeModule("elementsRangeBarsFactory"),
 		ResolveRangeBarsFactoryModule = resolveRangeBarsFactoryModule,
-		FeedbackWidgetsFactoryModule = FeedbackWidgetsFactoryModuleLib,
+		FeedbackWidgetsFactoryModule = getLoadedRuntimeModule("elementsFeedbackWidgetsFactory"),
 		ResolveFeedbackWidgetsFactoryModule = resolveFeedbackWidgetsFactoryModule,
-		ButtonFactoryModule = ButtonFactoryModuleLib,
+		ButtonFactoryModule = getLoadedRuntimeModule("elementsButtonFactory"),
 		ResolveButtonFactory = resolveButtonFactoryModule,
-		InputFactoryModule = InputFactoryModuleLib,
+		InputFactoryModule = getLoadedRuntimeModule("elementsInputFactory"),
 		ResolveInputFactory = resolveInputFactoryModule,
-		DropdownFactoryModule = DropdownFactoryModuleLib,
+		DropdownFactoryModule = getLoadedRuntimeModule("elementsDropdownFactory"),
 		ResolveDropdownFactory = resolveDropdownFactoryModule,
-		KeybindFactoryModule = KeybindFactoryModuleLib,
+		KeybindFactoryModule = getLoadedRuntimeModule("elementsKeybindFactory"),
 		ResolveKeybindFactory = resolveKeybindFactoryModule,
-		ToggleFactoryModule = ToggleFactoryModuleLib,
+		ToggleFactoryModule = getLoadedRuntimeModule("elementsToggleFactory"),
 		ResolveToggleFactory = resolveToggleFactoryModule,
-		SliderFactoryModule = SliderFactoryModuleLib,
+		SliderFactoryModule = getLoadedRuntimeModule("elementsSliderFactory"),
 		ResolveSliderFactory = resolveSliderFactoryModule,
-		TabManagerModule = TabManagerModuleLib,
+		TabManagerModule = getLoadedRuntimeModule("elementsTabManager"),
 		ResolveTabManagerModule = resolveTabManagerModule,
-		HoverProviderModule = HoverProviderModuleLib,
+		HoverProviderModule = getLoadedRuntimeModule("elementsHoverProvider"),
 		ResolveHoverProviderModule = resolveHoverProviderModule,
-		TooltipEngineModule = TooltipEngineModuleLib,
+		TooltipEngineModule = getLoadedRuntimeModule("elementsTooltipEngine"),
 		ResolveTooltipEngineModule = resolveTooltipEngineModule,
-		WidgetAPIInjectorModule = WidgetAPIInjectorModuleLib,
+		TooltipProviderModule = getLoadedRuntimeModule("elementsTooltipProvider"),
+		ResolveTooltipProviderModule = resolveTooltipProviderModule,
+		LoggingProviderModule = getLoadedRuntimeModule("elementsLoggingProvider"),
+		ResolveLoggingProviderModule = resolveLoggingProviderModule,
+		WidgetAPIInjectorModule = getLoadedRuntimeModule("elementsWidgetAPIInjector"),
 		ResolveWidgetAPIInjectorModule = resolveWidgetAPIInjectorModule,
-		MathUtilsModule = MathUtilsModuleLib,
+		MathUtilsModule = getLoadedRuntimeModule("elementsMathUtils"),
 		ResolveMathUtilsModule = resolveMathUtilsModule,
-		ResourceGuardModule = ResourceGuardModuleLib,
+		ResourceGuardModule = getLoadedRuntimeModule("elementsResourceGuard"),
 		ResolveResourceGuardModule = resolveResourceGuardModule,
+		SectionFactoryModule = getLoadedRuntimeModule("elementsSectionFactory"),
+		ResolveSectionFactoryModule = resolveSectionFactoryModule,
+		ControlRegistryModule = getLoadedRuntimeModule("elementsControlRegistry"),
+		ResolveControlRegistryModule = resolveControlRegistryModule,
+		ComponentWidgetsFactoryModule = getLoadedRuntimeModule("elementsComponentWidgetsFactory"),
+		ResolveComponentWidgetsFactoryModule = resolveComponentWidgetsFactoryModule,
 		showContextMenu = function(items, anchor)
 			if UIStateSystem and type(UIStateSystem.ShowContextMenu) == "function" then
 				return UIStateSystem.ShowContextMenu(items, anchor)
@@ -20876,6 +20953,435 @@ end)
 return RayfieldLibrary
 
 ]=])
+put("src/entry/services/discord-invite.lua", [[local DiscordInviteService = {}
+
+function DiscordInviteService.create(options)
+	options = type(options) == "table" and options or {}
+
+	local ensureFolder = options.ensureFolder
+	local callSafely = options.callSafely
+	local isfileFn = options.isfileFn or isfile
+	local writefileFn = options.writefileFn or writefile
+	local requestFunc = options.requestFunc
+	local httpService = options.httpService
+	local rayfieldFolder = tostring(options.rayfieldFolder or "Rayfield")
+	local configurationExtension = tostring(options.configurationExtension or ".rfld")
+	local defaultUseStudio = options.useStudio == true
+
+	local service = {}
+
+	function service.handle(settings, runtimeOptions)
+		settings = type(settings) == "table" and settings or {}
+		runtimeOptions = type(runtimeOptions) == "table" and runtimeOptions or {}
+
+		local useStudio = defaultUseStudio
+		if runtimeOptions.useStudio ~= nil then
+			useStudio = runtimeOptions.useStudio == true
+		end
+
+		local discordSettings = type(settings.Discord) == "table" and settings.Discord or nil
+		if not discordSettings or discordSettings.Enabled ~= true or useStudio then
+			return false
+		end
+
+		local inviteCode = tostring(discordSettings.Invite or "")
+		if inviteCode == "" then
+			return false, "missing_invite"
+		end
+
+		local inviteFolder = rayfieldFolder .. "/Discord Invites"
+		local inviteMarker = inviteFolder .. "/" .. inviteCode .. configurationExtension
+
+		if type(ensureFolder) == "function" then
+			ensureFolder(inviteFolder)
+		end
+
+		-- Preserve legacy behaviour: only prompt when marker file exists.
+		if type(callSafely) == "function" and callSafely(isfileFn, inviteMarker) then
+			if type(requestFunc) == "function"
+				and type(httpService) == "table"
+				and type(httpService.JSONEncode) == "function"
+				and type(httpService.GenerateGUID) == "function" then
+				pcall(function()
+					requestFunc({
+						Url = "http://127.0.0.1:6463/rpc?v=1",
+						Method = "POST",
+						Headers = {
+							["Content-Type"] = "application/json",
+							Origin = "https://discord.com"
+						},
+						Body = httpService:JSONEncode({
+							cmd = "INVITE_BROWSER",
+							nonce = httpService:GenerateGUID(false),
+							args = { code = inviteCode }
+						})
+					})
+				end)
+			end
+
+			if discordSettings.RememberJoins and type(callSafely) == "function" then
+				callSafely(
+					writefileFn,
+					inviteMarker,
+					"Rayfield RememberJoins is true for this invite, this invite will not ask you to join again"
+				)
+			end
+		end
+
+		return true
+	end
+
+	return service
+end
+
+return DiscordInviteService
+]])
+put("src/entry/services/key-system.lua", [[local KeySystemService = {}
+
+local function noop()
+	return
+end
+
+local function resolveKeyUi(useStudio, scriptRef, requestObjects)
+	if useStudio and scriptRef and scriptRef.Parent and type(scriptRef.Parent.FindFirstChild) == "function" then
+		return scriptRef.Parent:FindFirstChild("Key")
+	end
+	if type(requestObjects) ~= "function" then
+		return nil
+	end
+	local okObjects, objectsOrErr = pcall(requestObjects, "rbxassetid://11380036235")
+	if not okObjects or type(objectsOrErr) ~= "table" then
+		return nil
+	end
+	return objectsOrErr[1]
+end
+
+local function createCloseAnimator(options)
+	local animation = options.animation
+	local tweenInfo = options.tweenInfo
+	local enumTable = options.enumTable
+
+	local function animate(target, duration, style, props)
+		if not target or type(target) ~= "userdata" and type(target) ~= "table" then
+			return
+		end
+		if type(animation) ~= "table" or type(animation.Create) ~= "function" then
+			return
+		end
+		if type(tweenInfo) ~= "table" or type(tweenInfo.new) ~= "function" then
+			return
+		end
+		if type(enumTable) ~= "table"
+			or type(enumTable.EasingStyle) ~= "table"
+			or enumTable.EasingStyle[style] == nil then
+			return
+		end
+		local okTween, tweenOrErr = pcall(animation.Create, animation, target, tweenInfo.new(duration, enumTable.EasingStyle[style]), props)
+		if okTween and tweenOrErr and type(tweenOrErr.Play) == "function" then
+			pcall(tweenOrErr.Play, tweenOrErr)
+		end
+	end
+
+	return function(keyMain)
+		if not keyMain then
+			return
+		end
+		animate(keyMain, 0.6, "Exponential", { BackgroundTransparency = 1 })
+		animate(keyMain, 0.6, "Exponential", { Size = UDim2.new(0, 467, 0, 175) })
+		if keyMain.Shadow and keyMain.Shadow.Image then
+			animate(keyMain.Shadow.Image, 0.5, "Exponential", { ImageTransparency = 1 })
+		end
+		if keyMain.Title then
+			animate(keyMain.Title, 0.4, "Exponential", { TextTransparency = 1 })
+		end
+		if keyMain.Subtitle then
+			animate(keyMain.Subtitle, 0.5, "Exponential", { TextTransparency = 1 })
+		end
+		if keyMain.KeyNote then
+			animate(keyMain.KeyNote, 0.5, "Exponential", { TextTransparency = 1 })
+		end
+		if keyMain.Input then
+			animate(keyMain.Input, 0.5, "Exponential", { BackgroundTransparency = 1 })
+			if keyMain.Input.UIStroke then
+				animate(keyMain.Input.UIStroke, 0.5, "Exponential", { Transparency = 1 })
+			end
+			if keyMain.Input.InputBox then
+				animate(keyMain.Input.InputBox, 0.5, "Exponential", { TextTransparency = 1 })
+			end
+		end
+		if keyMain.NoteTitle then
+			animate(keyMain.NoteTitle, 0.4, "Exponential", { TextTransparency = 1 })
+		end
+		if keyMain.NoteMessage then
+			animate(keyMain.NoteMessage, 0.4, "Exponential", { TextTransparency = 1 })
+		end
+		if keyMain.Hide then
+			animate(keyMain.Hide, 0.4, "Exponential", { ImageTransparency = 1 })
+		end
+	end
+end
+
+function KeySystemService.create(options)
+	options = type(options) == "table" and options or {}
+
+	local ensureFolder = options.ensureFolder
+	local callSafely = options.callSafely
+	local isfileFn = options.isfileFn or isfile
+	local readfileFn = options.readfileFn or readfile
+	local writefileFn = options.writefileFn or writefile
+	local rayfieldFolder = tostring(options.rayfieldFolder or "Rayfield")
+	local configurationExtension = tostring(options.configurationExtension or ".rfld")
+	local requestHttpGet = options.requestHttpGet
+	local requestObjects = options.requestObjects
+	local players = options.players
+	local coreGui = options.coreGui
+	local gameRef = options.gameRef or game
+	local animation = options.animation
+	local tweenInfo = options.tweenInfo or TweenInfo
+	local enumTable = options.enumTable or Enum
+	local taskLib = options.taskLib or task
+	local printFn = type(options.print) == "function" and options.print or print
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local defaultUseStudio = options.useStudio == true
+
+	local closeKeyMain = createCloseAnimator({
+		animation = animation,
+		tweenInfo = tweenInfo,
+		enumTable = enumTable
+	})
+
+	local service = {}
+
+	function service.handle(settings, runtimeOptions)
+		settings = type(settings) == "table" and settings or {}
+		runtimeOptions = type(runtimeOptions) == "table" and runtimeOptions or {}
+
+		local setPassthrough = type(runtimeOptions.setPassthrough) == "function" and runtimeOptions.setPassthrough or noop
+		local useStudio = defaultUseStudio
+		if runtimeOptions.useStudio ~= nil then
+			useStudio = runtimeOptions.useStudio == true
+		end
+		local scriptRef = runtimeOptions.scriptRef
+		local compatibility = runtimeOptions.compatibility
+		local rayfield = runtimeOptions.rayfield
+		local rayfieldLibrary = runtimeOptions.rayfieldLibrary
+
+		if settings.KeySystem ~= true then
+			return { handled = false }
+		end
+		if type(settings.KeySettings) ~= "table" then
+			setPassthrough(true)
+			return {
+				handled = true,
+				abortWindowCreation = true,
+				reason = "missing_key_settings"
+			}
+		end
+
+		if type(ensureFolder) == "function" then
+			ensureFolder(rayfieldFolder .. "/Key System")
+		end
+
+		if type(settings.KeySettings.Key) == "string" then
+			settings.KeySettings.Key = { settings.KeySettings.Key }
+		end
+		if type(settings.KeySettings.Key) ~= "table" then
+			settings.KeySettings.Key = {}
+		end
+
+		if settings.KeySettings.GrabKeyFromSite then
+			for index, keyUrl in ipairs(settings.KeySettings.Key) do
+				local success, response = pcall(function()
+					if type(requestHttpGet) ~= "function" then
+						error("HttpGet unavailable")
+					end
+					local fetched = tostring(requestHttpGet(keyUrl) or "")
+					fetched = fetched:gsub("[\n\r]", " ")
+					fetched = string.gsub(fetched, " ", "")
+					settings.KeySettings.Key[index] = fetched
+				end)
+				if not success then
+					printFn("Rayfield | " .. tostring(keyUrl) .. " Error " .. tostring(response))
+					warnFn("Check docs.sirius.menu for help with Rayfield specific development.")
+				end
+			end
+		end
+
+		if not settings.KeySettings.FileName then
+			settings.KeySettings.FileName = "No file name specified"
+		end
+
+		local keyFilePath = rayfieldFolder .. "/Key System" .. "/" .. settings.KeySettings.FileName .. configurationExtension
+		if type(callSafely) == "function" and callSafely(isfileFn, keyFilePath) then
+			for _, expectedKey in ipairs(settings.KeySettings.Key) do
+				local savedKeys = callSafely(readfileFn, keyFilePath)
+				if savedKeys and string.find(savedKeys, expectedKey) then
+					setPassthrough(true)
+					break
+				end
+			end
+		end
+
+		local keyUi = nil
+		local keyMain = nil
+		local attemptsRemaining = math.random(2, 5)
+		local hasPassthrough = false
+
+		local function updatePassthrough(value)
+			hasPassthrough = value == true
+			setPassthrough(value == true)
+		end
+
+		if not hasPassthrough then
+			if type(rayfield) == "table" then
+				rayfield.Enabled = false
+			end
+
+			keyUi = resolveKeyUi(useStudio, scriptRef, requestObjects)
+			if type(keyUi) ~= "table" and type(keyUi) ~= "userdata" then
+				updatePassthrough(true)
+				return {
+					handled = true,
+					reason = "missing_key_ui"
+				}
+			end
+
+			keyUi.Enabled = true
+
+			local keyUiContainer = nil
+			if type(compatibility) == "table" and type(compatibility.protectAndParent) == "function" then
+				keyUiContainer = compatibility.protectAndParent(keyUi, nil, {
+					useStudio = useStudio
+				})
+			elseif not useStudio and coreGui then
+				keyUi.Parent = coreGui
+				keyUiContainer = coreGui
+			end
+
+			if type(compatibility) == "table" and type(compatibility.dedupeGuiByName) == "function" then
+				compatibility.dedupeGuiByName(keyUiContainer, keyUi.Name, keyUi, "-Old")
+			elseif not useStudio and keyUiContainer and type(keyUiContainer.GetChildren) == "function" then
+				for _, interface in ipairs(keyUiContainer:GetChildren()) do
+					if interface.Name == keyUi.Name and interface ~= keyUi then
+						interface.Enabled = false
+						interface.Name = "KeyUI-Old"
+					end
+				end
+			end
+
+			keyMain = keyUi.Main
+			keyMain.Title.Text = settings.KeySettings.Title or settings.Name
+			keyMain.Subtitle.Text = settings.KeySettings.Subtitle or "Key System"
+			keyMain.NoteMessage.Text = settings.KeySettings.Note or "No instructions"
+
+			keyMain.Size = UDim2.new(0, 467, 0, 175)
+			keyMain.BackgroundTransparency = 1
+			keyMain.Shadow.Image.ImageTransparency = 1
+			keyMain.Title.TextTransparency = 1
+			keyMain.Subtitle.TextTransparency = 1
+			keyMain.KeyNote.TextTransparency = 1
+			keyMain.Input.BackgroundTransparency = 1
+			keyMain.Input.UIStroke.Transparency = 1
+			keyMain.Input.InputBox.TextTransparency = 1
+			keyMain.NoteTitle.TextTransparency = 1
+			keyMain.NoteMessage.TextTransparency = 1
+			keyMain.Hide.ImageTransparency = 1
+
+			animation:Create(keyMain, tweenInfo.new(0.6, enumTable.EasingStyle.Exponential), { BackgroundTransparency = 0 }):Play()
+			animation:Create(keyMain, tweenInfo.new(0.6, enumTable.EasingStyle.Exponential), { Size = UDim2.new(0, 500, 0, 187) }):Play()
+			animation:Create(keyMain.Shadow.Image, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { ImageTransparency = 0.5 }):Play()
+			taskLib.wait(0.05)
+			animation:Create(keyMain.Title, tweenInfo.new(0.4, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			animation:Create(keyMain.Subtitle, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			taskLib.wait(0.05)
+			animation:Create(keyMain.KeyNote, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			animation:Create(keyMain.Input, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { BackgroundTransparency = 0 }):Play()
+			animation:Create(keyMain.Input.UIStroke, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { Transparency = 0 }):Play()
+			animation:Create(keyMain.Input.InputBox, tweenInfo.new(0.5, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			taskLib.wait(0.05)
+			animation:Create(keyMain.NoteTitle, tweenInfo.new(0.4, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			animation:Create(keyMain.NoteMessage, tweenInfo.new(0.4, enumTable.EasingStyle.Exponential), { TextTransparency = 0 }):Play()
+			taskLib.wait(0.15)
+			animation:Create(keyMain.Hide, tweenInfo.new(0.4, enumTable.EasingStyle.Exponential), { ImageTransparency = 0.3 }):Play()
+
+			keyUi.Main.Input.InputBox.FocusLost:Connect(function()
+				if #keyUi.Main.Input.InputBox.Text == 0 then
+					return
+				end
+				local keyFound = false
+				local foundKey = ""
+				for _, expectedKey in ipairs(settings.KeySettings.Key) do
+					if keyMain.Input.InputBox.Text == expectedKey then
+						keyFound = true
+						foundKey = expectedKey
+					end
+				end
+				if keyFound then
+					closeKeyMain(keyMain)
+					taskLib.wait(0.51)
+					updatePassthrough(true)
+					keyMain.Visible = false
+					if settings.KeySettings.SaveKey then
+						if type(callSafely) == "function" then
+							callSafely(writefileFn, keyFilePath, foundKey)
+						end
+						if type(rayfieldLibrary) == "table" and type(rayfieldLibrary.Notify) == "function" then
+							rayfieldLibrary:Notify({
+								Title = "Key System",
+								Content = "The key for this script has been saved successfully.",
+								Image = 3605522284
+							})
+						end
+					end
+				else
+					if attemptsRemaining == 0 then
+						closeKeyMain(keyMain)
+						taskLib.wait(0.45)
+						if players and players.LocalPlayer and type(players.LocalPlayer.Kick) == "function" then
+							pcall(players.LocalPlayer.Kick, players.LocalPlayer, "No Attempts Remaining")
+						end
+						if gameRef and type(gameRef.Shutdown) == "function" then
+							pcall(gameRef.Shutdown, gameRef)
+						end
+						return
+					end
+					keyMain.Input.InputBox.Text = ""
+					attemptsRemaining = attemptsRemaining - 1
+					animation:Create(keyMain, tweenInfo.new(0.6, enumTable.EasingStyle.Exponential), { Size = UDim2.new(0, 467, 0, 175) }):Play()
+					animation:Create(keyMain, tweenInfo.new(0.4, enumTable.EasingStyle.Elastic), { Position = UDim2.new(0.495, 0, 0.5, 0) }):Play()
+					taskLib.wait(0.1)
+					animation:Create(keyMain, tweenInfo.new(0.4, enumTable.EasingStyle.Elastic), { Position = UDim2.new(0.505, 0, 0.5, 0) }):Play()
+					taskLib.wait(0.1)
+					animation:Create(keyMain, tweenInfo.new(0.4, enumTable.EasingStyle.Exponential), { Position = UDim2.new(0.5, 0, 0.5, 0) }):Play()
+					animation:Create(keyMain, tweenInfo.new(0.6, enumTable.EasingStyle.Exponential), { Size = UDim2.new(0, 500, 0, 187) }):Play()
+				end
+			end)
+
+			keyMain.Hide.MouseButton1Click:Connect(function()
+				closeKeyMain(keyMain)
+				taskLib.wait(0.51)
+				if type(rayfieldLibrary) == "table" and type(rayfieldLibrary.Destroy) == "function" then
+					rayfieldLibrary:Destroy()
+				end
+				if keyUi and type(keyUi.Destroy) == "function" then
+					keyUi:Destroy()
+				end
+			end)
+		else
+			updatePassthrough(true)
+		end
+
+		return {
+			handled = true,
+			abortWindowCreation = false
+		}
+	end
+
+	return service
+end
+
+return KeySystemService
+]])
 put("src/services/compatibility.lua", [[local Compatibility = {}
 
 local DEFAULT_RUNTIME_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
@@ -21097,6 +21603,6 @@ return Logger
 
 return {
 	name = BUNDLE_NAME,
-	count = 68,
+	count = 73,
 	bundle = bundle
 }
