@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload Luacheck Debt Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: luacheck-debt-report
           path: |
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload complexity debt artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: complexity-debt-report
           path: |
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload global access debt artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: global-access-debt-report
           path: debt-reports/global-access-ratchet.txt
@@ -369,7 +369,7 @@ jobs:
         run: lua scripts/build-bundle.lua
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-bundle
           path: dist/
