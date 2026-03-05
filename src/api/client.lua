@@ -214,6 +214,13 @@ local function resolveCancelOverride(opts)
 	return nil, nil
 end
 
+local function shouldDefaultCancelOnTimeout()
+	if type(_G) == "table" and _G.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT ~= nil then
+		return _G.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT == true
+	end
+	return true
+end
+
 local function getBundleTable()
 	if type(_G) ~= "table" or type(_G.__RAYFIELD_BUNDLE_SOURCES) ~= "table" then
 		return nil
@@ -339,6 +346,10 @@ function Client.request(url, opts)
 		cancelOnTimeout = overrideCancel
 		policyMode = cancelOnTimeout and "hard" or "soft"
 		policyReason = overrideReason
+	elseif cancelOnTimeout ~= true and shouldDefaultCancelOnTimeout() then
+		cancelOnTimeout = true
+		policyMode = "hard"
+		policyReason = "default-override:__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT"
 	end
 	local completed = false
 	local okResult = false

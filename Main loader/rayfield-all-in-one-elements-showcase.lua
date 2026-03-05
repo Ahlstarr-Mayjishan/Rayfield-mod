@@ -287,19 +287,25 @@ local function createShowcaseLogger()
 
 	local function flushWholeFile(path)
 		if not writeFn then
-			return
+			return false
 		end
-		pcall(writeFn, path, table.concat(ring, "\n") .. "\n")
+		local okWrite = pcall(writeFn, path, table.concat(ring, "\n") .. "\n")
+		return okWrite == true
 	end
 
 	local function appendLine(path, lineText)
 		if appendFn then
-			local ok = pcall(appendFn, path, lineText .. "\n")
-			return ok
+			local okAppend = pcall(appendFn, path, lineText .. "\n")
+			if okAppend then
+				return true
+			end
+			if writeFn then
+				return flushWholeFile(path)
+			end
+			return false
 		end
 		if writeFn then
-			flushWholeFile(path)
-			return true
+			return flushWholeFile(path)
 		end
 		return false
 	end
@@ -458,7 +464,7 @@ local function getBootTimeoutSeconds()
 	if configured and configured > 0 then
 		return configured
 	end
-	return 30
+	return 45
 end
 
 local function getQuickSetupTimeoutSeconds()
@@ -539,6 +545,7 @@ local function tryFetchAndRun(url, label)
 	end, {
 		opKey = opKey,
 		isBlocking = false,
+		cancelOnTimeout = true,
 		onPolicyDecision = function(policyDecision, resolvedOpKey)
 			logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
 		end
@@ -639,6 +646,20 @@ local function resolveRuntimeRoots()
 	return roots
 end
 
+local function shouldRetryMirrorsOnTimeout()
+	if type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_RETRY_MIRRORS_ON_TIMEOUT ~= nil then
+		return _G.__RAYFIELD_SHOWCASE_RETRY_MIRRORS_ON_TIMEOUT == true
+	end
+	return true
+end
+
+local function allowBaseAfterAioTimeout()
+	if type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT ~= nil then
+		return _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT == true
+	end
+	return true
+end
+
 local runtimeRoots = resolveRuntimeRoots()
 local root = runtimeRoots[1] or "https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/"
 
@@ -701,8 +722,12 @@ local function tryFetchAndRunPath(path, label)
 		lastErr = resultOrErr
 		bootLog("Failed " .. tostring(path) .. " from " .. tostring(candidateRoot) .. " => " .. tostring(resultOrErr))
 		if type(resultOrErr) == "string" and string.find(resultOrErr, "^timeout", 1, false) then
-			bootLog("Timeout detected, skip mirror retries for " .. tostring(path))
-			break
+			if shouldRetryMirrorsOnTimeout() then
+				bootLog("Timeout detected, continue mirror retries for " .. tostring(path))
+			else
+				bootLog("Timeout detected, skip mirror retries for " .. tostring(path))
+				break
+			end
 		end
 	end
 	return false, lastErr, nil
@@ -735,6 +760,11 @@ local function tryBootstrapFromBase(reasons)
 end
 
 local function tryBootstrapFromAllInOne(reasons)
+	if type(_G) == "table" then
+		_G.__RAYFIELD_AIO_AUTO_EXECUTE = false
+		_G.__RAYFIELD_AIO_AUTO_EXECUTE_RETURN = "loader"
+	end
+
 	local okAllInOne, loadedOrErr, selectedRoot = tryFetchAndRunPath(
 		"Main%20loader/rayfield-all-in-one.lua",
 		"Main loader/rayfield-all-in-one.lua"
@@ -791,6 +821,7 @@ local function tryBootstrapFromAllInOne(reasons)
 			end, {
 				opKey = opKey,
 				isBlocking = true,
+				cancelOnTimeout = true,
 				onPolicyDecision = function(policyDecision, resolvedOpKey)
 					logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
 				end
@@ -874,8 +905,8 @@ local function bootstrapUI()
 			return ui
 		end
 		
-		local allowBaseAfterAioTimeout = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT == true
-		if not hasTimeoutReason() or allowBaseAfterAioTimeout then
+		local allowBaseFallbackAfterTimeout = allowBaseAfterAioTimeout()
+		if not hasTimeoutReason() or allowBaseFallbackAfterTimeout then
 			ui = tryBootstrapFromBase(reasons)
 			if isReadyUI(ui) then
 				diagnosticState.bootstrap.reasons = copyArray(reasons)
@@ -1636,11 +1667,30 @@ local function collectAutoDiagnostics(trigger)
 	end
 
 	local bootstrapReasons = diagnosticState.bootstrap.reasons or {}
+	local sawQuickSetupTimeout = false
+	local sawBaseTimeout = false
 	if #bootstrapReasons > 0 then
 		addIssue("bootstrap_warnings", "warn", "Bootstrap had fallback/errors before success.")
 		for _, reason in ipairs(bootstrapReasons) do
-			addHint("Bootstrap reason: " .. tostring(reason))
+			local reasonText = tostring(reason)
+			local normalizedReason = string.lower(reasonText)
+			if string.find(normalizedReason, "quicksetup failed", 1, true)
+				and string.find(normalizedReason, "timeout", 1, true) then
+				sawQuickSetupTimeout = true
+			end
+			if string.find(normalizedReason, "base loader failed", 1, true)
+				and string.find(normalizedReason, "timeout", 1, true) then
+				sawBaseTimeout = true
+			end
+			addHint("Bootstrap reason: " .. reasonText)
 		end
+	end
+	if sawQuickSetupTimeout and sawBaseTimeout then
+		addIssue("bootstrap_execution_timeout", "error", "QuickSetup and base loader both timed out after fetch.")
+		addHint("Execution likely stalled after source download; this is not an HttpGet fetch failure.")
+		addHint("Try _G.__RAYFIELD_SHOWCASE_PREFER_AIO = false to skip quickSetup path.")
+		addHint("Increase _G.__RAYFIELD_SHOWCASE_BOOT_TIMEOUT_SEC (for example 120 or 180).")
+		addHint("Point _G.__RAYFIELD_RUNTIME_ROOT_URL to your updated branch to avoid stale remote runtime.")
 	end
 
 	local fetchAttempts = diagnosticState.fetchAttempts or {}

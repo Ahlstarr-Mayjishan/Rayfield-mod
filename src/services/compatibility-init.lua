@@ -16,13 +16,38 @@ local function buildCompatibilityFallback(compileString, warnFn, reason)
 			if opts and opts.useStudio then
 				return nil
 			end
+			local function tryAssign(container)
+				if not container then
+					return false
+				end
+				local okAssign = pcall(function()
+					gui.Parent = container
+				end)
+				if not okAssign then
+					return false
+				end
+				return gui.Parent == container
+			end
+
 			local okCore, core = pcall(function()
 				return game:GetService("CoreGui")
 			end)
-			if okCore and core then
-				gui.Parent = core
+			if okCore and core and tryAssign(core) then
 				return core
 			end
+
+			local okPlayers, players = pcall(function()
+				return game:GetService("Players")
+			end)
+			if okPlayers and players and players.LocalPlayer then
+				local okPlayerGui, playerGui = pcall(function()
+					return players.LocalPlayer:FindFirstChild("PlayerGui") or players.LocalPlayer:WaitForChild("PlayerGui", 5)
+				end)
+				if okPlayerGui and playerGui and tryAssign(playerGui) then
+					return playerGui
+				end
+			end
+
 			return nil
 		end,
 		dedupeGuiByName = function()

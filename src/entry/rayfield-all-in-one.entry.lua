@@ -145,6 +145,23 @@ local CONFIG = {
 	}
 }
 
+local function applyGlobalOverrides()
+	if type(_G) ~= "table" then
+		return
+	end
+	if _G.__RAYFIELD_AIO_AUTO_EXECUTE ~= nil then
+		CONFIG.AUTO_EXECUTE = _G.__RAYFIELD_AIO_AUTO_EXECUTE == true
+	end
+	if _G.__RAYFIELD_AIO_AUTO_EXECUTE_RETURN ~= nil then
+		local mode = string.lower(tostring(_G.__RAYFIELD_AIO_AUTO_EXECUTE_RETURN))
+		if mode == "loader" or mode == "ui" or mode == "none" then
+			CONFIG.AUTO_EXECUTE_RETURN = mode
+		end
+	end
+end
+
+applyGlobalOverrides()
+
 local function logInfo(...)
 	print("[Rayfield]", ...)
 end

@@ -53,6 +53,53 @@ function Compatibility.tryGetHui()
 	return nil
 end
 
+local function getCompatFlags()
+	if type(_G) ~= "table" then
+		return {}
+	end
+	if type(_G.__RAYFIELD_COMPAT_FLAGS) ~= "table" then
+		_G.__RAYFIELD_COMPAT_FLAGS = {}
+	end
+	return _G.__RAYFIELD_COMPAT_FLAGS
+end
+
+local function getPlayerGui()
+	local players = Compatibility.getService("Players")
+	if players and players.LocalPlayer then
+		local playerGui = safePcall(function()
+			return players.LocalPlayer:FindFirstChild("PlayerGui") or players.LocalPlayer:WaitForChild("PlayerGui", 5)
+		end)
+		if playerGui then
+			return playerGui
+		end
+	end
+	return nil
+end
+
+local function shouldDisableHuiAfterError(errText)
+	if type(errText) ~= "string" then
+		return false
+	end
+	local lowered = string.lower(errText)
+	return string.find(lowered, "locked parent", 1, true) ~= nil
+end
+
+local function tryAssignParent(guiObject, container)
+	if not guiObject or not container then
+		return false, "parent_target_unavailable"
+	end
+	local okAssign, assignErr = pcall(function()
+		guiObject.Parent = container
+	end)
+	if not okAssign then
+		return false, tostring(assignErr)
+	end
+	if guiObject.Parent ~= container then
+		return false, "parent_assignment_rejected"
+	end
+	return true, nil
+end
+
 function Compatibility.protectGui(guiObject)
 	if not guiObject then
 		return false
@@ -81,28 +128,26 @@ function Compatibility.getGuiContainer(useStudio, preferredContainer)
 		return preferredContainer
 	end
 
+	local flags = getCompatFlags()
 	local coreGui = Compatibility.getService("CoreGui")
 	if useStudio then
 		return coreGui
 	end
 
-	local hui = Compatibility.tryGetHui()
-	if hui then
-		return hui
+	if flags.disableHui ~= true then
+		local hui = Compatibility.tryGetHui()
+		if hui then
+			return hui
+		end
 	end
 
 	if coreGui then
 		return coreGui
 	end
 
-	local players = Compatibility.getService("Players")
-	if players and players.LocalPlayer then
-		local playerGui = safePcall(function()
-			return players.LocalPlayer:FindFirstChild("PlayerGui") or players.LocalPlayer:WaitForChild("PlayerGui", 5)
-		end)
-		if playerGui then
-			return playerGui
-		end
+	local playerGui = getPlayerGui()
+	if playerGui then
+		return playerGui
 	end
 
 	return nil
@@ -115,14 +160,48 @@ function Compatibility.protectAndParent(guiObject, preferredContainer, options)
 
 	options = options or {}
 	local useStudio = options.useStudio == true
-	local container = Compatibility.getGuiContainer(useStudio, preferredContainer)
+	local flags = getCompatFlags()
+	local container = nil
 
 	if not useStudio and not Compatibility.tryGetHui() then
 		Compatibility.protectGui(guiObject)
 	end
 
-	if container then
-		guiObject.Parent = container
+	local candidates = {}
+	local huiCandidate = nil
+	local function addCandidate(candidate)
+		if not candidate then
+			return
+		end
+		for _, existing in ipairs(candidates) do
+			if existing == candidate then
+				return
+			end
+		end
+		table.insert(candidates, candidate)
+	end
+
+	addCandidate(preferredContainer)
+	if useStudio then
+		addCandidate(Compatibility.getService("CoreGui"))
+	else
+		if flags.disableHui ~= true then
+			huiCandidate = Compatibility.tryGetHui()
+			addCandidate(huiCandidate)
+		end
+		addCandidate(Compatibility.getService("CoreGui"))
+		addCandidate(getPlayerGui())
+	end
+
+	for _, candidate in ipairs(candidates) do
+		local okParent, parentErr = tryAssignParent(guiObject, candidate)
+		if okParent then
+			container = candidate
+			break
+		end
+		if candidate == huiCandidate and shouldDisableHuiAfterError(parentErr) then
+			flags.disableHui = true
+		end
 	end
 
 	return container
@@ -137,14 +216,11 @@ function Compatibility.dedupeGuiByName(container, guiName, keepInstance, oldName
 	local suffix = oldNameSuffix or "-Old"
 	for _, child in ipairs(container:GetChildren()) do
 		if child ~= keepInstance and child.Name == guiName then
-			local okEnable = pcall(function()
+			pcall(function()
 				child.Enabled = false
 			end)
-			if not okEnable then
-				-- Ignore non-LayerCollector instances sharing same name.
-			end
 			child.Name = guiName .. suffix
-			renamedCount += 1
+			renamedCount = renamedCount + 1
 		end
 	end
 
