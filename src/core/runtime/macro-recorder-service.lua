@@ -273,7 +273,7 @@ function MacroRecorderService.create(ctx)
 				if stepResult == false then
 					error("step rejected: " .. tostring(stepMessage or "unknown"))
 				end
-				completed += 1
+				completed = completed + 1
 			end
 		end)
 		executing = false

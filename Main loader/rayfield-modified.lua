@@ -3,6 +3,26 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+local function buildLegacyRuntimeConfig(globalEnv)
+	if type(globalEnv) ~= "table" then
+		return {}
+	end
+	return {
+		runtimeRootUrl = globalEnv.__RAYFIELD_RUNTIME_ROOT_URL,
+		httpTimeoutSec = globalEnv.__RAYFIELD_HTTP_TIMEOUT_SEC,
+		httpCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT,
+		httpDefaultCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT,
+		execPolicy = {
+			mode = globalEnv.__RAYFIELD_EXEC_POLICY_MODE,
+			escalateAfter = globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER,
+			windowSec = globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC
+		},
+		bundleSources = type(globalEnv.__RAYFIELD_BUNDLE_SOURCES) == "table" and globalEnv.__RAYFIELD_BUNDLE_SOURCES or nil,
+		bundleBrokenPaths = type(globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS) == "table" and globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS or nil,
+		compatFlags = type(globalEnv.__RAYFIELD_COMPAT_FLAGS) == "table" and globalEnv.__RAYFIELD_COMPAT_FLAGS or nil
+	}
+end
+
 local function formatBootstrapError(code, message)
 	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_BOOTSTRAP"), tostring(message or "Unknown bootstrap error"))
 end
@@ -42,6 +62,28 @@ local function fetchSource(url, label)
 end
 
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+local legacyRuntimeConfig = buildLegacyRuntimeConfig(_G)
+
+local apiClient = type(_G) == "table" and _G.__RayfieldApiClient or nil
+if type(apiClient) ~= "table" or type(apiClient.fetchAndExecute) ~= "function" then
+	local clientSource = fetchSource(root .. "src/api/client.lua", "src/api/client.lua")
+	apiClient = compileChunk(clientSource, "src/api/client.lua")()
+	if type(_G) == "table" then
+		_G.__RayfieldApiClient = apiClient
+	end
+end
+if type(apiClient) == "table" and type(apiClient.configureRuntime) == "function" then
+	pcall(apiClient.configureRuntime, legacyRuntimeConfig)
+end
+if type(apiClient) == "table" and type(apiClient.getRuntimeConfig) == "function" then
+	local okRuntimeConfig, runtimeConfig = pcall(apiClient.getRuntimeConfig)
+	if okRuntimeConfig and type(runtimeConfig) == "table" and type(runtimeConfig.runtimeRootUrl) == "string" and runtimeConfig.runtimeRootUrl ~= "" then
+		root = runtimeConfig.runtimeRootUrl
+		if type(_G) == "table" then
+			_G.__RAYFIELD_RUNTIME_ROOT_URL = root
+		end
+	end
+end
 
 local function tryLoadBundle(path)
 	local okFetch, source = pcall(game.HttpGet, game, root .. path)

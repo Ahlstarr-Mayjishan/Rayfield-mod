@@ -1,37 +1,128 @@
 local Client = {}
 
 local DEFAULT_TIMEOUT = 25
+local DEFAULT_RUNTIME_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+
+local function cloneValue(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, child in pairs(value) do
+		out[key] = cloneValue(child)
+	end
+	return out
+end
+
+local RuntimeConfig = {
+	runtimeRootUrl = DEFAULT_RUNTIME_ROOT,
+	httpTimeoutSec = DEFAULT_TIMEOUT,
+	httpCancelOnTimeout = nil,
+	httpDefaultCancelOnTimeout = true,
+	execPolicy = {
+		mode = "auto",
+		escalateAfter = 2,
+		windowSec = 90
+	},
+	bundleSources = nil,
+	bundleBrokenPaths = {}
+}
+
+local function normalizeRuntimeConfigPatch(options)
+	local patch = {}
+	if type(options) ~= "table" then
+		return patch
+	end
+
+	if type(options.runtimeRootUrl) == "string" and options.runtimeRootUrl ~= "" then
+		patch.runtimeRootUrl = options.runtimeRootUrl
+	end
+
+	local timeout = tonumber(options.httpTimeoutSec)
+	if timeout and timeout > 0 then
+		patch.httpTimeoutSec = timeout
+	end
+
+	if options.httpCancelOnTimeout ~= nil then
+		patch.httpCancelOnTimeout = options.httpCancelOnTimeout == true
+	end
+	if options.httpDefaultCancelOnTimeout ~= nil then
+		patch.httpDefaultCancelOnTimeout = options.httpDefaultCancelOnTimeout == true
+	end
+
+	if type(options.execPolicy) == "table" then
+		patch.execPolicy = {}
+		local mode = tostring(options.execPolicy.mode or RuntimeConfig.execPolicy.mode):lower()
+		if mode ~= "auto" and mode ~= "soft" and mode ~= "hard" then
+			mode = "auto"
+		end
+		patch.execPolicy.mode = mode
+
+		local escalateAfter = tonumber(options.execPolicy.escalateAfter)
+		if escalateAfter and escalateAfter > 0 then
+			patch.execPolicy.escalateAfter = math.max(1, math.floor(escalateAfter))
+		end
+
+		local windowSec = tonumber(options.execPolicy.windowSec)
+		if windowSec and windowSec > 0 then
+			patch.execPolicy.windowSec = windowSec
+		end
+	end
+
+	if type(options.bundleSources) == "table" then
+		patch.bundleSources = options.bundleSources
+	end
+	if type(options.bundleBrokenPaths) == "table" then
+		patch.bundleBrokenPaths = options.bundleBrokenPaths
+	end
+
+	return patch
+end
+
+function Client.configureRuntime(options)
+	local patch = normalizeRuntimeConfigPatch(options)
+	if patch.runtimeRootUrl ~= nil then
+		RuntimeConfig.runtimeRootUrl = patch.runtimeRootUrl
+	end
+	if patch.httpTimeoutSec ~= nil then
+		RuntimeConfig.httpTimeoutSec = patch.httpTimeoutSec
+	end
+	if patch.httpCancelOnTimeout ~= nil then
+		RuntimeConfig.httpCancelOnTimeout = patch.httpCancelOnTimeout
+	end
+	if patch.httpDefaultCancelOnTimeout ~= nil then
+		RuntimeConfig.httpDefaultCancelOnTimeout = patch.httpDefaultCancelOnTimeout
+	end
+	if type(patch.execPolicy) == "table" then
+		for key, value in pairs(patch.execPolicy) do
+			RuntimeConfig.execPolicy[key] = value
+		end
+	end
+	if patch.bundleSources ~= nil then
+		RuntimeConfig.bundleSources = patch.bundleSources
+	end
+	if patch.bundleBrokenPaths ~= nil then
+		RuntimeConfig.bundleBrokenPaths = patch.bundleBrokenPaths
+	end
+	return true
+end
+
+function Client.getRuntimeConfig()
+	return cloneValue(RuntimeConfig)
+end
+
+Client.ConfigureRuntime = Client.configureRuntime
+Client.GetRuntimeConfig = Client.getRuntimeConfig
 
 local function resolveDefaultTimeout()
-	local configured = type(_G) == "table" and tonumber(_G.__RAYFIELD_HTTP_TIMEOUT_SEC) or nil
-	if configured and configured > 0 then
-		return configured
-	end
-	return DEFAULT_TIMEOUT
+	return RuntimeConfig.httpTimeoutSec or DEFAULT_TIMEOUT
 end
 
 local function ensureExecPolicyEngine()
-	local globalEnv = type(_G) == "table" and _G or nil
-	local policyVersion = 2
-	if globalEnv
-		and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_VERSION) == policyVersion
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY) == "table"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.decideExecutionMode) == "function"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markTimeout) == "function"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markSuccess) == "function" then
-		return globalEnv.__RAYFIELD_EXEC_POLICY
-	end
-
-	local state = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_STATE or nil
-	if type(state) ~= "table" then
-		state = {}
-	end
-	if type(state.ops) ~= "table" then
-		state.ops = {}
-	end
-	if type(state.history) ~= "table" then
-		state.history = {}
-	end
+	local state = {
+		ops = {},
+		history = {}
+	}
 
 	local function pushHistory(entry)
 		table.insert(state.history, entry)
@@ -41,28 +132,16 @@ local function ensureExecPolicyEngine()
 	end
 
 	local function resolveConfig()
-		local configTable = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_CONFIG or nil
-		if type(configTable) ~= "table" then
-			configTable = {}
-		end
-
-		local mode = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_MODE or configTable.mode or "auto"
-		mode = string.lower(tostring(mode))
+		local cfg = RuntimeConfig.execPolicy or {}
+		local mode = string.lower(tostring(cfg.mode or "auto"))
 		if mode ~= "auto" and mode ~= "soft" and mode ~= "hard" then
 			mode = "auto"
 		end
 
-		local escalateAfter = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER)
-			or tonumber(configTable.escalateAfter)
-			or tonumber(configTable.escalate_after)
-			or 2
+		local escalateAfter = tonumber(cfg.escalateAfter) or 2
 		escalateAfter = math.max(1, math.floor(escalateAfter))
 
-		local windowSec = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC)
-			or tonumber(configTable.windowSec)
-			or tonumber(configTable.window_sec)
-			or tonumber(configTable.timeoutWindowSec)
-			or 90
+		local windowSec = tonumber(cfg.windowSec) or 90
 		windowSec = math.max(1, windowSec)
 
 		return {
@@ -192,13 +271,7 @@ local function ensureExecPolicyEngine()
 	function policy.getState()
 		return state
 	end
-	policy.version = policyVersion
 
-	if globalEnv then
-		globalEnv.__RAYFIELD_EXEC_POLICY_STATE = state
-		globalEnv.__RAYFIELD_EXEC_POLICY = policy
-		globalEnv.__RAYFIELD_EXEC_POLICY_VERSION = policyVersion
-	end
 	return policy
 end
 
@@ -208,34 +281,25 @@ local function resolveCancelOverride(opts)
 	if opts.cancelOnTimeout ~= nil then
 		return opts.cancelOnTimeout == true, "request-override:opts.cancelOnTimeout"
 	end
-	if type(_G) == "table" and _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT ~= nil then
-		return _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT == true, "legacy-override:__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT"
+	if RuntimeConfig.httpCancelOnTimeout ~= nil then
+		return RuntimeConfig.httpCancelOnTimeout == true, "runtime-config:httpCancelOnTimeout"
 	end
 	return nil, nil
 end
 
 local function shouldDefaultCancelOnTimeout()
-	if type(_G) == "table" and _G.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT ~= nil then
-		return _G.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT == true
-	end
-	return true
+	return RuntimeConfig.httpDefaultCancelOnTimeout ~= false
 end
 
 local function getBundleTable()
-	if type(_G) ~= "table" or type(_G.__RAYFIELD_BUNDLE_SOURCES) ~= "table" then
-		return nil
-	end
-	return _G.__RAYFIELD_BUNDLE_SOURCES
+	return type(RuntimeConfig.bundleSources) == "table" and RuntimeConfig.bundleSources or nil
 end
 
 local function getBrokenBundleMap()
-	if type(_G) ~= "table" then
-		return nil
+	if type(RuntimeConfig.bundleBrokenPaths) ~= "table" then
+		RuntimeConfig.bundleBrokenPaths = {}
 	end
-	if type(_G.__RAYFIELD_BUNDLE_BROKEN_PATHS) ~= "table" then
-		_G.__RAYFIELD_BUNDLE_BROKEN_PATHS = {}
-	end
-	return _G.__RAYFIELD_BUNDLE_BROKEN_PATHS
+	return RuntimeConfig.bundleBrokenPaths
 end
 
 local function sanitizeLuaSource(code)
@@ -261,11 +325,8 @@ local function resolveBundlePath(url)
 		end))
 	end
 
-	local runtimeRoot = nil
-	if type(_G) == "table" and type(_G.__RAYFIELD_RUNTIME_ROOT_URL) == "string" and _G.__RAYFIELD_RUNTIME_ROOT_URL ~= "" then
-		runtimeRoot = _G.__RAYFIELD_RUNTIME_ROOT_URL
-	end
-	if runtimeRoot and url:sub(1, #runtimeRoot) == runtimeRoot then
+	local runtimeRoot = RuntimeConfig.runtimeRootUrl
+	if type(runtimeRoot) == "string" and runtimeRoot ~= "" and url:sub(1, #runtimeRoot) == runtimeRoot then
 		return urlDecode(url:sub(#runtimeRoot + 1))
 	end
 
@@ -349,7 +410,7 @@ function Client.request(url, opts)
 	elseif cancelOnTimeout ~= true and shouldDefaultCancelOnTimeout() then
 		cancelOnTimeout = true
 		policyMode = "hard"
-		policyReason = "default-override:__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT"
+		policyReason = "runtime-config:httpDefaultCancelOnTimeout"
 	end
 	local completed = false
 	local okResult = false

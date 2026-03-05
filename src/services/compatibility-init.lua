@@ -87,6 +87,7 @@ function CompatibilityInitService.create(options)
 	local compileString = type(options.compileString) == "function" and options.compileString or (loadstring or load)
 	local warnFn = type(options.warn) == "function" and options.warn or warn
 	local globalEnv = type(options.globalEnv) == "table" and options.globalEnv or nil
+	local runtimeConfig = options.runtimeConfig
 
 	if type(loaderHelpers) ~= "table" or type(loaderHelpers.fetchExecuteSafely) ~= "function" then
 		return nil, "Loader helpers unavailable"
@@ -100,6 +101,9 @@ function CompatibilityInitService.create(options)
 		compatibility = compatibilityResult
 	else
 		compatibility = buildCompatibilityFallback(compileString, warnFn, compatibilityResult)
+	end
+	if type(compatibility) == "table" and type(compatibility.configureRuntime) == "function" and type(runtimeConfig) == "table" then
+		pcall(compatibility.configureRuntime, runtimeConfig)
 	end
 
 	local okWidgetBootstrap, widgetBootstrapResult = fetchExecuteSafely("src/ui/elements/widgets/bootstrap.lua")

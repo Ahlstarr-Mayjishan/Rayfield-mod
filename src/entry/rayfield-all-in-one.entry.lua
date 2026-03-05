@@ -75,6 +75,27 @@ local function decodeBundlePath(path)
 	end))
 end
 
+local function buildLegacyRuntimeConfig(globalEnv)
+	if type(globalEnv) ~= "table" then
+		return {}
+	end
+	return {
+		runtimeRootUrl = globalEnv.__RAYFIELD_RUNTIME_ROOT_URL,
+		httpTimeoutSec = globalEnv.__RAYFIELD_HTTP_TIMEOUT_SEC,
+		httpCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT,
+		httpDefaultCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT,
+		execPolicy = {
+			mode = globalEnv.__RAYFIELD_EXEC_POLICY_MODE,
+			escalateAfter = globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER,
+			windowSec = globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC
+		},
+		bundleSources = type(globalEnv.__RAYFIELD_BUNDLE_SOURCES) == "table" and globalEnv.__RAYFIELD_BUNDLE_SOURCES or nil,
+		bundleBrokenPaths = type(globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS) == "table" and globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS or nil,
+		compatFlags = type(globalEnv.__RAYFIELD_COMPAT_FLAGS) == "table" and globalEnv.__RAYFIELD_COMPAT_FLAGS or nil
+	}
+end
+
+local LegacyRuntimeConfig = buildLegacyRuntimeConfig(_G)
 local MODULE_ROOT_URL = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 _G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
 
@@ -96,6 +117,18 @@ if type(ApiClient) ~= "table" or type(ApiClient.fetchAndExecute) ~= "function" t
 	ApiClient = compileChunk(apiClientSource, "src/api/client.lua")()
 	if _G then
 		_G.__RayfieldApiClient = ApiClient
+	end
+end
+if type(ApiClient) == "table" and type(ApiClient.configureRuntime) == "function" then
+	pcall(ApiClient.configureRuntime, LegacyRuntimeConfig)
+end
+if type(ApiClient) == "table" and type(ApiClient.getRuntimeConfig) == "function" then
+	local okRuntimeConfig, runtimeConfig = pcall(ApiClient.getRuntimeConfig)
+	if okRuntimeConfig and type(runtimeConfig) == "table" and type(runtimeConfig.runtimeRootUrl) == "string" and runtimeConfig.runtimeRootUrl ~= "" then
+		MODULE_ROOT_URL = runtimeConfig.runtimeRootUrl
+		if type(_G) == "table" then
+			_G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
+		end
 	end
 end
 

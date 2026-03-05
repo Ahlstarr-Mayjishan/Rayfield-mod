@@ -77,10 +77,27 @@ function RuntimeBootstrapper.create(options)
 	local CompatibilityInitServiceLib = loadService(serviceLoadContext, "src/services/compatibility-init.lua", function(moduleValue)
 		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 	end)
+	local RuntimeConfigServiceLib = loadService(serviceLoadContext, "src/services/runtime-config.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+
+	local runtimeConfig = options.runtimeConfig
+	if type(runtimeConfig) ~= "table"
+		and type(RuntimeConfigServiceLib) == "table"
+		and type(RuntimeConfigServiceLib.create) == "function" then
+		local legacyOptions = type(RuntimeConfigServiceLib.fromLegacyGlobals) == "function"
+				and RuntimeConfigServiceLib.fromLegacyGlobals(globalEnv)
+			or nil
+		runtimeConfig = RuntimeConfigServiceLib.create(legacyOptions)
+	end
 
 	local ExecPolicy = nil
 	if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
-		ExecPolicy = ExecutionPolicyServiceLib.ensure(globalEnv)
+		local execPolicyConfig = nil
+		if type(runtimeConfig) == "table" and type(runtimeConfig.getExecPolicy) == "function" then
+			execPolicyConfig = runtimeConfig.getExecPolicy()
+		end
+		ExecPolicy = ExecutionPolicyServiceLib.ensure(globalEnv, execPolicyConfig)
 	end
 	if type(ExecPolicy) ~= "table" then
 		warnFn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
@@ -112,7 +129,8 @@ function RuntimeBootstrapper.create(options)
 			httpGet = httpGet,
 			warn = warnFn,
 			taskLib = taskLib,
-			clock = clockFn
+			clock = clockFn,
+			runtimeConfig = runtimeConfig
 		})
 	end
 
@@ -197,6 +215,8 @@ function RuntimeBootstrapper.create(options)
 		RuntimeLoaderHelpersServiceLib = RuntimeLoaderHelpersServiceLib,
 		LoaderHelpersFallbackServiceLib = LoaderHelpersFallbackServiceLib,
 		CompatibilityInitServiceLib = CompatibilityInitServiceLib,
+		RuntimeConfigServiceLib = RuntimeConfigServiceLib,
+		runtimeConfig = runtimeConfig,
 		ExecPolicy = ExecPolicy,
 		HttpLoaderService = HttpLoaderService,
 		loadWithTimeout = loadWithTimeout,

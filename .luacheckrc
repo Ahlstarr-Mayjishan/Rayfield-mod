@@ -1,5 +1,10 @@
 std = "max+busted"
 
+-- Disable E033 (compound operators) as Luau/Roblox supports them at runtime
+disable = {
+   "E033",
+}
+
 globals = {
    "game",
    "workspace",

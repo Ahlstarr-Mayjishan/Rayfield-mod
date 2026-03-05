@@ -61,6 +61,8 @@ assertTrue(type(Rayfield) == "table", "Rayfield load failed")
 
 assertTrue(type(Rayfield.SetUIPreset) == "function", "SetUIPreset missing")
 assertTrue(type(Rayfield.GetUIPreset) == "function", "GetUIPreset missing")
+assertTrue(type(Rayfield.ConfigureRuntime) == "function", "ConfigureRuntime missing")
+assertTrue(type(Rayfield.GetRuntimeConfig) == "function", "GetRuntimeConfig missing")
 assertTrue(type(Rayfield.SetTransitionProfile) == "function", "SetTransitionProfile missing")
 assertTrue(type(Rayfield.GetTransitionProfile) == "function", "GetTransitionProfile missing")
 assertTrue(type(Rayfield.ListControls) == "function", "ListControls missing")
@@ -138,6 +140,20 @@ assertTrue(type(Rayfield.ExecuteMacro) == "function", "ExecuteMacro missing")
 assertTrue(type(Rayfield.BindMacro) == "function", "BindMacro missing")
 assertTrue(type(Rayfield.RegisterDiscoveryProvider) == "function", "RegisterDiscoveryProvider missing")
 assertTrue(type(Rayfield.UnregisterDiscoveryProvider) == "function", "UnregisterDiscoveryProvider missing")
+
+local okConfigureRuntime, runtimeStatus = Rayfield:ConfigureRuntime({
+	httpTimeoutSec = 33,
+	execPolicy = {
+		mode = "soft",
+		escalateAfter = 3,
+		windowSec = 120
+	}
+})
+assertTrue(okConfigureRuntime == true, "ConfigureRuntime failed: " .. tostring(runtimeStatus))
+local runtimeConfig = Rayfield:GetRuntimeConfig()
+assertTrue(type(runtimeConfig) == "table", "GetRuntimeConfig did not return table")
+assertEquals(runtimeConfig.httpTimeoutSec, 33, "Runtime timeout not updated")
+assertEquals(runtimeConfig.execPolicy.mode, "soft", "Runtime exec policy mode not updated")
 assertTrue(type(Rayfield.QueryDiscovery) == "function", "QueryDiscovery missing")
 assertTrue(type(Rayfield.ExecutePromptCommand) == "function", "ExecutePromptCommand missing")
 assertTrue(type(Rayfield.AskAssistant) == "function", "AskAssistant missing")

@@ -19,6 +19,7 @@ return {
 	settingsUI = row("src/services/settings-ui.lua"),
 	settingsShareCode = row("src/services/settings-share-code.lua"),
 	compatibility = row("src/services/compatibility.lua"),
+	runtimeConfigService = row("src/services/runtime-config.lua"),
 	ownershipTracker = row("src/services/ownership-tracker.lua"),
 	elementSync = row("src/services/element-sync.lua"),
 	keybindSequence = row("src/services/keybind-sequence.lua"),

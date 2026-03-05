@@ -14,6 +14,8 @@ function RuntimeApi.bind(context)
 	local getHidden = context.getHidden
 	local destroyRuntime = context.destroyRuntime
 	local isDestroyed = context.isDestroyed
+	local configureRuntime = context.configureRuntime
+	local getRuntimeConfig = context.getRuntimeConfig
 
 	if type(setVisibility) ~= "function" then
 		error("RuntimeApi.bind missing setVisibility")
@@ -42,6 +44,20 @@ function RuntimeApi.bind(context)
 
 	function RayfieldLibrary:IsDestroyed()
 		return isDestroyed()
+	end
+
+	function RayfieldLibrary:ConfigureRuntime(optionsTable)
+		if type(configureRuntime) ~= "function" then
+			return false, "Runtime configuration is unavailable."
+		end
+		return configureRuntime(optionsTable)
+	end
+
+	function RayfieldLibrary:GetRuntimeConfig()
+		if type(getRuntimeConfig) ~= "function" then
+			return nil, "Runtime configuration is unavailable."
+		end
+		return getRuntimeConfig()
 	end
 end
 

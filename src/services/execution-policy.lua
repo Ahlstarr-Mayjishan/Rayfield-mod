@@ -1,6 +1,6 @@
 local ExecutionPolicyService = {}
 
-function ExecutionPolicyService.ensure(globalEnv)
+function ExecutionPolicyService.ensure(globalEnv, explicitConfig)
 	local policyVersion = 2
 	local envTable = type(globalEnv) == "table" and globalEnv or nil
 	if envTable
@@ -31,6 +31,20 @@ function ExecutionPolicyService.ensure(globalEnv)
 	end
 
 	local function resolveConfig()
+		if type(explicitConfig) == "table" then
+			local mode = string.lower(tostring(explicitConfig.mode or "auto"))
+			if mode ~= "auto" and mode ~= "soft" and mode ~= "hard" then
+				mode = "auto"
+			end
+			local escalateAfter = tonumber(explicitConfig.escalateAfter) or 2
+			local windowSec = tonumber(explicitConfig.windowSec) or 90
+			return {
+				mode = mode,
+				escalateAfter = math.max(1, math.floor(escalateAfter)),
+				windowSec = math.max(1, windowSec)
+			}
+		end
+
 		local configTable = envTable and envTable.__RAYFIELD_EXEC_POLICY_CONFIG or nil
 		if type(configTable) ~= "table" then
 			configTable = {}

@@ -26,7 +26,7 @@ if debugX then
 end
 
 local Compatibility = nil
-local function getService(name)
+function getService(name)
 	return game:GetService(name)
 end
 
@@ -36,13 +36,38 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load). Your executor may not support dynamic code loading.")
 end
 
+local function buildLegacyRuntimeConfig(globalEnv)
+	if type(globalEnv) ~= "table" then
+		return {}
+	end
+	return {
+		runtimeRootUrl = globalEnv.__RAYFIELD_RUNTIME_ROOT_URL,
+		httpTimeoutSec = globalEnv.__RAYFIELD_HTTP_TIMEOUT_SEC,
+		httpCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT,
+		httpDefaultCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT,
+		execPolicy = {
+			mode = globalEnv.__RAYFIELD_EXEC_POLICY_MODE,
+			escalateAfter = globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER,
+			windowSec = globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC
+		},
+		bundleSources = type(globalEnv.__RAYFIELD_BUNDLE_SOURCES) == "table" and globalEnv.__RAYFIELD_BUNDLE_SOURCES or nil,
+		bundleBrokenPaths = type(globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS) == "table" and globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS or nil,
+		compatFlags = type(globalEnv.__RAYFIELD_COMPAT_FLAGS) == "table" and globalEnv.__RAYFIELD_COMPAT_FLAGS or nil
+	}
+end
+
+local LegacyRuntimeConfig = buildLegacyRuntimeConfig(_G)
+
 -- Load external modules through shared API loader
 local MODULE_ROOT_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+if type(LegacyRuntimeConfig.runtimeRootUrl) == "string" and LegacyRuntimeConfig.runtimeRootUrl ~= "" then
+	MODULE_ROOT_URL = LegacyRuntimeConfig.runtimeRootUrl
+end
 if type(_G) == "table" then
 	_G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
 end
 
-local function loadBootstrapService(path, validatorFn)
+function loadBootstrapService(path, validatorFn)
 	local fullUrl = MODULE_ROOT_URL .. tostring(path)
 	local okFetch, sourceOrErr = pcall(game.HttpGet, game, fullUrl)
 	if not okFetch then
@@ -82,6 +107,7 @@ if type(RuntimeBootstrapperLib) == "table" and type(RuntimeBootstrapperLib.creat
 		end,
 		moduleRootUrl = MODULE_ROOT_URL,
 		globalEnv = _G,
+		runtimeConfig = LegacyRuntimeConfig,
 		taskLib = task,
 		clock = os.clock,
 		warn = warn
@@ -180,11 +206,12 @@ if type(HttpLoaderService) ~= "table" and type(HttpLoaderServiceLib) == "table" 
 		end,
 		warn = warn,
 		taskLib = task,
-		clock = os.clock
+		clock = os.clock,
+		runtimeConfig = LegacyRuntimeConfig
 	})
 end
 
-local function loadWithTimeout(url, timeout)
+function loadWithTimeout(url, timeout)
 	if RuntimeBootstrap and type(RuntimeBootstrap.loadWithTimeout) == "function" then
 		return RuntimeBootstrap.loadWithTimeout(url, timeout)
 	end
@@ -209,13 +236,13 @@ local function loadWithTimeout(url, timeout)
 	return runResult
 end
 
-local requestsDisabled = true --getgenv and getgenv().DISABLE_RAYFIELD_REQUESTS
-local InterfaceBuild = '3K3W'
-local Release = "Build 1.68"
-local RayfieldFolder = "Rayfield"
-local ConfigurationFolder = RayfieldFolder.."/Configurations"
-local ConfigurationExtension = ".rfld"
-local settingsTable = {
+requestsDisabled = true --getgenv and getgenv().DISABLE_RAYFIELD_REQUESTS
+InterfaceBuild = '3K3W'
+Release = "Build 1.68"
+RayfieldFolder = "Rayfield"
+ConfigurationFolder = RayfieldFolder.."/Configurations"
+ConfigurationExtension = ".rfld"
+settingsTable = {
 	General = {
 		-- if needs be in order just make getSetting(name)
 		rayfieldOpen = {Type = 'bind', Value = 'K', Name = 'Rayfield Keybind'},
@@ -234,14 +261,14 @@ local settingsTable = {
 	}
 }
 
-local HttpService = getService('HttpService')
-local RunService = getService('RunService')
+HttpService = getService('HttpService')
+RunService = getService('RunService')
 
 -- Environment Check
-local useStudio = RunService:IsStudio() or false
+useStudio = RunService:IsStudio() or false
 
-local prompt = useStudio and require(script.Parent.prompt) or loadWithTimeout('https://raw.githubusercontent.com/SiriusSoftwareLtd/Sirius/refs/heads/request/prompt.lua')
-local requestFunc = (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request) or http_request or request
+prompt = useStudio and require(script.Parent.prompt) or loadWithTimeout('https://raw.githubusercontent.com/SiriusSoftwareLtd/Sirius/refs/heads/request/prompt.lua')
+requestFunc = (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request) or http_request or request
 
 -- Validate prompt loaded correctly
 if not prompt and not useStudio then
@@ -254,7 +281,7 @@ end
 
 -- The function below provides a safe alternative for calling error-prone functions
 -- Especially useful for filesystem function (writefile, makefolder, etc.)
-local function callSafely(func, ...)
+function callSafely(func, ...)
 	if func then
 		local success, result = pcall(func, ...)
 		if not success then
@@ -267,7 +294,7 @@ local function callSafely(func, ...)
 end
 
 -- Ensures a folder exists by creating it if needed
-local function ensureFolder(folderPath)
+function ensureFolder(folderPath)
 	if isfolder and not callSafely(isfolder, folderPath) then
 		callSafely(makefolder, folderPath)
 	end
@@ -283,7 +310,7 @@ if debugX then
 	warn('Settings Loaded')
 end
 
-local sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
+sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
 if type(AnalyticsManagerServiceLib) == "table" and type(AnalyticsManagerServiceLib.create) == "function" then
 	local analyticsManager = AnalyticsManagerServiceLib.create({
 		runtimeBootstrap = RuntimeBootstrap,
@@ -304,7 +331,7 @@ if type(AnalyticsManagerServiceLib) == "table" and type(AnalyticsManagerServiceL
 	end
 end
 
-local promptUser = 2
+promptUser = 2
 
 if promptUser == 1 and prompt and type(prompt.create) == "function" then
 	prompt.create(
@@ -324,14 +351,17 @@ if debugX then
 	warn('Moving on to continue initialisation')
 end
 
-local RayfieldLibrary = {
+RayfieldLibrary = {
 	Flags = {},
 	Theme = {}
 }
 
-local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
+ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
+if type(ApiClient) == "table" and type(ApiClient.configureRuntime) == "function" then
+	pcall(ApiClient.configureRuntime, LegacyRuntimeConfig)
+end
 
-local function getScriptRef()
+function getScriptRef()
 	local scriptRef = nil
 	pcall(function()
 		scriptRef = script
@@ -388,7 +418,11 @@ if type(CompatibilityInitServiceLib) == "table" and type(CompatibilityInitServic
 		compileString = compileString,
 		useStudio = useStudio,
 		warn = warn,
-		globalEnv = _G
+		globalEnv = _G,
+		runtimeConfig = type(ApiClient) == "table"
+			and type(ApiClient.getRuntimeConfig) == "function"
+			and ApiClient.getRuntimeConfig()
+			or LegacyRuntimeConfig
 	})
 	if okCompatibilityInit and type(compatibilityInitOrErr) == "table" then
 		compatibilityInit = compatibilityInitOrErr
@@ -418,21 +452,21 @@ if type(WidgetBootstrap) ~= "table" or type(WidgetBootstrap.bootstrapWidget) ~= 
 	error("Rayfield Mod: [E_BOOTSTRAP_WIDGETS] Invalid widget bootstrap contract")
 end
 
-local function requireModule(moduleName, hint)
+function requireModule(moduleName, hint)
 	return LoaderHelpers.requireModule(moduleName, hint)
 end
 
-local loaderDiagnostics = type(LoaderHelpers.getDiagnostics) == "function" and LoaderHelpers.getDiagnostics() or nil
+loaderDiagnostics = type(LoaderHelpers.getDiagnostics) == "function" and LoaderHelpers.getDiagnostics() or nil
 
-local function optionalModule(moduleName, fallbackModule, hint)
+function optionalModule(moduleName, fallbackModule, hint)
 	return LoaderHelpers.optionalModule(moduleName, fallbackModule, hint)
 end
 
-local function optionalModuleWithContract(moduleName, validatorFn, hint)
+function optionalModuleWithContract(moduleName, validatorFn, hint)
 	return LoaderHelpers.optionalModuleWithContract(moduleName, validatorFn, hint)
 end
 
-local function maybeNotifyLoaderFallback()
+function maybeNotifyLoaderFallback()
 	if type(LoaderHelpers.maybeNotifyFallback) ~= "function" then
 		return
 	end
@@ -471,74 +505,74 @@ local RuntimeModules = RuntimeModuleRegistryLoaderLib.load({
 	}
 })
 
-local ThemeModule = RuntimeModules.ThemeModule
-local ThemePresetsModuleLib = RuntimeModules.ThemePresetsModuleLib
-local ThemeDefaultThemesModuleLib = RuntimeModules.ThemeDefaultThemesModuleLib
-local UtilitiesModuleLib = RuntimeModules.UtilitiesModuleLib
-local SettingsModuleLib = RuntimeModules.SettingsModuleLib
-local SettingsStoreModuleLib = RuntimeModules.SettingsStoreModuleLib
-local SettingsPersistenceModuleLib = RuntimeModules.SettingsPersistenceModuleLib
-local SettingsUIModuleLib = RuntimeModules.SettingsUIModuleLib
-local SettingsShareCodeModuleLib = RuntimeModules.SettingsShareCodeModuleLib
-local OwnershipTrackerModuleLib = RuntimeModules.OwnershipTrackerModuleLib
-local ElementSyncModuleLib = RuntimeModules.ElementSyncModuleLib
-local KeybindSequenceLib = RuntimeModules.KeybindSequenceLib
-local DragModuleLib = RuntimeModules.DragModuleLib
-local UIStateModuleLib = RuntimeModules.UIStateModuleLib
-local UIStateNotificationManagerLib = RuntimeModules.UIStateNotificationManagerLib
-local UIStateSearchEngineLib = RuntimeModules.UIStateSearchEngineLib
-local UIStateWindowManagerLib = RuntimeModules.UIStateWindowManagerLib
-local ElementsModuleLib = RuntimeModules.ElementsModuleLib
-local ConfigModuleLib = RuntimeModules.ConfigModuleLib
-local ConfigStorageAdapterModuleLib = RuntimeModules.ConfigStorageAdapterModuleLib
-local LayoutPersistenceModuleLib = RuntimeModules.LayoutPersistenceModuleLib
-local ViewportVirtualizationModuleLib = RuntimeModules.ViewportVirtualizationModuleLib
-local VirtualizationEngineModuleLib = RuntimeModules.VirtualizationEngineModuleLib
-local VirtualHostManagerModuleLib = RuntimeModules.VirtualHostManagerModuleLib
-local TabSplitModuleLib = RuntimeModules.TabSplitModuleLib
-local AnimationEngineLib = RuntimeModules.AnimationEngineLib
-local AnimationPublicLib = RuntimeModules.AnimationPublicLib
-local AnimationSequenceLib = RuntimeModules.AnimationSequenceLib
-local AnimationUILib = RuntimeModules.AnimationUILib
-local AnimationTextLib = RuntimeModules.AnimationTextLib
-local AnimationCleanupLib = RuntimeModules.AnimationCleanupLib
-local AnimationConstantsLib = RuntimeModules.AnimationConstantsLib
-local AnimationSchedulerLib = RuntimeModules.AnimationSchedulerLib
-local MainShellModuleLib = RuntimeModules.MainShellModuleLib
-local VisibilityControllerLib = RuntimeModules.VisibilityControllerLib
-local ExperienceBindingsLib = RuntimeModules.ExperienceBindingsLib
-local RuntimeBindingsUXLib = RuntimeModules.RuntimeBindingsUXLib
-local RuntimeBindingsAudioLib = RuntimeModules.RuntimeBindingsAudioLib
-local RuntimeBindingsThemeLib = RuntimeModules.RuntimeBindingsThemeLib
-local RuntimeBindingsFavoritesLib = RuntimeModules.RuntimeBindingsFavoritesLib
-local RuntimeBindingsPersistenceLib = RuntimeModules.RuntimeBindingsPersistenceLib
-local RuntimeBindingsDiagnosticsLib = RuntimeModules.RuntimeBindingsDiagnosticsLib
-local RuntimeBindingsAutomationLib = RuntimeModules.RuntimeBindingsAutomationLib
-local RuntimeBindingsDiscoveryLib = RuntimeModules.RuntimeBindingsDiscoveryLib
-local RuntimeBindingsAIAssistantLib = RuntimeModules.RuntimeBindingsAIAssistantLib
-local RuntimeBindingsCommunicationLib = RuntimeModules.RuntimeBindingsCommunicationLib
-local RuntimeBindingsLocalizationLib = RuntimeModules.RuntimeBindingsLocalizationLib
-local RuntimeBindingsUIEventsLib = RuntimeModules.RuntimeBindingsUIEventsLib
-local RuntimeBindingsMovementEventsLib = RuntimeModules.RuntimeBindingsMovementEventsLib
-local RuntimeBindingsCombatEventsLib = RuntimeModules.RuntimeBindingsCombatEventsLib
-local WorkspaceServiceLib = RuntimeModules.WorkspaceServiceLib
-local CommandPaletteServiceLib = RuntimeModules.CommandPaletteServiceLib
-local CommandPaletteSearchAlgorithmsLib = RuntimeModules.CommandPaletteSearchAlgorithmsLib
-local SmartSearchServiceLib = RuntimeModules.SmartSearchServiceLib
-local MultiInstanceBridgeServiceLib = RuntimeModules.MultiInstanceBridgeServiceLib
-local AutomationEngineServiceLib = RuntimeModules.AutomationEngineServiceLib
-local UsageAnalyticsServiceLib = RuntimeModules.UsageAnalyticsServiceLib
-local MacroRecorderServiceLib = RuntimeModules.MacroRecorderServiceLib
-local DevExperienceServiceLib = RuntimeModules.DevExperienceServiceLib
-local LocalizationServiceLib = RuntimeModules.LocalizationServiceLib
-local UIStringRegistryLib = RuntimeModules.UIStringRegistryLib
-local ShareCodeServiceLib = RuntimeModules.ShareCodeServiceLib
-local EntryDiscordInviteServiceLib = RuntimeModules.EntryDiscordInviteServiceLib
-local EntryKeySystemServiceLib = RuntimeModules.EntryKeySystemServiceLib
-local RuntimeModuleLoaderLib = RuntimeModules.RuntimeModuleLoaderLib
-local PerformanceHUDServiceLib = RuntimeModules.PerformanceHUDServiceLib
-local RuntimeApiLib = RuntimeModules.RuntimeApiLib
-local RuntimeModuleLoader = nil
+ThemeModule = RuntimeModules.ThemeModule
+ThemePresetsModuleLib = RuntimeModules.ThemePresetsModuleLib
+ThemeDefaultThemesModuleLib = RuntimeModules.ThemeDefaultThemesModuleLib
+UtilitiesModuleLib = RuntimeModules.UtilitiesModuleLib
+SettingsModuleLib = RuntimeModules.SettingsModuleLib
+SettingsStoreModuleLib = RuntimeModules.SettingsStoreModuleLib
+SettingsPersistenceModuleLib = RuntimeModules.SettingsPersistenceModuleLib
+SettingsUIModuleLib = RuntimeModules.SettingsUIModuleLib
+SettingsShareCodeModuleLib = RuntimeModules.SettingsShareCodeModuleLib
+OwnershipTrackerModuleLib = RuntimeModules.OwnershipTrackerModuleLib
+ElementSyncModuleLib = RuntimeModules.ElementSyncModuleLib
+KeybindSequenceLib = RuntimeModules.KeybindSequenceLib
+DragModuleLib = RuntimeModules.DragModuleLib
+UIStateModuleLib = RuntimeModules.UIStateModuleLib
+UIStateNotificationManagerLib = RuntimeModules.UIStateNotificationManagerLib
+UIStateSearchEngineLib = RuntimeModules.UIStateSearchEngineLib
+UIStateWindowManagerLib = RuntimeModules.UIStateWindowManagerLib
+ElementsModuleLib = RuntimeModules.ElementsModuleLib
+ConfigModuleLib = RuntimeModules.ConfigModuleLib
+ConfigStorageAdapterModuleLib = RuntimeModules.ConfigStorageAdapterModuleLib
+LayoutPersistenceModuleLib = RuntimeModules.LayoutPersistenceModuleLib
+ViewportVirtualizationModuleLib = RuntimeModules.ViewportVirtualizationModuleLib
+VirtualizationEngineModuleLib = RuntimeModules.VirtualizationEngineModuleLib
+VirtualHostManagerModuleLib = RuntimeModules.VirtualHostManagerModuleLib
+TabSplitModuleLib = RuntimeModules.TabSplitModuleLib
+AnimationEngineLib = RuntimeModules.AnimationEngineLib
+AnimationPublicLib = RuntimeModules.AnimationPublicLib
+AnimationSequenceLib = RuntimeModules.AnimationSequenceLib
+AnimationUILib = RuntimeModules.AnimationUILib
+AnimationTextLib = RuntimeModules.AnimationTextLib
+AnimationCleanupLib = RuntimeModules.AnimationCleanupLib
+AnimationConstantsLib = RuntimeModules.AnimationConstantsLib
+AnimationSchedulerLib = RuntimeModules.AnimationSchedulerLib
+MainShellModuleLib = RuntimeModules.MainShellModuleLib
+VisibilityControllerLib = RuntimeModules.VisibilityControllerLib
+ExperienceBindingsLib = RuntimeModules.ExperienceBindingsLib
+RuntimeBindingsUXLib = RuntimeModules.RuntimeBindingsUXLib
+RuntimeBindingsAudioLib = RuntimeModules.RuntimeBindingsAudioLib
+RuntimeBindingsThemeLib = RuntimeModules.RuntimeBindingsThemeLib
+RuntimeBindingsFavoritesLib = RuntimeModules.RuntimeBindingsFavoritesLib
+RuntimeBindingsPersistenceLib = RuntimeModules.RuntimeBindingsPersistenceLib
+RuntimeBindingsDiagnosticsLib = RuntimeModules.RuntimeBindingsDiagnosticsLib
+RuntimeBindingsAutomationLib = RuntimeModules.RuntimeBindingsAutomationLib
+RuntimeBindingsDiscoveryLib = RuntimeModules.RuntimeBindingsDiscoveryLib
+RuntimeBindingsAIAssistantLib = RuntimeModules.RuntimeBindingsAIAssistantLib
+RuntimeBindingsCommunicationLib = RuntimeModules.RuntimeBindingsCommunicationLib
+RuntimeBindingsLocalizationLib = RuntimeModules.RuntimeBindingsLocalizationLib
+RuntimeBindingsUIEventsLib = RuntimeModules.RuntimeBindingsUIEventsLib
+RuntimeBindingsMovementEventsLib = RuntimeModules.RuntimeBindingsMovementEventsLib
+RuntimeBindingsCombatEventsLib = RuntimeModules.RuntimeBindingsCombatEventsLib
+WorkspaceServiceLib = RuntimeModules.WorkspaceServiceLib
+CommandPaletteServiceLib = RuntimeModules.CommandPaletteServiceLib
+CommandPaletteSearchAlgorithmsLib = RuntimeModules.CommandPaletteSearchAlgorithmsLib
+SmartSearchServiceLib = RuntimeModules.SmartSearchServiceLib
+MultiInstanceBridgeServiceLib = RuntimeModules.MultiInstanceBridgeServiceLib
+AutomationEngineServiceLib = RuntimeModules.AutomationEngineServiceLib
+UsageAnalyticsServiceLib = RuntimeModules.UsageAnalyticsServiceLib
+MacroRecorderServiceLib = RuntimeModules.MacroRecorderServiceLib
+DevExperienceServiceLib = RuntimeModules.DevExperienceServiceLib
+LocalizationServiceLib = RuntimeModules.LocalizationServiceLib
+UIStringRegistryLib = RuntimeModules.UIStringRegistryLib
+ShareCodeServiceLib = RuntimeModules.ShareCodeServiceLib
+EntryDiscordInviteServiceLib = RuntimeModules.EntryDiscordInviteServiceLib
+EntryKeySystemServiceLib = RuntimeModules.EntryKeySystemServiceLib
+RuntimeModuleLoaderLib = RuntimeModules.RuntimeModuleLoaderLib
+PerformanceHUDServiceLib = RuntimeModules.PerformanceHUDServiceLib
+RuntimeApiLib = RuntimeModules.RuntimeApiLib
+RuntimeModuleLoader = nil
 if type(RuntimeModuleLoaderLib) == "table" and type(RuntimeModuleLoaderLib.create) == "function" then
 	local okModuleLoader, loaderOrErr = pcall(RuntimeModuleLoaderLib.create, {
 		optionalModuleWithContract = optionalModuleWithContract
@@ -557,127 +591,127 @@ if type(RuntimeModuleLoader) ~= "table" then
 	}
 end
 
-local function resolveRuntimeModule(resolverName)
+function resolveRuntimeModule(resolverName)
 	if type(RuntimeModuleLoader[resolverName]) == "function" then
 		return RuntimeModuleLoader[resolverName]()
 	end
 	return nil
 end
 
-local function getLoadedRuntimeModule(moduleKey)
+function getLoadedRuntimeModule(moduleKey)
 	if type(RuntimeModuleLoader.getLoaded) == "function" then
 		return RuntimeModuleLoader.getLoaded(moduleKey)
 	end
 	return nil
 end
 
-local function resolveDataGridFactoryModule()
+function resolveDataGridFactoryModule()
 	return resolveRuntimeModule("resolveDataGridFactoryModule")
 end
 
-local function resolveChartFactoryModule()
+function resolveChartFactoryModule()
 	return resolveRuntimeModule("resolveChartFactoryModule")
 end
 
-local function resolveButtonFactoryModule()
+function resolveButtonFactoryModule()
 	return resolveRuntimeModule("resolveButtonFactoryModule")
 end
 
-local function resolveInputFactoryModule()
+function resolveInputFactoryModule()
 	return resolveRuntimeModule("resolveInputFactoryModule")
 end
 
-local function resolveDropdownFactoryModule()
+function resolveDropdownFactoryModule()
 	return resolveRuntimeModule("resolveDropdownFactoryModule")
 end
 
-local function resolveKeybindFactoryModule()
+function resolveKeybindFactoryModule()
 	return resolveRuntimeModule("resolveKeybindFactoryModule")
 end
 
-local function resolveToggleFactoryModule()
+function resolveToggleFactoryModule()
 	return resolveRuntimeModule("resolveToggleFactoryModule")
 end
 
-local function resolveSliderFactoryModule()
+function resolveSliderFactoryModule()
 	return resolveRuntimeModule("resolveSliderFactoryModule")
 end
 
-local function resolveTabManagerModule()
+function resolveTabManagerModule()
 	return resolveRuntimeModule("resolveTabManagerModule")
 end
 
-local function resolveHoverProviderModule()
+function resolveHoverProviderModule()
 	return resolveRuntimeModule("resolveHoverProviderModule")
 end
 
-local function resolveTooltipEngineModule()
+function resolveTooltipEngineModule()
 	return resolveRuntimeModule("resolveTooltipEngineModule")
 end
 
-local function resolveWidgetAPIInjectorModule()
+function resolveWidgetAPIInjectorModule()
 	return resolveRuntimeModule("resolveWidgetAPIInjectorModule")
 end
 
-local function resolveMathUtilsModule()
+function resolveMathUtilsModule()
 	return resolveRuntimeModule("resolveMathUtilsModule")
 end
 
-local function resolveResourceGuardModule()
+function resolveResourceGuardModule()
 	return resolveRuntimeModule("resolveResourceGuardModule")
 end
 
-local function resolveSectionFactoryModule()
+function resolveSectionFactoryModule()
 	return resolveRuntimeModule("resolveSectionFactoryModule")
 end
 
-local function resolveControlRegistryModule()
+function resolveControlRegistryModule()
 	return resolveRuntimeModule("resolveControlRegistryModule")
 end
 
-local function resolveLoggingProviderModule()
+function resolveLoggingProviderModule()
 	return resolveRuntimeModule("resolveLoggingProviderModule")
 end
 
-local function resolveTooltipProviderModule()
+function resolveTooltipProviderModule()
 	return resolveRuntimeModule("resolveTooltipProviderModule")
 end
 
-local function resolveGridBuilderModule()
+function resolveGridBuilderModule()
 	return resolveRuntimeModule("resolveGridBuilderModule")
 end
 
-local function resolveChartBuilderModule()
+function resolveChartBuilderModule()
 	return resolveRuntimeModule("resolveChartBuilderModule")
 end
 
-local function resolveRangeBarsFactoryModule()
+function resolveRangeBarsFactoryModule()
 	return resolveRuntimeModule("resolveRangeBarsFactoryModule")
 end
 
-local function resolveFeedbackWidgetsFactoryModule()
+function resolveFeedbackWidgetsFactoryModule()
 	return resolveRuntimeModule("resolveFeedbackWidgetsFactoryModule")
 end
 
-local function resolveComponentWidgetsFactoryModule()
+function resolveComponentWidgetsFactoryModule()
 	return resolveRuntimeModule("resolveComponentWidgetsFactoryModule")
 end
 
 -- Services
-local UserInputService = getService("UserInputService")
-local TweenService = getService("TweenService")
-local Players = getService("Players")
-local CoreGui = getService("CoreGui")
+UserInputService = getService("UserInputService")
+TweenService = getService("TweenService")
+Players = getService("Players")
+CoreGui = getService("CoreGui")
 
-local AnimationEngine = AnimationEngineLib.new({
+AnimationEngine = AnimationEngineLib.new({
 	TweenService = TweenService,
 	RunService = RunService,
 	Cleanup = AnimationSchedulerLib or AnimationCleanupLib,
 	Constants = AnimationConstantsLib,
 	mode = "raw"
 })
-local Animation = AnimationEngine
-local RayfieldAnimate = AnimationPublicLib.bindToRayfield(RayfieldLibrary, AnimationEngine, {
+Animation = AnimationEngine
+RayfieldAnimate = AnimationPublicLib.bindToRayfield(RayfieldLibrary, AnimationEngine, {
 	Sequence = AnimationSequenceLib,
 	UI = AnimationUILib,
 	Text = AnimationTextLib
@@ -712,11 +746,11 @@ if not Rayfield then
 	error("Rayfield GUI failed to load. Please check your executor compatibility.")
 end
 
-local buildAttempts = 0
-local correctBuild = false
+buildAttempts = 0
+correctBuild = false
 local warned
 local globalLoaded
-local rayfieldDestroyed = false -- True when RayfieldLibrary:Destroy() is called
+rayfieldDestroyed = false -- True when RayfieldLibrary:Destroy() is called
 
 repeat
 	if Rayfield:FindFirstChild('Build') and Rayfield.Build.Value == InterfaceBuild then
@@ -756,7 +790,7 @@ until buildAttempts >= 2
 
 Rayfield.Enabled = false
 
-local rayfieldContainer = nil
+rayfieldContainer = nil
 if Compatibility and type(Compatibility.protectAndParent) == "function" then
 	rayfieldContainer = Compatibility.protectAndParent(Rayfield, nil, {
 		useStudio = useStudio
@@ -778,9 +812,9 @@ elseif not useStudio and rayfieldContainer then
 end
 
 
-local minSize = Vector2.new(1024, 768)
+minSize = Vector2.new(1024, 768)
 local useMobileSizing
-local useMobilePrompt = false
+useMobilePrompt = false
 
 if Rayfield.AbsoluteSize.X < minSize.X and Rayfield.AbsoluteSize.Y < minSize.Y then
 	useMobileSizing = true
@@ -793,16 +827,16 @@ end
 
 -- Object Variables
 
-local Main = Rayfield.Main
+Main = Rayfield.Main
 if not Main then
 	error("Rayfield GUI structure error: Main container not found. The GUI asset may be corrupted or incompatible.")
 end
 
-local MPrompt = Rayfield:FindFirstChild('Prompt')
-local Topbar = Main.Topbar
-local Elements = Main.Elements
-local LoadingFrame = Main.LoadingFrame
-local TabList = Main.TabList
+MPrompt = Rayfield:FindFirstChild('Prompt')
+Topbar = Main.Topbar
+Elements = Main.Elements
+LoadingFrame = Main.LoadingFrame
+TabList = Main.TabList
 
 -- Validate critical GUI components
 if not Elements then
@@ -815,38 +849,38 @@ if not TabList then
 	error("Rayfield GUI structure error: TabList container not found. The GUI asset may be corrupted.")
 end
 
-local dragBar = Rayfield:FindFirstChild('Drag')
-local dragInteract = dragBar and dragBar.Interact or nil
-local dragBarCosmetic = dragBar and dragBar.Drag or nil
+dragBar = Rayfield:FindFirstChild('Drag')
+dragInteract = dragBar and dragBar.Interact or nil
+dragBarCosmetic = dragBar and dragBar.Drag or nil
 
-local dragOffset = 255
-local dragOffsetMobile = 150
+dragOffset = 255
+dragOffsetMobile = 150
 
 Rayfield.DisplayOrder = 100
 LoadingFrame.Version.Text = Release
 
 -- Thanks to Latte Softworks for the Lucide integration for Roblox
-local Icons = useStudio and require(script.Parent.icons) or loadWithTimeout('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/refs/heads/main/icons.lua')
+Icons = useStudio and require(script.Parent.icons) or loadWithTimeout('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/refs/heads/main/icons.lua')
 
 -- Variables
-local CFileName = nil
-local CEnabled = false
-local Minimised = false
-local Hidden = false
-local Debounce = false
-local searchOpen = false
-local Notifications = Rayfield.Notifications
-local ElementsSystem = nil
-local ElementSyncSystem = nil
-local OwnershipSystem = nil
-local keybindConnections = {} -- For storing keybind connections to disconnect when Rayfield is destroyed
-local layoutConnections = {}
-local LayoutPersistenceSystem = nil
-local ViewportVirtualizationSystem = nil
-local layoutSavingEnabled = false
-local layoutDebounceMs = 300
-local detachPathEnabled = true
-local activePerformanceProfile = {
+CFileName = nil
+CEnabled = false
+Minimised = false
+Hidden = false
+Debounce = false
+searchOpen = false
+Notifications = Rayfield.Notifications
+ElementsSystem = nil
+ElementSyncSystem = nil
+OwnershipSystem = nil
+keybindConnections = {} -- For storing keybind connections to disconnect when Rayfield is destroyed
+layoutConnections = {}
+LayoutPersistenceSystem = nil
+ViewportVirtualizationSystem = nil
+layoutSavingEnabled = false
+layoutDebounceMs = 300
+detachPathEnabled = true
+activePerformanceProfile = {
 	enabled = false,
 	requestedMode = "normal",
 	resolvedMode = "normal",
@@ -856,7 +890,7 @@ local activePerformanceProfile = {
 	disableAnimations = false,
 	appliedFields = {}
 }
-local ExperienceState = {
+ExperienceState = {
 	uiPreset = "Comfort",
 	transitionProfile = "Smooth",
 	onboardingSuppressed = false,
@@ -888,17 +922,17 @@ local ExperienceState = {
 		customThemePacked = {}
 	}
 }
-local experienceSuppressPromoPrompts = false
-local favoritesRegistryUnsubscribe = nil
-local ExperienceBindings = nil
-local uiToggleKeybindMatcher = KeybindSequenceLib.newMatcher({
+experienceSuppressPromoPrompts = false
+favoritesRegistryUnsubscribe = nil
+ExperienceBindings = nil
+uiToggleKeybindMatcher = KeybindSequenceLib.newMatcher({
 	maxSteps = 4,
 	stepTimeoutMs = 800
 })
-local cachedUiToggleKeybindRaw = nil
-local cachedUiToggleKeybindSpec = nil
+cachedUiToggleKeybindRaw = nil
+cachedUiToggleKeybindSpec = nil
 
-local function initializeOwnershipTracking()
+function initializeOwnershipTracking()
 	local okInit, trackerOrErr = pcall(OwnershipTrackerModuleLib.init, {
 		owner = "rayfield-mod",
 		scopePrefix = "rayfield",
@@ -945,7 +979,7 @@ end
 
 OwnershipSystem = initializeOwnershipTracking()
 
-local function resolveUiToggleKeybindSpec(rawBinding)
+function resolveUiToggleKeybindSpec(rawBinding)
 	if rawBinding == cachedUiToggleKeybindRaw and cachedUiToggleKeybindSpec then
 		return cachedUiToggleKeybindSpec
 	end
@@ -967,7 +1001,7 @@ local function resolveUiToggleKeybindSpec(rawBinding)
 	return cachedUiToggleKeybindSpec
 end
 
-local function cleanupLayoutConnections()
+function cleanupLayoutConnections()
 	for _, connection in ipairs(layoutConnections) do
 		if connection then
 			connection:Disconnect()
@@ -976,7 +1010,7 @@ local function cleanupLayoutConnections()
 	table.clear(layoutConnections)
 end
 
-local function markLayoutDirty(scope, reason)
+function markLayoutDirty(scope, reason)
 	if LayoutPersistenceSystem and type(LayoutPersistenceSystem.markDirty) == "function" then
 		LayoutPersistenceSystem.markDirty((scope or "layout") .. ":" .. (reason or "update"))
 	end
@@ -1081,49 +1115,49 @@ RayfieldLibrary.Theme = ThemeModule.Themes
 local SelectedTheme = ThemeSystem.SelectedTheme
 
 -- Theme helpers
-local function ChangeTheme(Theme)
+function ChangeTheme(Theme)
 	ThemeSystem.ChangeTheme(Theme)
 	SelectedTheme = ThemeSystem.SelectedTheme
 end
 
-local function getIcon(name)
+function getIcon(name)
 	return ThemeSystem.getIcon(name)
 end
 
 -- Settings wrapper functions
-local function getSetting(category, name)
+function getSetting(category, name)
 	return SettingsSystem.getSetting(category, name)
 end
 
-local function overrideSetting(category, name, value)
+function overrideSetting(category, name, value)
 	return SettingsSystem.overrideSetting(category, name, value)
 end
 
-local function saveSettings()
+function saveSettings()
 	return SettingsSystem.saveSettings()
 end
 
-local function updateSetting(category, setting, value)
+function updateSetting(category, setting, value)
 	return SettingsSystem.updateSetting(category, setting, value)
 end
 
-local function setSettingValue(category, setting, value, persist)
+function setSettingValue(category, setting, value, persist)
 	if SettingsSystem and type(SettingsSystem.setSettingValue) == "function" then
 		return SettingsSystem.setSettingValue(category, setting, value, persist)
 	end
 	return false, "Settings system unavailable."
 end
 
-local function loadSettings()
+function loadSettings()
 	return SettingsSystem.loadSettings()
 end
 
-local function createSettings(window)
+function createSettings(window)
 	return SettingsSystem.createSettings(window)
 end
 
 -- Local settings references
-local settingsTable = SettingsSystem.settingsTable
+settingsTable = SettingsSystem.settingsTable
 local settingsCreated = SettingsSystem.settingsCreated
 local settingsInitialized = SettingsSystem.settingsInitialized
 local overriddenSettings = SettingsSystem.overriddenSettings
@@ -1168,7 +1202,7 @@ local UIStringRegistry = UIStringRegistryLib.create({
 		return nil
 	end
 })
-local function localizeString(key, fallback)
+function localizeString(key, fallback)
 	return UIStringRegistry.resolve(key, fallback)
 end
 
@@ -1210,7 +1244,7 @@ local DragSystem = DragModuleLib.init({
 })
 
 -- Detach helper wrapper
-local function makeElementDetachable(guiObject, elementName, elementType)
+function makeElementDetachable(guiObject, elementName, elementType)
 	if detachPathEnabled == false then
 		return nil
 	end
@@ -1365,12 +1399,12 @@ local UIStateSystem = UIStateModuleLib.init({
 local TabSplitSystem = nil
 
 -- Wrapper functions for UI State
-local function openSearch()
+function openSearch()
 	UIStateSystem.openSearch()
 	searchOpen = UIStateSystem.getSearchOpen()
 end
 
-local function closeSearch()
+function closeSearch()
 	UIStateSystem.closeSearch()
 	searchOpen = UIStateSystem.getSearchOpen()
 end
@@ -1414,28 +1448,28 @@ local VisibilityController = VisibilityControllerLib.create({
 	end
 })
 
-local function Hide(notify)
+function Hide(notify)
 	VisibilityController.Hide(notify)
 end
 
-local function Unhide()
+function Unhide()
 	VisibilityController.Unhide()
 end
 
-local function Maximise()
+function Maximise()
 	VisibilityController.Maximise()
 end
 
-local function Minimise()
+function Minimise()
 	VisibilityController.Minimise()
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
-local function getAssetUri(id)
+function getAssetUri(id)
 	return UtilitiesSystem and UtilitiesSystem.getAssetUri(id, Icons) or ("rbxassetid://" .. (type(id) == "number" and id or 0))
 end
 
-local function makeDraggable(object, dragObject, enableTaptic, tapticOffset)
+function makeDraggable(object, dragObject, enableTaptic, tapticOffset)
 	if UtilitiesSystem then
 		UtilitiesSystem.makeDraggable(object, dragObject, enableTaptic, tapticOffset)
 	else
@@ -1448,23 +1482,23 @@ end
 -- Note: Drag/Detach system code has been moved to rayfield-drag.lua module
 
 -- Configuration wrapper functions
-local function PackColor(Color)
+function PackColor(Color)
 	return ConfigSystem.PackColor(Color)
 end
 
-local function UnpackColor(Color)
+function UnpackColor(Color)
 	return ConfigSystem.UnpackColor(Color)
 end
 
-local function LoadConfiguration(Configuration)
+function LoadConfiguration(Configuration)
 	return ConfigSystem.LoadConfiguration(Configuration)
 end
 
-local function SaveConfiguration()
+function SaveConfiguration()
 	return ConfigSystem.SaveConfiguration()
 end
 
-local function buildGeneratedAtStamp()
+function buildGeneratedAtStamp()
 	local okDate, value = pcall(function()
 		return os.date("!%Y-%m-%dT%H:%M:%SZ")
 	end)
@@ -1660,7 +1694,7 @@ for themeKey in pairs(ThemeModule.Themes.Default or {}) do
 end
 table.sort(THEME_STUDIO_KEYS)
 
-local function cloneValue(value)
+function cloneValue(value)
 	if type(value) ~= "table" then
 		return value
 	end
@@ -1671,7 +1705,7 @@ local function cloneValue(value)
 	return out
 end
 
-local function cloneArray(values)
+function cloneArray(values)
 	local out = {}
 	if type(values) ~= "table" then
 		return out
@@ -1682,7 +1716,7 @@ local function cloneArray(values)
 	return out
 end
 
-local function normalizePresetName(name)
+function normalizePresetName(name)
 	if type(name) ~= "string" then
 		return nil
 	end
@@ -1699,7 +1733,7 @@ local function normalizePresetName(name)
 	return nil
 end
 
-local function normalizeTransitionProfileName(name)
+function normalizeTransitionProfileName(name)
 	if type(name) ~= "string" then
 		return nil
 	end
@@ -1716,7 +1750,7 @@ local function normalizeTransitionProfileName(name)
 	return nil
 end
 
-local function color3ToPacked(color)
+function color3ToPacked(color)
 	if typeof(color) ~= "Color3" then
 		return nil
 	end
@@ -1727,7 +1761,7 @@ local function color3ToPacked(color)
 	}
 end
 
-local function packedToColor3(packed)
+function packedToColor3(packed)
 	if type(packed) ~= "table" then
 		return nil
 	end
@@ -1740,7 +1774,7 @@ local function packedToColor3(packed)
 	return Color3.fromRGB(math.clamp(math.floor(r + 0.5), 0, 255), math.clamp(math.floor(g + 0.5), 0, 255), math.clamp(math.floor(b + 0.5), 0, 255))
 end
 
-local function listThemeNames()
+function listThemeNames()
 	local names = {}
 	for themeName in pairs(ThemeModule.Themes or {}) do
 		table.insert(names, themeName)
@@ -1754,12 +1788,12 @@ local AUDIO_PACK_NAMES = {
 	custom = "Custom"
 }
 
-local function normalizeAudioPackName(name)
+function normalizeAudioPackName(name)
 	local normalized = string.lower(tostring(name or ""))
 	return AUDIO_PACK_NAMES[normalized]
 end
 
-local function sanitizeSoundId(value)
+function sanitizeSoundId(value)
 	if value == nil then
 		return nil
 	end
@@ -1778,7 +1812,7 @@ local function sanitizeSoundId(value)
 	return nil
 end
 
-local function cloneAudioPack(pack)
+function cloneAudioPack(pack)
 	local out = {}
 	if type(pack) ~= "table" then
 		return out
@@ -1792,7 +1826,7 @@ local function cloneAudioPack(pack)
 	return out
 end
 
-local function ensureAudioSoundFolder()
+function ensureAudioSoundFolder()
 	if not Rayfield then
 		return nil
 	end
@@ -1810,7 +1844,7 @@ local function ensureAudioSoundFolder()
 	return folder
 end
 
-local function ensureAudioCueSound(cueName)
+function ensureAudioCueSound(cueName)
 	local folder = ensureAudioSoundFolder()
 	if not folder then
 		return nil
@@ -1833,7 +1867,7 @@ local function ensureAudioCueSound(cueName)
 	return sound
 end
 
-local function syncAudioCueSounds()
+function syncAudioCueSounds()
 	local audioState = ExperienceState.audioState
 	local pack = audioState.pack == "Custom" and audioState.customPack or {}
 	for _, cueName in ipairs({"click", "hover", "success", "error"}) do
@@ -1846,7 +1880,7 @@ local function syncAudioCueSounds()
 	end
 end
 
-local function setAudioFeedbackVolumeInternal(volume, persist)
+function setAudioFeedbackVolumeInternal(volume, persist)
 	local audioState = ExperienceState.audioState
 	audioState.volume = math.clamp(tonumber(volume) or audioState.volume or 0.45, 0, 1)
 	syncAudioCueSounds()
@@ -1856,7 +1890,7 @@ local function setAudioFeedbackVolumeInternal(volume, persist)
 	return true, "Audio volume updated."
 end
 
-local function setAudioFeedbackEnabledInternal(enabled, persist)
+function setAudioFeedbackEnabledInternal(enabled, persist)
 	local audioState = ExperienceState.audioState
 	audioState.enabled = enabled == true
 	syncAudioCueSounds()
@@ -1866,7 +1900,7 @@ local function setAudioFeedbackEnabledInternal(enabled, persist)
 	return true, audioState.enabled and "Audio feedback enabled." or "Audio feedback disabled."
 end
 
-local function setAudioFeedbackPackInternal(name, packDefinition, persist)
+function setAudioFeedbackPackInternal(name, packDefinition, persist)
 	local audioState = ExperienceState.audioState
 	local canonical = normalizeAudioPackName(name)
 	if not canonical then
@@ -1887,7 +1921,7 @@ local function setAudioFeedbackPackInternal(name, packDefinition, persist)
 	return true, "Audio pack set to " .. tostring(audioState.pack) .. "."
 end
 
-local function getAudioFeedbackStateSnapshot()
+function getAudioFeedbackStateSnapshot()
 	local audioState = ExperienceState.audioState
 	return {
 		enabled = audioState.enabled == true,
@@ -1897,7 +1931,7 @@ local function getAudioFeedbackStateSnapshot()
 	}
 end
 
-local function playUICueInternal(cueName, options)
+function playUICueInternal(cueName, options)
 	options = options or {}
 	if rayfieldDestroyed then
 		return false, "Rayfield destroyed."
@@ -1946,7 +1980,7 @@ end
 
 local canvasGroupSupportCache = nil
 
-local function canUseCanvasGroup()
+function canUseCanvasGroup()
 	if canvasGroupSupportCache ~= nil then
 		return canvasGroupSupportCache
 	end
@@ -1962,7 +1996,7 @@ local function canUseCanvasGroup()
 	return canvasGroupSupportCache
 end
 
-local function cleanupGlassLayer()
+function cleanupGlassLayer()
 	local glassState = ExperienceState.glassState
 	if glassState.root and glassState.root.Parent then
 		glassState.root:Destroy()
@@ -1973,7 +2007,7 @@ local function cleanupGlassLayer()
 	glassState.resolvedMode = "off"
 end
 
-local function resolveGlassMode(mode)
+function resolveGlassMode(mode)
 	local normalized = string.lower(tostring(mode or "auto"))
 	if normalized ~= "auto" and normalized ~= "off" and normalized ~= "canvas" and normalized ~= "fallback" then
 		normalized = "auto"
@@ -2002,7 +2036,7 @@ local function resolveGlassMode(mode)
 	return canUseCanvasGroup() and "canvas" or "fallback"
 end
 
-local function ensureGlassLayerRoot(resolvedMode)
+function ensureGlassLayerRoot(resolvedMode)
 	local glassState = ExperienceState.glassState
 	if resolvedMode == "off" then
 		cleanupGlassLayer()
@@ -2090,7 +2124,7 @@ applyGlassLayer = function()
 	return true, "Glass applied (" .. tostring(resolvedMode) .. ")."
 end
 
-local function setGlassModeInternal(mode, persist)
+function setGlassModeInternal(mode, persist)
 	local normalized = string.lower(tostring(mode or "auto"))
 	if normalized ~= "auto" and normalized ~= "off" and normalized ~= "canvas" and normalized ~= "fallback" then
 		return false, "Invalid glass mode."
@@ -2103,7 +2137,7 @@ local function setGlassModeInternal(mode, persist)
 	return okApply, applyMessage
 end
 
-local function setGlassIntensityInternal(value, persist)
+function setGlassIntensityInternal(value, persist)
 	ExperienceState.glassState.intensity = math.clamp(tonumber(value) or ExperienceState.glassState.intensity or 0.32, 0, 1)
 	local okApply, applyMessage = applyGlassLayer()
 	if persist ~= false then
@@ -2112,7 +2146,7 @@ local function setGlassIntensityInternal(value, persist)
 	return okApply, applyMessage
 end
 
-local function getMainScale()
+function getMainScale()
 	if not Main then
 		return nil
 	end
@@ -2128,7 +2162,7 @@ local function getMainScale()
 end
 
 local presetLayoutBaseline = nil
-local function capturePresetLayoutBaseline()
+function capturePresetLayoutBaseline()
 	if presetLayoutBaseline then
 		return
 	end
@@ -2140,7 +2174,7 @@ local function capturePresetLayoutBaseline()
 	}
 end
 
-local function applyPresetLayoutInternal(presetName)
+function applyPresetLayoutInternal(presetName)
 	capturePresetLayoutBaseline()
 	if not TabList or not Elements or not presetLayoutBaseline then
 		return false
@@ -2181,7 +2215,7 @@ local function applyPresetLayoutInternal(presetName)
 	return true
 end
 
-local function setTransitionProfileInternal(name, persist)
+function setTransitionProfileInternal(name, persist)
 	local canonical = normalizeTransitionProfileName(name)
 	if not canonical then
 		return false, "Invalid transition profile."
@@ -2205,7 +2239,7 @@ local function setTransitionProfileInternal(name, persist)
 	return true, "Transition profile set to " .. canonical .. "."
 end
 
-local function setUIPresetInternal(name, persist)
+function setUIPresetInternal(name, persist)
 	local canonical = normalizePresetName(name)
 	if not canonical then
 		return false, "Invalid UI preset."
@@ -2256,7 +2290,7 @@ local function setUIPresetInternal(name, persist)
 	return true, "UI preset set to " .. canonical .. "."
 end
 
-local function buildThemeStudioTheme(baseThemeName, packedOverrides)
+function buildThemeStudioTheme(baseThemeName, packedOverrides)
 	local baseTheme = ThemeModule.Themes[baseThemeName] or ThemeModule.Themes.Default or {}
 	local out = {}
 	for themeKey, value in pairs(baseTheme) do
@@ -2274,7 +2308,7 @@ local function buildThemeStudioTheme(baseThemeName, packedOverrides)
 	return out
 end
 
-local function getThemeStudioColor(themeKey)
+function getThemeStudioColor(themeKey)
 	if type(themeKey) ~= "string" or themeKey == "" then
 		return nil
 	end
@@ -2290,7 +2324,7 @@ local function getThemeStudioColor(themeKey)
 	return baseTheme and baseTheme[themeKey] or nil
 end
 
-local function applyThemeStudioState(persist)
+function applyThemeStudioState(persist)
 	local baseThemeName = ExperienceState.themeStudioState.baseTheme
 	local useCustom = ExperienceState.themeStudioState.useCustom == true
 	if not ThemeModule.Themes[baseThemeName] then
@@ -2315,7 +2349,7 @@ local function applyThemeStudioState(persist)
 	return true, "Theme studio state applied."
 end
 
-local function setThemeStudioBaseTheme(name, persist)
+function setThemeStudioBaseTheme(name, persist)
 	local themeName = tostring(name or "")
 	if not ThemeModule.Themes[themeName] then
 		return false, "Theme not found."
@@ -2324,12 +2358,12 @@ local function setThemeStudioBaseTheme(name, persist)
 	return applyThemeStudioState(persist ~= false)
 end
 
-local function setThemeStudioUseCustom(value, persist)
+function setThemeStudioUseCustom(value, persist)
 	ExperienceState.themeStudioState.useCustom = value == true
 	return applyThemeStudioState(persist ~= false)
 end
 
-local function setThemeStudioColor(themeKey, color)
+function setThemeStudioColor(themeKey, color)
 	if type(themeKey) ~= "string" or themeKey == "" then
 		return false, "Theme key is invalid."
 	end
@@ -2344,20 +2378,20 @@ local function setThemeStudioColor(themeKey, color)
 	return applyThemeStudioState(false)
 end
 
-local function resetThemeStudioState(persist)
+function resetThemeStudioState(persist)
 	ExperienceState.themeStudioState.useCustom = false
 	ExperienceState.themeStudioState.customThemePacked = {}
 	return applyThemeStudioState(persist ~= false)
 end
 
-local function refreshFavoritesSettingsPersistence()
+function refreshFavoritesSettingsPersistence()
 	if ElementsSystem and type(ElementsSystem.getPinnedIds) == "function" then
 		local pinnedIds = ElementsSystem.getPinnedIds(true)
 		setSettingValue("Favorites", "pinnedIds", cloneArray(pinnedIds), true)
 	end
 end
 
-local function highlightFavoriteControl(record)
+function highlightFavoriteControl(record)
 	if not record or not record.GuiObject or not record.GuiObject.Parent then
 		return
 	end
@@ -2377,7 +2411,7 @@ local function highlightFavoriteControl(record)
 	end)
 end
 
-local function renderFavoritesTab()
+function renderFavoritesTab()
 	local favoritesTab = ExperienceState.favoritesTab
 	if not favoritesTab or type(favoritesTab.Clear) ~= "function" then
 		return false
@@ -2422,7 +2456,7 @@ local function renderFavoritesTab()
 	return true
 end
 
-local function ensureFavoritesTab(windowRef)
+function ensureFavoritesTab(windowRef)
 	if not windowRef then
 		return nil, "Window unavailable."
 	end
@@ -2435,7 +2469,7 @@ local function ensureFavoritesTab(windowRef)
 	return ExperienceState.favoritesTab
 end
 
-local function openFavoritesTab(windowRef)
+function openFavoritesTab(windowRef)
 	local favoritesTab, err = ensureFavoritesTab(windowRef or ExperienceState.favoritesTabWindow)
 	if not favoritesTab then
 		return false, tostring(err or "Unable to create Favorites tab.")
@@ -2647,7 +2681,7 @@ if type(_G) == "table" and _G.__RAYFIELD_MULTI_BRIDGE_AUTO_POLL == true then
 	pcall(startBridgePollingInternal)
 end
 
-local function normalizeDiscoveryEntries(rawItems, providerName, queryLower)
+function normalizeDiscoveryEntries(rawItems, providerName, queryLower)
 	local out = {}
 	for _, raw in ipairs(type(rawItems) == "table" and rawItems or {}) do
 		local entry = nil
@@ -2682,7 +2716,7 @@ local function normalizeDiscoveryEntries(rawItems, providerName, queryLower)
 	return out
 end
 
-local function buildDefaultDiscoveryProviders()
+function buildDefaultDiscoveryProviders()
 	return {
 		game_api = function(queryText, queryLower)
 			local globalApi = type(_G) == "table" and _G.__RAYFIELD_GAME_DISCOVERY_API or nil
@@ -3740,7 +3774,7 @@ localizeStringInternal = function(key, fallback)
 	return localizeString(key, fallback)
 end
 
-local function ensureOnboardingOverlay()
+function ensureOnboardingOverlay()
 	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
 		return ExperienceState.onboardingOverlay
 	end
@@ -4254,7 +4288,7 @@ ExperienceBindings = ExperienceBindingsLib.bind({
 	end
 })
 
-local function restoreExperienceStateFromSettings(windowRef)
+function restoreExperienceStateFromSettings(windowRef)
 	if ExperienceBindings and type(ExperienceBindings.restoreFromSettings) == "function" then
 		return ExperienceBindings.restoreFromSettings(windowRef)
 	end
@@ -4268,14 +4302,14 @@ function RayfieldLibrary:Notify(data)
 	return UIStateSystem.Notify(data)
 end
 
-local function ensureOwnershipSystem()
+function ensureOwnershipSystem()
 	if not OwnershipSystem then
 		return false, "Ownership tracker is unavailable."
 	end
 	return true
 end
 
-local function sanitizeScopeName(rawName)
+function sanitizeScopeName(rawName)
 	local value = tostring(rawName or "")
 	value = value:gsub("^%s+", "")
 	value = value:gsub("%s+$", "")
@@ -4552,7 +4586,7 @@ function RayfieldLibrary:GetRuntimeDiagnostics()
 	}
 end
 
-local function shallowArrayCopy(input)
+function shallowArrayCopy(input)
 	local out = {}
 	if type(input) ~= "table" then
 		return out
@@ -4563,7 +4597,7 @@ local function shallowArrayCopy(input)
 	return out
 end
 
-local function normalizeProfileMode(mode)
+function normalizeProfileMode(mode)
 	if type(mode) ~= "string" then
 		return "auto"
 	end
@@ -4574,7 +4608,7 @@ local function normalizeProfileMode(mode)
 	return "auto"
 end
 
-local function mergeTable(target, source)
+function mergeTable(target, source)
 	if type(source) ~= "table" then
 		return
 	end
@@ -4593,7 +4627,7 @@ local function mergeTable(target, source)
 	end
 end
 
-local function applyPresetFillNil(target, preset, appliedFields, pathPrefix)
+function applyPresetFillNil(target, preset, appliedFields, pathPrefix)
 	if type(target) ~= "table" or type(preset) ~= "table" then
 		return
 	end
@@ -4617,7 +4651,7 @@ local function applyPresetFillNil(target, preset, appliedFields, pathPrefix)
 	end
 end
 
-local function buildLowSpecPreset(resolvedMode, aggressive, profileSettings)
+function buildLowSpecPreset(resolvedMode, aggressive, profileSettings)
 	local isLowSpecMode = resolvedMode == "potato" or resolvedMode == "mobile"
 	local disableDetach = profileSettings.DisableDetach
 	if disableDetach == nil then
@@ -4678,7 +4712,7 @@ local function buildLowSpecPreset(resolvedMode, aggressive, profileSettings)
 	}
 end
 
-local function resolvePerformanceProfile(Settings, runtimeCtx)
+function resolvePerformanceProfile(Settings, runtimeCtx)
 	local resolved = {
 		enabled = false,
 		requestedMode = "normal",
@@ -4775,7 +4809,7 @@ local function resolvePerformanceProfile(Settings, runtimeCtx)
 	return resolved
 end
 
-local function applySystemOverridesForProfile(profile)
+function applySystemOverridesForProfile(profile)
 	local lowSpecActive = type(profile) == "table" and profile.enabled == true and profile.resolvedMode ~= "normal"
 	local disableAnimations = type(profile) == "table" and profile.disableAnimations == true
 	if lowSpecActive or disableAnimations then
@@ -5669,7 +5703,7 @@ setVisibility = function(visibility, notify)
 end
 
 local hideHotkeyConnection -- Has to be initialized here since the connection is made later in the script
-local function destroyRuntime()
+function destroyRuntime()
 	AnimationEngine:SetUiSuppressed(true)
 	detachPathEnabled = true
 	activePerformanceProfile = {
@@ -5765,7 +5799,7 @@ local function destroyRuntime()
 	OwnershipSystem = nil
 end
 
-local function isRuntimeDestroyed()
+function isRuntimeDestroyed()
 	if rayfieldDestroyed then
 		return true
 	end
@@ -5775,6 +5809,43 @@ local function isRuntimeDestroyed()
 	return (not ok) or parent == nil
 end
 
+function configureRuntimeInternal(optionsTable)
+	if type(ApiClient) ~= "table" or type(ApiClient.configureRuntime) ~= "function" then
+		return false, "Runtime config client is unavailable."
+	end
+	local okConfigure, configureResult = pcall(ApiClient.configureRuntime, optionsTable)
+	if not okConfigure then
+		return false, tostring(configureResult)
+	end
+	if configureResult == false then
+		return false, "Runtime config update rejected."
+	end
+
+	if type(ApiClient.getRuntimeConfig) == "function" then
+		local okSnapshot, snapshot = pcall(ApiClient.getRuntimeConfig)
+		if okSnapshot and type(snapshot) == "table" then
+			LegacyRuntimeConfig = snapshot
+			if type(snapshot.runtimeRootUrl) == "string" and snapshot.runtimeRootUrl ~= "" then
+				MODULE_ROOT_URL = snapshot.runtimeRootUrl
+				if type(_G) == "table" then
+					_G.__RAYFIELD_RUNTIME_ROOT_URL = snapshot.runtimeRootUrl
+				end
+			end
+		end
+	end
+	return true
+end
+
+function getRuntimeConfigInternal()
+	if type(ApiClient) == "table" and type(ApiClient.getRuntimeConfig) == "function" then
+		local okSnapshot, snapshot = pcall(ApiClient.getRuntimeConfig)
+		if okSnapshot and type(snapshot) == "table" then
+			return snapshot
+		end
+	end
+	return cloneValue(LegacyRuntimeConfig)
+end
+
 RuntimeApiLib.bind({
 	RayfieldLibrary = RayfieldLibrary,
 	setVisibility = setVisibility,
@@ -5782,7 +5853,9 @@ RuntimeApiLib.bind({
 		return Hidden
 	end,
 	destroyRuntime = destroyRuntime,
-	isDestroyed = isRuntimeDestroyed
+	isDestroyed = isRuntimeDestroyed,
+	configureRuntime = configureRuntimeInternal,
+	getRuntimeConfig = getRuntimeConfigInternal
 })
 
 Topbar.ChangeSize.MouseButton1Click:Connect(function()
@@ -5862,7 +5935,7 @@ Topbar.Hide.MouseButton1Click:Connect(function()
 	setVisibility(Hidden, not useMobileSizing)
 end)
 
-local function buildCanonicalMacroKeybind(input)
+function buildCanonicalMacroKeybind(input)
 	if not input or input.UserInputType ~= Enum.UserInputType.Keyboard then
 		return nil
 	end

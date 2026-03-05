@@ -1,5 +1,27 @@
 -- Canonical entry orchestrator for Rayfield modified runtime
 
+local function buildLegacyRuntimeConfig(globalEnv)
+	if type(globalEnv) ~= "table" then
+		return {}
+	end
+	return {
+		runtimeRootUrl = globalEnv.__RAYFIELD_RUNTIME_ROOT_URL,
+		httpTimeoutSec = globalEnv.__RAYFIELD_HTTP_TIMEOUT_SEC,
+		httpCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT,
+		httpDefaultCancelOnTimeout = globalEnv.__RAYFIELD_HTTP_DEFAULT_CANCEL_ON_TIMEOUT,
+		execPolicy = {
+			mode = globalEnv.__RAYFIELD_EXEC_POLICY_MODE,
+			escalateAfter = globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER,
+			windowSec = globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC
+		},
+		bundleSources = type(globalEnv.__RAYFIELD_BUNDLE_SOURCES) == "table" and globalEnv.__RAYFIELD_BUNDLE_SOURCES or nil,
+		bundleBrokenPaths = type(globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS) == "table" and globalEnv.__RAYFIELD_BUNDLE_BROKEN_PATHS or nil,
+		compatFlags = type(globalEnv.__RAYFIELD_COMPAT_FLAGS) == "table" and globalEnv.__RAYFIELD_COMPAT_FLAGS or nil
+	}
+end
+
+local legacyRuntimeConfig = buildLegacyRuntimeConfig(_G)
+
 local client = _G and _G.__RayfieldApiClient
 if not client then
 	local compileString = loadstring or load
@@ -28,7 +50,20 @@ if not client then
 	end
 end
 
+if type(client) == "table" and type(client.configureRuntime) == "function" then
+	pcall(client.configureRuntime, legacyRuntimeConfig)
+end
+
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+if type(client) == "table" and type(client.getRuntimeConfig) == "function" then
+	local okRuntimeConfig, runtimeConfig = pcall(client.getRuntimeConfig)
+	if okRuntimeConfig and type(runtimeConfig) == "table" and type(runtimeConfig.runtimeRootUrl) == "string" and runtimeConfig.runtimeRootUrl ~= "" then
+		root = runtimeConfig.runtimeRootUrl
+		if type(_G) == "table" then
+			_G.__RAYFIELD_RUNTIME_ROOT_URL = root
+		end
+	end
+end
 
 -- Force fresh module graph per bootstrap run to avoid stale API module cache
 -- when users rerun scripts in the same executor session.
@@ -49,7 +84,10 @@ local TopbarUi = client.fetchAndExecute(root .. "src/ui/topbar/init.lua")
 local TabsUi = client.fetchAndExecute(root .. "src/ui/tabs/init.lua")
 local NotificationsUi = client.fetchAndExecute(root .. "src/ui/notifications/init.lua")
 
-local runtime = RuntimeEnv.create()
+local runtime = RuntimeEnv.create({
+	runtimeConfig = type(client) == "table" and type(client.getRuntimeConfig) == "function" and client.getRuntimeConfig() or legacyRuntimeConfig,
+	apiClient = client
+})
 WindowUi.init(runtime)
 TopbarUi.init(runtime)
 TabsUi.init(runtime)

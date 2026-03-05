@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-03-06
+
+### Added
+- Added runtime configuration APIs:
+  - `Rayfield:ConfigureRuntime(optionsTable)`
+  - `Rayfield:GetRuntimeConfig()`
+- Added CI debt ratchet scripts and baselines:
+  - `scripts/ci-luacheck-ratchet.lua`
+  - `scripts/ci-complexity-ratchet.lua`
+  - `scripts/ci-global-access-ratchet.lua`
+  - `.ci/luacheck-baseline.json`
+  - `.ci/complexity-baseline.json`
+  - `.ci/global-access-baseline.json`
+- Added migration and policy docs:
+  - `docs/migration/runtime-config-v2.md`
+  - `docs/engineering/lint-ratchet-policy.md`
+
+### Changed
+- Changed CI workflow to enforce ratcheting debt gates instead of failing on historical debt:
+  - luacheck delta gate on full scope (`src`, `feature`, `Main loader`, `tests`, `scripts`)
+  - complexity ratchet on changed files
+  - `_G` boundary ratchet for new direct global access outside approved loader boundaries
+- Changed runtime wrappers and entries to inject runtime settings explicitly into API client config.
+- Changed internal runtime services to reduce direct `_G.__RAYFIELD_*` coupling:
+  - `src/api/client.lua`
+  - `src/services/http-loader.lua`
+  - `src/services/compatibility.lua`
+
 ## 2026-02-25
 
 ### Added

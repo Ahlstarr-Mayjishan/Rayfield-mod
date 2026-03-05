@@ -16,6 +16,7 @@ return {
 	settingsUI = entry("src/services/settings-ui.lua", nil, "settings-ui"),
 	settingsShareCode = entry("src/services/settings-share-code.lua", nil, "settings-share-code"),
 	compatibility = entry("src/services/compatibility.lua", nil, "compatibility"),
+	runtimeConfigService = entry("src/services/runtime-config.lua", nil, "runtime-config-service"),
 	ownershipTracker = entry("src/services/ownership-tracker.lua", nil, "ownership-tracker"),
 	elementSync = entry("src/services/element-sync.lua", nil, "element-sync"),
 	keybindSequence = entry("src/services/keybind-sequence.lua", nil, "keybind-sequence"),

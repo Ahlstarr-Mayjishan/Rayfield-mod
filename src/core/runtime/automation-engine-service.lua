@@ -182,7 +182,7 @@ function AutomationEngineService.create(ctx)
 		end
 		local currentCount = 0
 		for _ in pairs(rules) do
-			currentCount += 1
+			currentCount = currentCount + 1
 		end
 		if rules[normalized.id] == nil and currentCount >= maxRuleCount then
 			return false, string.format("Automation rule limit reached (%d).", maxRuleCount)
@@ -246,7 +246,7 @@ function AutomationEngineService.create(ctx)
 		local triggered = 0
 		for _, rule in pairs(rules) do
 			if type(rule) == "table" and rule.enabled ~= false and ruleMatches(rule, eventPayload) then
-				triggered += 1
+				triggered = triggered + 1
 				task.spawn(function()
 					local okRun, runMsg = runAction(rule["then"], "rule:" .. tostring(rule.id))
 					if not okRun and notify then
@@ -283,14 +283,14 @@ function AutomationEngineService.create(ctx)
 		local activeCount = 0
 		for _, taskInfo in pairs(scheduledTasks) do
 			if type(taskInfo) == "table" and taskInfo.status == "scheduled" then
-				activeCount += 1
+				activeCount = activeCount + 1
 			end
 		end
 		if activeCount >= maxScheduled then
 			return false, string.format("Scheduled task limit reached (%d).", maxScheduled), nil
 		end
 
-		nextTaskSerial += 1
+		nextTaskSerial = nextTaskSerial + 1
 		local taskId = "task-" .. tostring(nextTaskSerial)
 		local nowClock = os.clock()
 		local record = {

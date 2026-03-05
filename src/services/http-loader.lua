@@ -10,7 +10,14 @@ function HttpLoaderService.create(options)
 	local warnFn = type(options.warn) == "function" and options.warn or warn
 	local taskLib = options.taskLib or task
 	local clockFn = type(options.clock) == "function" and options.clock or os.clock
+	local runtimeConfig = options.runtimeConfig
 	local defaultCancelOnTimeout = options.defaultCancelOnTimeout ~= false
+	if type(runtimeConfig) == "table" and type(runtimeConfig.getHttpDefaultCancelOnTimeout) == "function" then
+		local configuredDefault = runtimeConfig.getHttpDefaultCancelOnTimeout()
+		if configuredDefault ~= nil then
+			defaultCancelOnTimeout = configuredDefault == true
+		end
+	end
 
 	if type(compileString) ~= "function" then
 		error("HttpLoaderService requires a compile function (loadstring/load).")
@@ -46,10 +53,16 @@ function HttpLoaderService.create(options)
 			policyMode = "hard"
 			policyReason = "default-override:http-loader-default-cancel"
 		end
-		if type(_G) == "table" and _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT ~= nil then
-			cancelOnTimeout = _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT == true
+		local explicitCancel = nil
+		if type(runtimeConfig) == "table" and type(runtimeConfig.getHttpCancelOnTimeout) == "function" then
+			explicitCancel = runtimeConfig.getHttpCancelOnTimeout()
+		elseif type(runtimeConfig) == "table" then
+			explicitCancel = runtimeConfig.httpCancelOnTimeout
+		end
+		if explicitCancel ~= nil then
+			cancelOnTimeout = explicitCancel == true
 			policyMode = cancelOnTimeout and "hard" or "soft"
-			policyReason = "legacy-override:__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT"
+			policyReason = "runtime-config:httpCancelOnTimeout"
 		end
 
 		local requestCompleted = false

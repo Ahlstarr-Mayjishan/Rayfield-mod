@@ -52,11 +52,13 @@ jobs:
         run: lua scripts/verify-no-direct-tweencreate.lua
 
   luacheck:
-    name: Luacheck Lint
+    name: Luacheck Ratchet
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Lua
         uses: leafo/gh-actions-lua@v12
@@ -71,14 +73,30 @@ jobs:
           echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
           luacheck --version
 
-      - name: Run Luacheck
+      - name: Collect changed Lua files
+        id: changed_lua
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.lua' > changed-lua.txt
+          else
+            if [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+              git ls-files '*.lua' > changed-lua.txt
+            else
+              git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- '*.lua' > changed-lua.txt
+            fi
+          fi
+          echo "Changed Lua files:"
+          cat changed-lua.txt || true
+
+      - name: Run Luacheck (full scope)
         id: luacheck_run
         shell: bash
         run: |
-          mkdir -p luacheck-context
-          : > luacheck-report.txt
+          mkdir -p luacheck-context debt-reports
           set +e
-          luacheck --config .luacheckrc --codes --ranges scripts 2>&1 | tee luacheck-report.txt
+          luacheck --config .luacheckrc --codes --ranges src feature "Main loader" tests scripts 2>&1 | tee luacheck-report.txt
           status=${PIPESTATUS[0]}
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -87,21 +105,21 @@ jobs:
         if: always()
         run: lua scripts/emit-luacheck-context.lua luacheck-report.txt luacheck-context
 
-      - name: Upload Luacheck Artifact
+      - name: Enforce Luacheck Ratchet
+        shell: bash
+        run: |
+          lua scripts/ci-luacheck-ratchet.lua luacheck-report.txt .ci/luacheck-baseline.json changed-lua.txt debt-reports/luacheck-ratchet.txt
+
+      - name: Upload Luacheck Debt Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: luacheck-context
+          name: luacheck-debt-report
           path: |
             luacheck-report.txt
             luacheck-context/
+            debt-reports/luacheck-ratchet.txt
           retention-days: 14
-
-      - name: Fail On Luacheck Issues
-        if: steps.luacheck_run.outputs.status != '0'
-        run: |
-          echo "Luacheck reported issues. Download artifact 'luacheck-context' for full-file context."
-          exit 1
 
   selene:
     name: Selene Lint
@@ -154,11 +172,18 @@ jobs:
           selene "${files[@]}"
 
   complexity:
-    name: Complexity Report
+    name: Complexity Ratchet
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          luaVersion: "5.4"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -168,15 +193,90 @@ jobs:
       - name: Install Lizard
         run: python -m pip install lizard
 
-      - name: Generate complexity report
+      - name: Collect changed Lua files
+        id: changed_lua
+        shell: bash
         run: |
-          python -m lizard src -l lua -C 30 -L 220 > lizard-report.txt || true
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.lua' > changed-lua.txt
+          else
+            if [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+              git ls-files '*.lua' > changed-lua.txt
+            else
+              git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- '*.lua' > changed-lua.txt
+            fi
+          fi
+          echo "Changed Lua files:"
+          cat changed-lua.txt || true
+
+      - name: Generate lizard reports
+        shell: bash
+        run: |
+          mkdir -p debt-reports
+          python -m lizard src feature "Main loader" tests scripts -l lua -X > lizard-report.xml
+          python -m lizard src feature "Main loader" tests scripts -l lua -C 30 -L 220 > lizard-report.txt || true
           cat lizard-report.txt
 
-      - name: Enforce complexity thresholds (opt-in)
-        if: vars.STRICT_COMPLEXITY_GUARD == 'true'
+      - name: Enforce complexity ratchet
+        shell: bash
         run: |
-          python -m lizard src -l lua -C 30 -L 220
+          lua scripts/ci-complexity-ratchet.lua lizard-report.xml .ci/complexity-baseline.json changed-lua.txt debt-reports/complexity-ratchet.txt
+
+      - name: Upload complexity debt artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: complexity-debt-report
+          path: |
+            lizard-report.xml
+            lizard-report.txt
+            debt-reports/complexity-ratchet.txt
+          retention-days: 14
+
+  global-access:
+    name: Global Access Ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@v12
+        with:
+          luaVersion: "5.4"
+
+      - name: Collect changed Lua files
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- '*.lua' > changed-lua.txt
+          else
+            if [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+              git ls-files '*.lua' > changed-lua.txt
+            else
+              git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- '*.lua' > changed-lua.txt
+            fi
+          fi
+          echo "Changed Lua files:"
+          cat changed-lua.txt || true
+
+      - name: Enforce _G access ratchet
+        shell: bash
+        run: |
+          mkdir -p debt-reports
+          lua scripts/ci-global-access-ratchet.lua .ci/global-access-baseline.json changed-lua.txt debt-reports/global-access-ratchet.txt
+
+      - name: Upload global access debt artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-access-debt-report
+          path: debt-reports/global-access-ratchet.txt
+          retention-days: 14
 
   format-check:
     name: StyLua Format Check
@@ -256,7 +356,7 @@ jobs:
     name: Build Production Bundle
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lua-syntax, verify-scripts, luacheck, selene, complexity, format-check]
+    needs: [lua-syntax, verify-scripts, luacheck, selene, complexity, global-access, format-check]
     steps:
       - uses: actions/checkout@v4
 

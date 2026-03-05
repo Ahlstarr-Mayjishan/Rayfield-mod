@@ -1,6 +1,10 @@
 local Compatibility = {}
 
 local DEFAULT_RUNTIME_ROOT = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+local RuntimeState = {
+	runtimeRootUrl = DEFAULT_RUNTIME_ROOT,
+	compatFlags = {}
+}
 
 local function safePcall(fn, ...)
 	local ok, result = pcall(fn, ...)
@@ -19,10 +23,36 @@ function Compatibility.getCompileString()
 end
 
 function Compatibility.getRuntimeRoot()
-	if type(_G) == "table" and type(_G.__RAYFIELD_RUNTIME_ROOT_URL) == "string" and _G.__RAYFIELD_RUNTIME_ROOT_URL ~= "" then
-		return _G.__RAYFIELD_RUNTIME_ROOT_URL
+	if type(RuntimeState.runtimeRootUrl) == "string" and RuntimeState.runtimeRootUrl ~= "" then
+		return RuntimeState.runtimeRootUrl
 	end
 	return DEFAULT_RUNTIME_ROOT
+end
+
+function Compatibility.configureRuntime(runtimeConfig)
+	if type(runtimeConfig) ~= "table" then
+		return false, "Runtime config table required."
+	end
+
+	if type(runtimeConfig.getRuntimeRootUrl) == "function" then
+		local root = runtimeConfig.getRuntimeRootUrl()
+		if type(root) == "string" and root ~= "" then
+			RuntimeState.runtimeRootUrl = root
+		end
+	elseif type(runtimeConfig.runtimeRootUrl) == "string" and runtimeConfig.runtimeRootUrl ~= "" then
+		RuntimeState.runtimeRootUrl = runtimeConfig.runtimeRootUrl
+	end
+
+	if type(runtimeConfig.getCompatFlags) == "function" then
+		local flags = runtimeConfig.getCompatFlags()
+		if type(flags) == "table" then
+			RuntimeState.compatFlags = flags
+		end
+	elseif type(runtimeConfig.compatFlags) == "table" then
+		RuntimeState.compatFlags = runtimeConfig.compatFlags
+	end
+
+	return true
 end
 
 function Compatibility.getService(name)
@@ -54,13 +84,10 @@ function Compatibility.tryGetHui()
 end
 
 local function getCompatFlags()
-	if type(_G) ~= "table" then
-		return {}
+	if type(RuntimeState.compatFlags) ~= "table" then
+		RuntimeState.compatFlags = {}
 	end
-	if type(_G.__RAYFIELD_COMPAT_FLAGS) ~= "table" then
-		_G.__RAYFIELD_COMPAT_FLAGS = {}
-	end
-	return _G.__RAYFIELD_COMPAT_FLAGS
+	return RuntimeState.compatFlags
 end
 
 local function isUsableContainer(container)
@@ -309,10 +336,6 @@ function Compatibility.dedupeGuiByName(container, guiName, keepInstance, oldName
 	end
 
 	return renamedCount
-end
-
-if type(_G) == "table" then
-	_G.__RayfieldCompatibility = Compatibility
 end
 
 return Compatibility
