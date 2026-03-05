@@ -3,85 +3,6 @@
 
 local ViewportVirtualization = {}
 
-local DEFAULTS = {
-	Enabled = true,
-	AlwaysOn = true,
-	FullSuspend = true,
-	OverscanPx = 120,
-	UpdateHz = 30,
-	FadeOnScroll = true,
-	DisableFadeDuringResize = true,
-	ResizeDebounceMs = 100,
-	MinElementsToActivate = 0
-}
-
-local function getSharedUtils()
-	if type(_G) == "table" and type(_G.__RayfieldSharedUtils) == "table" then
-		return _G.__RayfieldSharedUtils
-	end
-	return nil
-end
-
-local function cloneTable(value)
-	local shared = getSharedUtils()
-	if shared and type(shared.cloneTable) == "function" then
-		return shared.cloneTable(value)
-	end
-	if type(value) ~= "table" then
-		return value
-	end
-	local out = {}
-	for key, nested in pairs(value) do
-		out[key] = cloneTable(nested)
-	end
-	return out
-end
-
-local function mergeDefaults(input)
-	local out = cloneTable(DEFAULTS)
-	if type(input) ~= "table" then
-		return out
-	end
-	for key, value in pairs(input) do
-		out[key] = value
-	end
-
-	out.Enabled = out.Enabled ~= false
-	out.AlwaysOn = out.AlwaysOn ~= false
-	out.FullSuspend = out.FullSuspend ~= false
-	out.FadeOnScroll = out.FadeOnScroll ~= false
-	out.DisableFadeDuringResize = out.DisableFadeDuringResize ~= false
-
-	local overscan = tonumber(out.OverscanPx)
-	if not overscan then
-		overscan = DEFAULTS.OverscanPx
-	end
-	if overscan < 0 then
-		overscan = 0
-	end
-	out.OverscanPx = math.floor(overscan)
-
-	local updateHz = tonumber(out.UpdateHz)
-	if not updateHz or updateHz <= 0 then
-		updateHz = DEFAULTS.UpdateHz
-	end
-	out.UpdateHz = math.max(5, math.floor(updateHz))
-
-	local resizeDebounce = tonumber(out.ResizeDebounceMs)
-	if not resizeDebounce or resizeDebounce < 0 then
-		resizeDebounce = DEFAULTS.ResizeDebounceMs
-	end
-	out.ResizeDebounceMs = math.max(0, math.floor(resizeDebounce))
-
-	local minElements = tonumber(out.MinElementsToActivate)
-	if not minElements or minElements < 0 then
-		minElements = 0
-	end
-	out.MinElementsToActivate = math.floor(minElements)
-
-	return out
-end
-
 local function safeDisconnect(connection)
 	if not connection then
 		return
@@ -89,10 +10,6 @@ local function safeDisconnect(connection)
 	pcall(function()
 		connection:Disconnect()
 	end)
-end
-
-local function isAlive(instance)
-	return typeof(instance) == "Instance" and instance.Parent ~= nil
 end
 
 local function resolveToken(recordsByObject, recordsByToken, tokenOrObject)
@@ -112,7 +29,17 @@ function ViewportVirtualization.init(ctx)
 	local self = {}
 	ctx = ctx or {}
 
-	self.Config = mergeDefaults(ctx.Settings)
+	local engineModule = ctx.VirtualizationEngineModule
+	if type(engineModule) ~= "table" or type(engineModule.mergeDefaults) ~= "function" then
+		error("Rayfield | ViewportVirtualization missing VirtualizationEngineModule")
+	end
+
+	local hostManagerModule = ctx.VirtualHostManagerModule
+	if type(hostManagerModule) ~= "table" or type(hostManagerModule.create) ~= "function" then
+		error("Rayfield | ViewportVirtualization missing VirtualHostManagerModule")
+	end
+
+	self.Config = engineModule.mergeDefaults(ctx.Settings)
 	self.RunService = ctx.RunService or game:GetService("RunService")
 	self.TweenService = ctx.TweenService or game:GetService("TweenService")
 	self.UserInputService = ctx.UserInputService or game:GetService("UserInputService")
@@ -122,8 +49,6 @@ function ViewportVirtualization.init(ctx)
 		warn("Rayfield | ViewportVirtualization " .. tostring(message))
 	end
 
-	local hosts = {}
-	local hostOrder = {}
 	local records = {}
 	local recordsByObject = setmetatable({}, { __mode = "k" })
 	local tokenCounter = 0
@@ -131,6 +56,22 @@ function ViewportVirtualization.init(ctx)
 	local updateAccumulator = 0
 	local updateInterval = 1 / self.Config.UpdateHz
 	local storageRoot = nil
+	local hostManager = nil
+	hostManager = hostManagerModule.create({
+		config = self.Config,
+		safeDisconnect = safeDisconnect,
+		taskLib = task,
+		warn = self.warn,
+		onAutoUnregister = function(hostId)
+			if type(self.unregisterHost) == "function" then
+				self.unregisterHost(hostId)
+			elseif hostManager then
+				hostManager.unregisterHost(hostId)
+			end
+		end
+	})
+	local hosts = hostManager.getHosts()
+	local hostOrder = hostManager.getHostOrder()
 
 	local function ensureStorageRoot()
 		if storageRoot and storageRoot.Parent then
@@ -162,33 +103,15 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	local function countHostElements(host)
-		local count = 0
-		for token in pairs(host.elements) do
-			if records[token] then
-				count += 1
-			end
-		end
-		return count
+		return engineModule.countHostElements(host, records)
 	end
 
 	local function shouldUseFade(host)
-		if not self.Config.FadeOnScroll then
-			return false
-		end
-		if self.Config.DisableFadeDuringResize and host.resizeInProgress then
-			return false
-		end
-		return host.lastReason == "scroll"
+		return engineModule.shouldUseFade(self.Config, host)
 	end
 
 	local function markHostDirty(hostId, reason)
-		local host = hosts[hostId]
-		if not host then
-			return false
-		end
-		host.dirty = true
-		host.lastReason = reason or host.lastReason or "update"
-		return true
+		return hostManager.markHostDirty(hostId, reason)
 	end
 
 	local function suspendObjectAnimations(guiObject)
@@ -217,7 +140,7 @@ function ViewportVirtualization.init(ctx)
 
 	local function applyFade(guiObject, fadeOut)
 		local targetAlpha = fadeOut and 1 or 0
-		if not isAlive(guiObject) then
+		if not engineModule.isAlive(guiObject) then
 			return
 		end
 		if type(self.AnimationEngine) == "table" and type(self.AnimationEngine.AnimateProperty) == "function" then
@@ -232,17 +155,7 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	local function updateCachedHeight(record, targetObject)
-		local height = nil
-		if targetObject and targetObject.Parent then
-			height = tonumber(targetObject.AbsoluteSize.Y)
-		end
-		if not height or height <= 0 then
-			height = record.cachedHeight
-		end
-		if not height or height <= 0 then
-			height = 32
-		end
-		record.cachedHeight = math.max(1, math.floor(height + 0.5))
+		engineModule.updateCachedHeight(record, targetObject)
 	end
 
 	local function ensureSpacer(record)
@@ -319,7 +232,7 @@ function ViewportVirtualization.init(ctx)
 			return false
 		end
 		local guiObject = record.guiObject
-		if not isAlive(guiObject) then
+		if not engineModule.isAlive(guiObject) then
 			return false
 		end
 		if record.busy then
@@ -370,43 +283,11 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	local function computeViewport(host)
-		local hostObject = host.object
-		if not (hostObject and hostObject.Parent) then
-			return nil
-		end
-
-		local overscan = host.overscan
-		if host.mode == "scrolling" then
-			local scrollY = hostObject.CanvasPosition.Y
-			local viewHeight = hostObject.AbsoluteSize.Y
-			return scrollY - overscan, scrollY + viewHeight + overscan, scrollY
-		end
-
-		local viewHeight = hostObject.AbsoluteSize.Y
-		return 0 - overscan, viewHeight + overscan, 0
+		return engineModule.computeViewport(host)
 	end
 
 	local function computeBounds(host, record)
-		local hostObject = host.object
-		if not (hostObject and hostObject.Parent) then
-			return nil, nil
-		end
-
-		local target = record.sleeping and record.spacer or record.guiObject
-		if not (target and target.Parent) then
-			return nil, nil
-		end
-
-		updateCachedHeight(record, target)
-
-		local top
-		if host.mode == "scrolling" then
-			top = (target.AbsolutePosition.Y - hostObject.AbsolutePosition.Y) + hostObject.CanvasPosition.Y
-		else
-			top = target.AbsolutePosition.Y - hostObject.AbsolutePosition.Y
-		end
-		local bottom = top + math.max(1, record.cachedHeight or 1)
-		return top, bottom
+		return engineModule.computeBounds(host, record)
 	end
 
 	local function evaluateHost(hostId)
@@ -414,7 +295,7 @@ function ViewportVirtualization.init(ctx)
 		if not host then
 			return
 		end
-		if not isAlive(host.object) then
+		if not engineModule.isAlive(host.object) then
 			self.unregisterHost(hostId)
 			return
 		end
@@ -488,7 +369,7 @@ function ViewportVirtualization.init(ctx)
 			return
 		end
 		updateConnection = self.RunService.RenderStepped:Connect(function(deltaTime)
-			updateAccumulator += deltaTime
+			updateAccumulator = updateAccumulator + deltaTime
 			if updateAccumulator < updateInterval then
 				return
 			end
@@ -503,7 +384,7 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	local function disconnectUpdateLoopIfIdle()
-		if next(hosts) ~= nil then
+		if hostManager.hasHosts() then
 			return
 		end
 		if updateConnection then
@@ -557,7 +438,7 @@ function ViewportVirtualization.init(ctx)
 		end
 
 		local previousTokens = nil
-		local existingHost = hosts[hostId]
+		local existingHost = hostManager.getHost(hostId)
 		if existingHost then
 			previousTokens = {}
 			for token in pairs(existingHost.elements) do
@@ -566,98 +447,12 @@ function ViewportVirtualization.init(ctx)
 		end
 		self.unregisterHost(hostId)
 
-		local opts = options or {}
-		local mode = tostring(opts.mode or "auto")
-		if mode == "auto" then
-			if hostObject:IsA("ScrollingFrame") then
-				mode = "scrolling"
-			else
-				mode = "clipped"
-			end
+		local okRegister = hostManager.registerHost(hostId, hostObject, options)
+		if not okRegister then
+			return false
 		end
-
-		local host = {
-			id = hostId,
-			object = hostObject,
-			mode = mode,
-			overscan = tonumber(opts.overscan) or self.Config.OverscanPx,
-			elements = {},
-			connections = {},
-			dirty = true,
-			paused = false,
-			resizeInProgress = false,
-			resizeToken = 0,
-			lastReason = "register"
-		}
-		if host.overscan < 0 then
-			host.overscan = 0
-		end
-
-		local function onResize()
-			host.resizeInProgress = true
-			host.resizeToken += 1
-			local token = host.resizeToken
-			markHostDirty(hostId, "resize")
-			if self.Config.DisableFadeDuringResize then
-				local delaySec = math.max(0, self.Config.ResizeDebounceMs) / 1000
-				task.delay(delaySec, function()
-					local current = hosts[hostId]
-					if current and current.resizeToken == token then
-						current.resizeInProgress = false
-						markHostDirty(hostId, "resize_settle")
-					end
-				end)
-			else
-				host.resizeInProgress = false
-			end
-		end
-
-		table.insert(host.connections, hostObject:GetPropertyChangedSignal("AbsoluteSize"):Connect(onResize))
-		table.insert(host.connections, hostObject:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
-			markHostDirty(hostId, "position")
-		end))
-
-		if host.mode == "scrolling" and hostObject:IsA("ScrollingFrame") then
-			table.insert(host.connections, hostObject:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-				markHostDirty(hostId, "scroll")
-			end))
-			table.insert(host.connections, hostObject:GetPropertyChangedSignal("CanvasSize"):Connect(function()
-				markHostDirty(hostId, "canvas")
-			end))
-		end
-
-		table.insert(host.connections, hostObject.ChildAdded:Connect(function(child)
-			if child:IsA("UIListLayout") then
-				table.insert(host.connections, child:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-					markHostDirty(hostId, "content_size")
-				end))
-				markHostDirty(hostId, "layout_added")
-			end
-		end))
-		table.insert(host.connections, hostObject.ChildRemoved:Connect(function()
-			markHostDirty(hostId, "child_removed")
-		end))
-
-		local hasDestroying = false
-		local okDestroying = pcall(function()
-			hasDestroying = hostObject.Destroying ~= nil
-		end)
-		if okDestroying and hasDestroying then
-			table.insert(host.connections, hostObject.Destroying:Connect(function()
-				self.unregisterHost(hostId)
-			end))
-		end
-		table.insert(host.connections, hostObject.AncestryChanged:Connect(function(_, parent)
-			if parent == nil then
-				self.unregisterHost(hostId)
-			else
-				markHostDirty(hostId, "reparent")
-			end
-		end))
-
-		hosts[hostId] = host
-		table.insert(hostOrder, hostId)
-		if previousTokens then
+		local host = hostManager.getHost(hostId)
+		if previousTokens and host then
 			for _, token in ipairs(previousTokens) do
 				local record = records[token]
 				if record then
@@ -672,7 +467,7 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	self.unregisterHost = function(hostId)
-		local host = hosts[hostId]
+		local host = hostManager.getHost(hostId)
 		if not host then
 			return false
 		end
@@ -685,32 +480,23 @@ function ViewportVirtualization.init(ctx)
 			end
 		end
 
-		for _, connection in ipairs(host.connections) do
-			safeDisconnect(connection)
-		end
-		table.clear(host.connections)
-		hosts[hostId] = nil
-
-		for index = #hostOrder, 1, -1 do
-			if hostOrder[index] == hostId then
-				table.remove(hostOrder, index)
-			end
-		end
+		hostManager.unregisterHost(hostId)
 
 		disconnectUpdateLoopIfIdle()
 		return true
 	end
 
 	self.refreshHost = function(hostId, reason)
-		return markHostDirty(hostId, reason or "refresh")
+		return hostManager.refreshHost(hostId, reason)
 	end
 
 	self.setHostSuppressed = function(hostId, suppressed)
-		local host = hosts[hostId]
+		local host = hostManager.getHost(hostId)
 		if not host then
 			return false
 		end
-		host.paused = suppressed == true
+		hostManager.setHostSuppressed(hostId, suppressed == true)
+		host = hostManager.getHost(hostId)
 		if host.paused then
 			for token in pairs(host.elements) do
 				sleepRecord(token, "host_suppressed", { fade = false })
@@ -727,7 +513,7 @@ function ViewportVirtualization.init(ctx)
 		if self.Config.Enabled ~= true then
 			return nil
 		end
-		local host = hosts[hostId]
+		local host = hostManager.getHost(hostId)
 		if not host then
 			return nil
 		end
@@ -735,7 +521,7 @@ function ViewportVirtualization.init(ctx)
 			return nil
 		end
 
-		tokenCounter += 1
+		tokenCounter = tokenCounter + 1
 		local token = "viewport_element_" .. tostring(tokenCounter)
 		local opts = options or {}
 		local record = {
@@ -794,9 +580,7 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	self.unregisterElement = function(tokenOrObject)
-		local token = nil
-		local record = nil
-		token, record = resolveToken(recordsByObject, records, tokenOrObject)
+		local token, record = resolveToken(recordsByObject, records, tokenOrObject)
 		if not token or not record then
 			return false
 		end
@@ -804,7 +588,7 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	self.moveElementToHost = function(tokenOrObject, hostId, reason)
-		local host = hosts[hostId]
+		local host = hostManager.getHost(hostId)
 		if not host then
 			return false
 		end
@@ -821,8 +605,9 @@ function ViewportVirtualization.init(ctx)
 		end
 
 		wakeRecord(token, "move_host", { fade = false })
-		if previousHostId and hosts[previousHostId] then
-			hosts[previousHostId].elements[token] = nil
+		local previousHost = previousHostId and hostManager.getHost(previousHostId) or nil
+		if previousHost then
+			previousHost.elements[token] = nil
 			markHostDirty(previousHostId, "element_moved")
 		end
 
@@ -859,18 +644,15 @@ function ViewportVirtualization.init(ctx)
 	end
 
 	self.getStats = function()
-		local hostCount = 0
-		for _ in pairs(hosts) do
-			hostCount += 1
-		end
+		local hostCount = hostManager.countHosts()
 		local elementCount = 0
 		for _ in pairs(records) do
-			elementCount += 1
+			elementCount = elementCount + 1
 		end
 		local sleepingCount = 0
 		for _, record in pairs(records) do
 			if record.sleeping then
-				sleepingCount += 1
+				sleepingCount = sleepingCount + 1
 			end
 		end
 		return {
@@ -885,13 +667,7 @@ function ViewportVirtualization.init(ctx)
 			unregisterRecord(token)
 		end
 
-		local hostIds = {}
-		for hostId in pairs(hosts) do
-			table.insert(hostIds, hostId)
-		end
-		for _, hostId in ipairs(hostIds) do
-			self.unregisterHost(hostId)
-		end
+		hostManager.destroy()
 
 		if updateConnection then
 			safeDisconnect(updateConnection)

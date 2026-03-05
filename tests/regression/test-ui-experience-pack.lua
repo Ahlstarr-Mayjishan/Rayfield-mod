@@ -1,4 +1,4 @@
---[[
+﻿--[[
 	Rayfield UI Experience regression
 	Validates Theme Studio + Presets + Favorites + Transition Profiles + Onboarding APIs.
 
@@ -109,9 +109,21 @@ assertTrue(type(Rayfield.CopyWorkspaceToProfile) == "function", "CopyWorkspaceTo
 assertTrue(type(Rayfield.CopyProfileToWorkspace) == "function", "CopyProfileToWorkspace missing")
 assertTrue(type(Rayfield.ShowContextMenu) == "function", "ShowContextMenu missing")
 assertTrue(type(Rayfield.HideContextMenu) == "function", "HideContextMenu missing")
+assertTrue(type(Rayfield.SetControlDisplayLabel) == "function", "SetControlDisplayLabel missing")
+assertTrue(type(Rayfield.GetControlDisplayLabel) == "function", "GetControlDisplayLabel missing")
+assertTrue(type(Rayfield.ResetControlDisplayLabel) == "function", "ResetControlDisplayLabel missing")
+assertTrue(type(Rayfield.SetSystemDisplayLabel) == "function", "SetSystemDisplayLabel missing")
+assertTrue(type(Rayfield.GetSystemDisplayLabel) == "function", "GetSystemDisplayLabel missing")
+assertTrue(type(Rayfield.ResetDisplayLanguage) == "function", "ResetDisplayLanguage missing")
+assertTrue(type(Rayfield.GetLocalizationState) == "function", "GetLocalizationState missing")
+assertTrue(type(Rayfield.SetLocalizationLanguageTag) == "function", "SetLocalizationLanguageTag missing")
+assertTrue(type(Rayfield.ExportLocalization) == "function", "ExportLocalization missing")
+assertTrue(type(Rayfield.ImportLocalization) == "function", "ImportLocalization missing")
+assertTrue(type(Rayfield.LocalizeString) == "function", "LocalizeString missing")
 assertTrue(type(Rayfield.OpenPerformanceHUD) == "function", "OpenPerformanceHUD missing")
 assertTrue(type(Rayfield.ClosePerformanceHUD) == "function", "ClosePerformanceHUD missing")
 assertTrue(type(Rayfield.TogglePerformanceHUD) == "function", "TogglePerformanceHUD missing")
+assertTrue(type(Rayfield.ResetPerformanceHUDPosition) == "function", "ResetPerformanceHUDPosition missing")
 assertTrue(type(Rayfield.ConfigurePerformanceHUD) == "function", "ConfigurePerformanceHUD missing")
 assertTrue(type(Rayfield.GetPerformanceHUDState) == "function", "GetPerformanceHUDState missing")
 assertTrue(type(Rayfield.RegisterHUDMetricProvider) == "function", "RegisterHUDMetricProvider missing")
@@ -232,6 +244,46 @@ assertTrue(type(controlsBeforePin) == "table" and #controlsBeforePin > 0, "ListC
 local favId = toggle:GetFavoriteId()
 assertTrue(type(favId) == "string" and favId ~= "", "Favorite ID should be a non-empty string")
 
+local function findControlById(controlList, id)
+	for _, control in ipairs(type(controlList) == "table" and controlList or {}) do
+		if type(control) == "table" and tostring(control.id) == tostring(id) then
+			return control
+		end
+	end
+	return nil
+end
+
+local utf8DisplayLabel = "\229\138\160\233\128\159"
+local setDisplayOk, setDisplayMsg = Rayfield:SetControlDisplayLabel(favId, utf8DisplayLabel)
+assertTrue(setDisplayOk == true, "SetControlDisplayLabel failed: " .. tostring(setDisplayMsg))
+assertEquals(Rayfield:GetControlDisplayLabel(favId), utf8DisplayLabel, "GetControlDisplayLabel mismatch after set")
+
+local controlsAfterLabel = Rayfield:ListControls()
+local labeledControl = findControlById(controlsAfterLabel, favId)
+assertTrue(type(labeledControl) == "table", "Renamed control should exist in ListControls")
+assertEquals(tostring(labeledControl.displayName), utf8DisplayLabel, "displayName should update after rename")
+assertEquals(tostring(labeledControl.internalName), "Pin Candidate", "internalName should stay stable")
+assertTrue(type(labeledControl.localizationKey) == "string" and labeledControl.localizationKey ~= "", "localizationKey should be present")
+
+local setLangOk, langTag = Rayfield:SetLocalizationLanguageTag("vi")
+assertTrue(setLangOk == true, "SetLocalizationLanguageTag failed")
+assertEquals(tostring(langTag), "vi", "Language tag mismatch")
+
+local exportLocOk, exportLocJson = Rayfield:ExportLocalization({ asJson = true })
+assertTrue(exportLocOk == true, "ExportLocalization failed")
+assertTrue(type(exportLocJson) == "string" and string.find(exportLocJson, utf8DisplayLabel, 1, true) ~= nil, "ExportLocalization should preserve UTF-8 label")
+
+local importLocOk, importLocMsg = Rayfield:ImportLocalization(exportLocJson, { merge = false })
+assertTrue(importLocOk == true, "ImportLocalization failed: " .. tostring(importLocMsg))
+assertEquals(Rayfield:GetControlDisplayLabel(favId), utf8DisplayLabel, "ImportLocalization should reapply label")
+
+local resetDisplayOk, resetDisplayMsg = Rayfield:ResetControlDisplayLabel(favId)
+assertTrue(resetDisplayOk == true, "ResetControlDisplayLabel failed: " .. tostring(resetDisplayMsg))
+assertEquals(Rayfield:GetControlDisplayLabel(favId), "Pin Candidate", "Display label should reset to internal name")
+
+local resetLanguageOk = select(1, Rayfield:ResetDisplayLanguage({ languageTag = "en" }))
+assertTrue(resetLanguageOk == true, "ResetDisplayLanguage failed")
+
 local pinElementOk = select(1, toggle:Pin())
 assertTrue(pinElementOk == true, "Element:Pin should return true")
 assertTrue(toggle:IsPinned() == true, "Element should be pinned after Element:Pin")
@@ -334,6 +386,7 @@ assertTrue(select(1, Rayfield:RegisterHUDMetricProvider("regression-metric", fun
 	return "ok"
 end)) == true, "RegisterHUDMetricProvider failed")
 assertTrue(select(1, Rayfield:UnregisterHUDMetricProvider("regression-metric")) == true, "UnregisterHUDMetricProvider failed")
+assertTrue(select(1, Rayfield:ResetPerformanceHUDPosition("top_left")) == true, "ResetPerformanceHUDPosition failed")
 assertTrue(select(1, Rayfield:TogglePerformanceHUD()) == true, "TogglePerformanceHUD failed")
 assertTrue(select(1, Rayfield:ClosePerformanceHUD()) == true, "ClosePerformanceHUD failed")
 assertTrue(select(1, Rayfield:RegisterDiscoveryProvider("regression-provider", function(queryText, queryLower)

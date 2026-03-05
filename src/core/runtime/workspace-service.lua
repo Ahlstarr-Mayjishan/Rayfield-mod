@@ -32,6 +32,17 @@ function WorkspaceService.create(ctx)
 	local cloneValue = type(ctx.cloneValue) == "function" and ctx.cloneValue or defaultClone
 	local onRestoreAfterLoad = type(ctx.onRestoreAfterLoad) == "function" and ctx.onRestoreAfterLoad or function() end
 	local onPersist = type(ctx.onPersist) == "function" and ctx.onPersist or function() end
+	local localize = type(ctx.localize) == "function" and ctx.localize or function(_, fallback)
+		return tostring(fallback or "")
+	end
+
+	local function L(key, fallback)
+		local okValue, value = pcall(localize, key, fallback)
+		if okValue and type(value) == "string" and value ~= "" then
+			return value
+		end
+		return tostring(fallback or key or "")
+	end
 
 	local namespaceConfig = {
 		Workspaces = {
@@ -136,21 +147,21 @@ function WorkspaceService.create(ctx)
 	local function saveSnapshot(namespace, name)
 		local snapshotName = sanitizeName(name)
 		if not snapshotName then
-			return false, "Invalid " .. string.lower(tostring(namespace or "snapshot")) .. " name."
+			return false, L("workspace.error.invalid_name", "Invalid snapshot name.")
 		end
 		if not settingsSystem or type(settingsSystem.ExportInternalSettingsData) ~= "function" then
-			return false, "Snapshot save unavailable."
+			return false, L("workspace.error.save_unavailable", "Snapshot save unavailable.")
 		end
 
 		local snapshots = getSnapshotsMap(namespace)
 		local existingNames = listNames(namespace)
 		if snapshots[snapshotName] == nil and #existingNames >= getNamespaceMaxCount(namespace) then
-			return false, string.format("%s limit reached (%d).", tostring(namespace), getNamespaceMaxCount(namespace))
+			return false, string.format(L("workspace.error.limit_reached", "%s limit reached (%d)."), tostring(namespace), getNamespaceMaxCount(namespace))
 		end
 
 		local exportData = settingsSystem:ExportInternalSettingsData()
 		if type(exportData) ~= "table" then
-			return false, "Failed to export settings snapshot."
+			return false, L("workspace.error.export_snapshot_failed", "Failed to export settings snapshot.")
 		end
 		stripSnapshotNamespaces(exportData)
 
@@ -167,43 +178,43 @@ function WorkspaceService.create(ctx)
 
 		setSnapshotsMap(namespace, snapshots, false)
 		setActiveName(namespace, snapshotName, true)
-		return true, string.format("%s saved: %s", tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
+		return true, string.format(L("workspace.saved", "%s saved: %s"), tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
 	end
 
 	local function loadSnapshot(namespace, name)
 		local snapshotName = sanitizeName(name)
 		if not snapshotName then
-			return false, "Invalid " .. string.lower(tostring(namespace or "snapshot")) .. " name."
+			return false, L("workspace.error.invalid_name", "Invalid snapshot name.")
 		end
 		if not settingsSystem or type(settingsSystem.ImportInternalSettingsData) ~= "function" then
-			return false, "Snapshot load unavailable."
+			return false, L("workspace.error.load_unavailable", "Snapshot load unavailable.")
 		end
 
 		local snapshots = getSnapshotsMap(namespace)
 		local snapshot = snapshots[snapshotName]
 		if type(snapshot) ~= "table" or type(snapshot.internalSettings) ~= "table" then
-			return false, tostring(namespace):sub(1, #tostring(namespace) - 1) .. " not found: " .. snapshotName
+			return false, string.format(L("workspace.error.not_found", "%s not found: %s"), tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
 		end
 
 		local okImport, appliedCountOrErr = settingsSystem:ImportInternalSettingsData(snapshot.internalSettings)
 		if okImport ~= true then
-			return false, tostring(appliedCountOrErr or "Failed to import snapshot.")
+			return false, tostring(appliedCountOrErr or L("workspace.error.import_snapshot_failed", "Failed to import snapshot."))
 		end
 
 		setActiveName(namespace, snapshotName, false)
 		onRestoreAfterLoad(namespace, snapshotName, appliedCountOrErr)
 		onPersist()
-		return true, string.format("%s loaded: %s (%s settings).", tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName, tostring(appliedCountOrErr or 0))
+		return true, string.format(L("workspace.loaded", "%s loaded: %s (%s settings)."), tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName, tostring(appliedCountOrErr or 0))
 	end
 
 	local function deleteSnapshot(namespace, name)
 		local snapshotName = sanitizeName(name)
 		if not snapshotName then
-			return false, "Invalid " .. string.lower(tostring(namespace or "snapshot")) .. " name."
+			return false, L("workspace.error.invalid_name", "Invalid snapshot name.")
 		end
 		local snapshots = getSnapshotsMap(namespace)
 		if snapshots[snapshotName] == nil then
-			return false, tostring(namespace):sub(1, #tostring(namespace) - 1) .. " not found: " .. snapshotName
+			return false, string.format(L("workspace.error.not_found", "%s not found: %s"), tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
 		end
 		snapshots[snapshotName] = nil
 		setSnapshotsMap(namespace, snapshots, false)
@@ -212,25 +223,25 @@ function WorkspaceService.create(ctx)
 			setActiveName(namespace, "", false)
 		end
 		onPersist()
-		return true, string.format("%s deleted: %s", tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
+		return true, string.format(L("workspace.deleted", "%s deleted: %s"), tostring(namespace):sub(1, #tostring(namespace) - 1), snapshotName)
 	end
 
 	local function copySnapshot(sourceNamespace, sourceName, targetNamespace, targetName)
 		local sourceKey = sanitizeName(sourceName)
 		if not sourceKey then
-			return false, "Invalid source snapshot name."
+			return false, L("workspace.error.invalid_source_name", "Invalid source snapshot name.")
 		end
 		local sourceSnapshots = getSnapshotsMap(sourceNamespace)
 		local sourceSnapshot = sourceSnapshots[sourceKey]
 		if type(sourceSnapshot) ~= "table" or type(sourceSnapshot.internalSettings) ~= "table" then
-			return false, string.format("%s not found: %s", tostring(sourceNamespace):sub(1, #tostring(sourceNamespace) - 1), sourceKey)
+			return false, string.format(L("workspace.error.not_found", "%s not found: %s"), tostring(sourceNamespace):sub(1, #tostring(sourceNamespace) - 1), sourceKey)
 		end
 
 		local targetKey = sanitizeName(targetName) or sourceKey
 		local targetSnapshots = getSnapshotsMap(targetNamespace)
 		local targetNames = listNames(targetNamespace)
 		if targetSnapshots[targetKey] == nil and #targetNames >= getNamespaceMaxCount(targetNamespace) then
-			return false, string.format("%s limit reached (%d).", tostring(targetNamespace), getNamespaceMaxCount(targetNamespace))
+			return false, string.format(L("workspace.error.limit_reached", "%s limit reached (%d)."), tostring(targetNamespace), getNamespaceMaxCount(targetNamespace))
 		end
 
 		local nowStamp = type(buildGeneratedAtStamp) == "function" and buildGeneratedAtStamp() or os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -247,7 +258,13 @@ function WorkspaceService.create(ctx)
 		setSnapshotsMap(targetNamespace, targetSnapshots, false)
 		setActiveName(targetNamespace, targetKey, false)
 		onPersist()
-		return true, string.format("Copied %s '%s' -> %s '%s'.", tostring(sourceNamespace):sub(1, #tostring(sourceNamespace) - 1), sourceKey, tostring(targetNamespace):sub(1, #tostring(targetNamespace) - 1), targetKey)
+		return true, string.format(
+			L("workspace.copied", "Copied %s '%s' -> %s '%s'."),
+			tostring(sourceNamespace):sub(1, #tostring(sourceNamespace) - 1),
+			sourceKey,
+			tostring(targetNamespace):sub(1, #tostring(targetNamespace) - 1),
+			targetKey
+		)
 	end
 
 	return {

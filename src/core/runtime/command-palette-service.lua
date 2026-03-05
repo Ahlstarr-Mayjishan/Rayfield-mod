@@ -20,81 +20,6 @@ local function normalizeMode(mode, fallback)
 	return value
 end
 
-local function fuzzyScore(queryLower, textLower)
-	if queryLower == "" then
-		return 0
-	end
-	if textLower == "" then
-		return nil
-	end
-
-	local queryLength = #queryLower
-	local qIndex = 1
-	local score = 0
-	local run = 0
-	local firstMatch = nil
-
-	for textIndex = 1, #textLower do
-		if qIndex > queryLength then
-			break
-		end
-		local qChar = string.sub(queryLower, qIndex, qIndex)
-		local tChar = string.sub(textLower, textIndex, textIndex)
-		if qChar == tChar then
-			if not firstMatch then
-				firstMatch = textIndex
-			end
-			score += 8
-			if run > 0 then
-				score += 4
-			end
-			if textIndex == 1 then
-				score += 6
-			else
-				local prev = string.sub(textLower, textIndex - 1, textIndex - 1)
-				if prev == " " or prev == "_" or prev == "-" or prev == "/" or prev == "." then
-					score += 6
-				end
-			end
-			run += 1
-			qIndex += 1
-		else
-			run = 0
-		end
-	end
-
-	if qIndex <= queryLength then
-		return nil
-	end
-
-	local startPenalty = (firstMatch and (firstMatch - 1) or 0) * 0.5
-	local lengthPenalty = math.max(0, #textLower - #queryLower) * 0.04
-	return score - startPenalty - lengthPenalty
-end
-
-local function computeMatchScore(queryLower, searchText, baseScore)
-	local text = lowerText(searchText)
-	local score = tonumber(baseScore) or 0
-	if queryLower == "" then
-		return score
-	end
-	if text == "" then
-		return nil
-	end
-	if string.sub(text, 1, #queryLower) == queryLower then
-		return score + 1000 - math.min(200, math.max(0, #text - #queryLower))
-	end
-	local containsStart = string.find(text, queryLower, 1, true)
-	if containsStart then
-		return score + 700 - math.min(200, containsStart - 1)
-	end
-	local fuzzy = fuzzyScore(queryLower, text)
-	if fuzzy then
-		return score + 350 + fuzzy
-	end
-	return nil
-end
-
 function CommandPaletteService.create(ctx)
 	ctx = ctx or {}
 	local usageAnalytics = type(ctx.usageAnalytics) == "table" and ctx.usageAnalytics or nil
@@ -104,6 +29,30 @@ function CommandPaletteService.create(ctx)
 	local parsePromptCommand = type(ctx.parsePromptCommand) == "function" and ctx.parsePromptCommand or nil
 	local executePromptCommand = type(ctx.executePromptCommand) == "function" and ctx.executePromptCommand or nil
 	local selectDiscoveryItem = type(ctx.selectDiscoveryItem) == "function" and ctx.selectDiscoveryItem or nil
+	local searchAlgorithms = type(ctx.searchAlgorithms) == "table" and ctx.searchAlgorithms or nil
+	if type(searchAlgorithms) ~= "table" then
+		error("CommandPaletteService.create missing searchAlgorithms")
+	end
+	if type(searchAlgorithms.lowerText) ~= "function"
+		or type(searchAlgorithms.computeMatchScore) ~= "function"
+		or type(searchAlgorithms.applySuggested) ~= "function"
+		or type(searchAlgorithms.sortAndLimit) ~= "function" then
+		error("CommandPaletteService.create invalid searchAlgorithms module")
+	end
+	local localize = type(ctx.localize) == "function" and ctx.localize or function(_, fallback)
+		return tostring(fallback or "")
+	end
+	local function L(key, fallback)
+		local okValue, value = pcall(localize, key, fallback)
+		if okValue and type(value) == "string" and value ~= "" then
+			return value
+		end
+		return tostring(fallback or key or "")
+	end
+	local searchLowerText = searchAlgorithms.lowerText
+	local computeMatchScore = searchAlgorithms.computeMatchScore
+	local applySuggested = searchAlgorithms.applySuggested
+	local sortAndLimit = searchAlgorithms.sortAndLimit
 
 	local executionMode = normalizeMode(type(_G) == "table" and _G.__RAYFIELD_COMMAND_PALETTE_EXEC_MODE or ctx.executionMode or "auto", "auto")
 	local executionPolicy = nil
@@ -227,11 +176,13 @@ function CommandPaletteService.create(ctx)
 		local elementsSystem = getElementsSystem()
 		local controls = elementsSystem and elementsSystem.listControlsForFavorites and elementsSystem.listControlsForFavorites(true) or {}
 		for _, control in ipairs(type(controls) == "table" and controls or {}) do
-			local controlName = tostring(control.name or control.id or "Control")
+			local controlName = tostring(control.displayName or control.name or control.id or "Control")
+			local internalName = tostring(control.internalName or control.name or control.id or "Control")
 			local controlType = tostring(control.type or "Element")
 			local tabId = tostring(control.tabId or "")
 			local flag = tostring(control.flag or "")
-			local searchText = lowerText(controlName .. " " .. controlType .. " " .. tabId .. " " .. flag)
+			local localizationKey = tostring(control.localizationKey or "")
+			local searchText = searchLowerText(controlName .. " " .. internalName .. " " .. controlType .. " " .. tabId .. " " .. flag .. " " .. localizationKey)
 			local entry = {
 				id = "control:" .. tostring(control.id or ""),
 				action = "control",
@@ -241,7 +192,7 @@ function CommandPaletteService.create(ctx)
 				name = controlName,
 				description = string.format("%s - %s", tabId, controlType),
 				searchText = searchText,
-				shortcuts = "Enter auto | Shift+Enter execute | Alt+Enter ask"
+				shortcuts = L("palette.shortcuts.default", "Enter auto | Shift+Enter execute | Alt+Enter ask")
 			}
 			local matchScore = computeMatchScore(queryLower, searchText, usageBoost(entry))
 			if matchScore ~= nil then
@@ -254,28 +205,29 @@ function CommandPaletteService.create(ctx)
 
 	local function commandDefinitions()
 		return {
-			{ id = "cmd:open_settings", action = "open_settings", type = "command", name = "Open Settings", search = "open settings preferences", description = "Jump to Settings tab" },
-			{ id = "cmd:open_favorites", action = "open_favorites", type = "command", name = "Open Favorites", search = "open favorites pinned controls", description = "Jump to Favorites tab" },
-			{ id = "cmd:export_settings", action = "export_settings", type = "command", name = "Export Settings Code", search = "export settings share code", description = "Generate share code" },
-			{ id = "cmd:import_settings", action = "import_settings", type = "command", name = "Import Active Settings", search = "import active settings share code", description = "Import active settings" },
-			{ id = "cmd:toggle_visibility", action = "toggle_visibility", type = "command", name = "Toggle Interface", search = "toggle interface hide show", description = "Hide/show interface" },
-			{ id = "cmd:open_action_center", action = "open_action_center", type = "command", name = "Open Action Center", search = "open action center notifications", description = "Open notification center" },
-			{ id = "cmd:open_perf_hud", action = "open_performance_hud", type = "command", name = "Open Performance HUD", search = "open performance hud overlay", description = "Show overlay HUD" },
-			{ id = "cmd:close_perf_hud", action = "close_performance_hud", type = "command", name = "Close Performance HUD", search = "close performance hud overlay", description = "Hide overlay HUD" },
-			{ id = "cmd:toggle_perf_hud", action = "toggle_performance_hud", type = "command", name = "Toggle Performance HUD", search = "toggle performance hud overlay metrics", description = "Toggle overlay HUD" },
-			{ id = "cmd:toggle_element_inspector", action = "toggle_element_inspector", type = "command", name = "Toggle Element Inspector", search = "inspect visual inspector debug element info", description = "Toggle inspector mode" },
-			{ id = "cmd:open_live_theme_editor", action = "open_live_theme_editor", type = "command", name = "Open Live Theme Editor", search = "live theme editor preview style colors", description = "Start live theme editor" },
-			{ id = "cmd:export_live_theme_lua", action = "export_live_theme_lua", type = "command", name = "Export Theme Lua", search = "export live theme lua table", description = "Export Lua theme snippet" },
-			{ id = "cmd:start_macro_recording", action = "start_macro_recording", type = "command", name = "Start Macro Recording", search = "macro record start input sequence", description = "Start recording macro" },
-			{ id = "cmd:stop_macro_recording", action = "stop_macro_recording", type = "command", name = "Stop Macro Recording", search = "macro record stop save input sequence", description = "Stop recording macro" },
-			{ id = "cmd:show_hub_metadata", action = "show_hub_metadata", type = "command", name = "Show Hub Metadata", search = "hub metadata author version changelog discord", description = "Show hub metadata" },
-			{ id = "cmd:bridge_start_polling", action = "bridge_start_polling", type = "command", name = "Start Bridge Polling", search = "bridge multi instance polling start", description = "Start bridge polling" },
-			{ id = "cmd:bridge_stop_polling", action = "bridge_stop_polling", type = "command", name = "Stop Bridge Polling", search = "bridge multi instance polling stop", description = "Stop bridge polling" },
-			{ id = "cmd:bridge_send_ping", action = "bridge_send_ping", type = "command", name = "Send Global Signal Ping", search = "bridge global signal ping all instances", description = "Send ping signal" },
-			{ id = "cmd:bridge_send_status", action = "bridge_send_status", type = "command", name = "Send Internal Chat Status", search = "bridge internal chat status message", description = "Send status message" },
-			{ id = "cmd:automation_list_scheduled", action = "automation_list_scheduled", type = "command", name = "List Scheduled Actions", search = "automation scheduler list actions tasks", description = "Show scheduled actions" },
-			{ id = "cmd:automation_list_rules", action = "automation_list_rules", type = "command", name = "List Automation Rules", search = "automation logic rules list", description = "Show automation rules" },
-			{ id = "cmd:automation_schedule_macro_quick", action = "automation_schedule_macro_quick", type = "command", name = "Schedule First Macro (5s)", search = "automation schedule macro in 5 seconds", description = "Schedule first macro" }
+			{ id = "cmd:open_settings", action = "open_settings", type = "command", name = L("palette.cmd.open_settings.name", "Open Settings"), search = "open settings preferences", description = L("palette.cmd.open_settings.desc", "Jump to Settings tab") },
+			{ id = "cmd:open_favorites", action = "open_favorites", type = "command", name = L("palette.cmd.open_favorites.name", "Open Favorites"), search = "open favorites pinned controls", description = L("palette.cmd.open_favorites.desc", "Jump to Favorites tab") },
+			{ id = "cmd:export_settings", action = "export_settings", type = "command", name = L("palette.cmd.export_settings.name", "Export Settings Code"), search = "export settings share code", description = L("palette.cmd.export_settings.desc", "Generate share code") },
+			{ id = "cmd:import_settings", action = "import_settings", type = "command", name = L("palette.cmd.import_settings.name", "Import Active Settings"), search = "import active settings share code", description = L("palette.cmd.import_settings.desc", "Import active settings") },
+			{ id = "cmd:toggle_visibility", action = "toggle_visibility", type = "command", name = L("palette.cmd.toggle_visibility.name", "Toggle Interface"), search = "toggle interface hide show", description = L("palette.cmd.toggle_visibility.desc", "Hide/show interface") },
+			{ id = "cmd:open_action_center", action = "open_action_center", type = "command", name = L("palette.cmd.open_action_center.name", "Open Action Center"), search = "open action center notifications", description = L("palette.cmd.open_action_center.desc", "Open notification center") },
+			{ id = "cmd:open_perf_hud", action = "open_performance_hud", type = "command", name = L("palette.cmd.open_performance_hud.name", "Open Performance HUD"), search = "open performance hud overlay", description = L("palette.cmd.open_performance_hud.desc", "Show overlay HUD") },
+			{ id = "cmd:close_perf_hud", action = "close_performance_hud", type = "command", name = L("palette.cmd.close_performance_hud.name", "Close Performance HUD"), search = "close performance hud overlay", description = L("palette.cmd.close_performance_hud.desc", "Hide overlay HUD") },
+			{ id = "cmd:toggle_perf_hud", action = "toggle_performance_hud", type = "command", name = L("palette.cmd.toggle_performance_hud.name", "Toggle Performance HUD"), search = "toggle performance hud overlay metrics", description = L("palette.cmd.toggle_performance_hud.desc", "Toggle overlay HUD") },
+			{ id = "cmd:reset_perf_hud_pos", action = "reset_performance_hud_position", type = "command", name = L("palette.cmd.reset_performance_hud_position.name", "Reset HUD Position"), search = "reset hud position dock top left", description = L("palette.cmd.reset_performance_hud_position.desc", "Reset HUD docking position") },
+			{ id = "cmd:toggle_element_inspector", action = "toggle_element_inspector", type = "command", name = L("palette.cmd.toggle_element_inspector.name", "Toggle Element Inspector"), search = "inspect visual inspector debug element info", description = L("palette.cmd.toggle_element_inspector.desc", "Toggle inspector mode") },
+			{ id = "cmd:open_live_theme_editor", action = "open_live_theme_editor", type = "command", name = L("palette.cmd.open_live_theme_editor.name", "Open Live Theme Editor"), search = "live theme editor preview style colors", description = L("palette.cmd.open_live_theme_editor.desc", "Start live theme editor") },
+			{ id = "cmd:export_live_theme_lua", action = "export_live_theme_lua", type = "command", name = L("palette.cmd.export_live_theme_lua.name", "Export Theme Lua"), search = "export live theme lua table", description = L("palette.cmd.export_live_theme_lua.desc", "Export Lua theme snippet") },
+			{ id = "cmd:start_macro_recording", action = "start_macro_recording", type = "command", name = L("palette.cmd.start_macro_recording.name", "Start Macro Recording"), search = "macro record start input sequence", description = L("palette.cmd.start_macro_recording.desc", "Start recording macro") },
+			{ id = "cmd:stop_macro_recording", action = "stop_macro_recording", type = "command", name = L("palette.cmd.stop_macro_recording.name", "Stop Macro Recording"), search = "macro record stop save input sequence", description = L("palette.cmd.stop_macro_recording.desc", "Stop recording macro") },
+			{ id = "cmd:show_hub_metadata", action = "show_hub_metadata", type = "command", name = L("palette.cmd.show_hub_metadata.name", "Show Hub Metadata"), search = "hub metadata author version changelog discord", description = L("palette.cmd.show_hub_metadata.desc", "Show hub metadata") },
+			{ id = "cmd:bridge_start_polling", action = "bridge_start_polling", type = "command", name = L("palette.cmd.bridge_start_polling.name", "Start Bridge Polling"), search = "bridge multi instance polling start", description = L("palette.cmd.bridge_start_polling.desc", "Start bridge polling") },
+			{ id = "cmd:bridge_stop_polling", action = "bridge_stop_polling", type = "command", name = L("palette.cmd.bridge_stop_polling.name", "Stop Bridge Polling"), search = "bridge multi instance polling stop", description = L("palette.cmd.bridge_stop_polling.desc", "Stop bridge polling") },
+			{ id = "cmd:bridge_send_ping", action = "bridge_send_ping", type = "command", name = L("palette.cmd.bridge_send_ping.name", "Send Global Signal Ping"), search = "bridge global signal ping all instances", description = L("palette.cmd.bridge_send_ping.desc", "Send ping signal") },
+			{ id = "cmd:bridge_send_status", action = "bridge_send_status", type = "command", name = L("palette.cmd.bridge_send_status.name", "Send Internal Chat Status"), search = "bridge internal chat status message", description = L("palette.cmd.bridge_send_status.desc", "Send status message") },
+			{ id = "cmd:automation_list_scheduled", action = "automation_list_scheduled", type = "command", name = L("palette.cmd.automation_list_scheduled.name", "List Scheduled Actions"), search = "automation scheduler list actions tasks", description = L("palette.cmd.automation_list_scheduled.desc", "Show scheduled actions") },
+			{ id = "cmd:automation_list_rules", action = "automation_list_rules", type = "command", name = L("palette.cmd.automation_list_rules.name", "List Automation Rules"), search = "automation logic rules list", description = L("palette.cmd.automation_list_rules.desc", "Show automation rules") },
+			{ id = "cmd:automation_schedule_macro_quick", action = "automation_schedule_macro_quick", type = "command", name = L("palette.cmd.automation_schedule_macro_quick.name", "Schedule First Macro (5s)"), search = "automation schedule macro in 5 seconds", description = L("palette.cmd.automation_schedule_macro_quick.desc", "Schedule first macro") }
 		}
 	end
 
@@ -289,7 +241,7 @@ function CommandPaletteService.create(ctx)
 				name = item.name,
 				description = item.description,
 				searchText = item.search,
-				shortcuts = "Enter auto | Shift+Enter execute | Alt+Enter ask"
+				shortcuts = L("palette.shortcuts.default", "Enter auto | Shift+Enter execute | Alt+Enter ask")
 			}
 			local score = computeMatchScore(queryLower, entry.searchText, usageBoost(entry))
 			if score ~= nil then
@@ -304,11 +256,11 @@ function CommandPaletteService.create(ctx)
 					id = "macro:" .. tostring(macroName),
 					action = "run_macro",
 					type = "macro",
-					name = "Run Macro: " .. tostring(macroName),
-					description = "Execute recorded macro",
+					name = string.format(L("palette.cmd.run_macro.name", "Run Macro: %s"), tostring(macroName)),
+					description = L("palette.cmd.run_macro.desc", "Execute recorded macro"),
 					macroName = tostring(macroName),
 					searchText = "macro run execute " .. tostring(macroName),
-					shortcuts = "Enter auto | Shift+Enter execute | Alt+Enter ask"
+					shortcuts = L("palette.shortcuts.default", "Enter auto | Shift+Enter execute | Alt+Enter ask")
 				}
 				local score = computeMatchScore(queryLower, macroEntry.searchText, usageBoost(macroEntry))
 				if score ~= nil then
@@ -318,36 +270,6 @@ function CommandPaletteService.create(ctx)
 			end
 		end
 		return out
-	end
-
-	local function applySuggested(items, queryLower)
-		if queryLower ~= "" or not usageAnalytics then
-			return items
-		end
-		local byId = {}
-		for _, item in ipairs(items) do
-			byId[item.id] = item
-		end
-		local function markSuggested(itemId, count)
-			local item = byId[itemId]
-			if not item then
-				return
-			end
-			item.suggested = true
-			item.usageCount = tonumber(count) or 0
-			item.matchScore = (tonumber(item.matchScore) or 0) + 220 + math.min(140, item.usageCount * 14)
-		end
-		if type(usageAnalytics.getTopControls) == "function" then
-			for _, entry in ipairs(usageAnalytics.getTopControls(3)) do
-				markSuggested("control:" .. tostring(entry.key or ""), entry.count)
-			end
-		end
-		if type(usageAnalytics.getTopCommands) == "function" then
-			for _, entry in ipairs(usageAnalytics.getTopCommands(3)) do
-				markSuggested("cmd:" .. tostring(entry.key or ""), entry.count)
-			end
-		end
-		return items
 	end
 
 	local function resolveMode(item, requestedMode, trigger)
@@ -454,6 +376,11 @@ function CommandPaletteService.create(ctx)
 				return ctx.togglePerformanceHUD()
 			end
 			return false, "Performance HUD handler unavailable."
+		elseif action == "reset_performance_hud_position" then
+			if type(ctx.resetPerformanceHUDPosition) == "function" then
+				return ctx.resetPerformanceHUDPosition("top_left")
+			end
+			return false, "Performance HUD reset handler unavailable."
 		elseif action == "toggle_element_inspector" then
 			if type(ctx.toggleElementInspector) == "function" then
 				return ctx.toggleElementInspector()
@@ -641,7 +568,7 @@ function CommandPaletteService.create(ctx)
 	end
 
 	local function query(queryText)
-		local queryLower = lowerText(queryText)
+		local queryLower = searchLowerText(queryText)
 		local items = {}
 
 		if type(parsePromptCommand) == "function" then
@@ -653,7 +580,7 @@ function CommandPaletteService.create(ctx)
 				entry.type = tostring(entry.type or "prompt")
 				entry.description = tostring(entry.description or "Natural language command")
 				entry.searchText = tostring(entry.searchText or queryText)
-				entry.shortcuts = "Enter auto | Shift+Enter execute | Alt+Enter ask"
+				entry.shortcuts = L("palette.shortcuts.default", "Enter auto | Shift+Enter execute | Alt+Enter ask")
 				entry.matchScore = (tonumber(entry.matchScore) or 900) + usageBoost(entry)
 				table.insert(items, entry)
 			end
@@ -676,7 +603,7 @@ function CommandPaletteService.create(ctx)
 					entry.type = tostring(entry.type or "discovery")
 					entry.searchText = tostring(entry.searchText or entry.name or entry.id)
 					entry.description = tostring(entry.description or "Discovery result")
-					entry.shortcuts = "Enter auto | Shift+Enter execute | Alt+Enter ask"
+					entry.shortcuts = L("palette.shortcuts.default", "Enter auto | Shift+Enter execute | Alt+Enter ask")
 					local score = computeMatchScore(queryLower, entry.searchText, usageBoost(entry) + (tonumber(entry.matchScore) or 0))
 					if score ~= nil then
 						entry.matchScore = score
@@ -686,36 +613,17 @@ function CommandPaletteService.create(ctx)
 			end
 		end
 
-		items = applySuggested(items, queryLower)
-		table.sort(items, function(a, b)
-			local scoreA = tonumber(a.matchScore) or 0
-			local scoreB = tonumber(b.matchScore) or 0
-			if scoreA ~= scoreB then
-				return scoreA > scoreB
-			end
-			if (a.suggested == true) ~= (b.suggested == true) then
-				return a.suggested == true
-			end
-			local tabA = lowerText(a.tabId or "")
-			local tabB = lowerText(b.tabId or "")
-			if tabA ~= tabB then
-				return tabA < tabB
-			end
-			local nameA = lowerText(a.name or "")
-			local nameB = lowerText(b.name or "")
-			if nameA ~= nameB then
-				return nameA < nameB
-			end
-			return lowerText(a.id or "") < lowerText(b.id or "")
-		end)
-		while #items > maxResults do
-			table.remove(items)
-		end
+		items = applySuggested(items, queryLower, usageAnalytics)
+		items = sortAndLimit(items, maxResults)
 		return items
 	end
 
 	local function setExecutionMode(mode)
-		executionMode = normalizeMode(mode, executionMode)
+		local raw = lowerText(mode)
+		if raw ~= "auto" and raw ~= "jump" and raw ~= "execute" and raw ~= "ask" then
+			return false, "Invalid command palette mode."
+		end
+		executionMode = raw
 		syncGlobalExecutionState()
 		return true, "Command palette mode set to " .. executionMode .. "."
 	end

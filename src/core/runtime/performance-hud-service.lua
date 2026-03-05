@@ -1,5 +1,11 @@
 local PerformanceHUDService = {}
 
+local DEFAULT_POSITION = { x = 16, y = 52 }
+local DEFAULT_SIZE = { width = 260, height = 176 }
+local DEFAULT_DOCK = "top_left"
+local TOP_SAFE_OFFSET = 52
+local VIEWPORT_PADDING = 8
+
 local function clampNumber(value, minValue, maxValue, fallback)
 	local numeric = tonumber(value)
 	if not numeric then
@@ -30,10 +36,25 @@ local function cloneValue(value, seen)
 	return out
 end
 
+local function normalizeDock(value)
+	local dock = string.lower(tostring(value or ""))
+	if dock == "top_left"
+		or dock == "top_right"
+		or dock == "bottom_left"
+		or dock == "bottom_right"
+		or dock == "center"
+		or dock == "custom" then
+		return dock
+	end
+	return DEFAULT_DOCK
+end
+
 function PerformanceHUDService.create(ctx)
 	ctx = ctx or {}
 	local Main = ctx.Main
 	local UserInputService = ctx.UserInputService
+	local loadState = type(ctx.loadState) == "function" and ctx.loadState or nil
+	local saveState = type(ctx.saveState) == "function" and ctx.saveState or nil
 	local getRuntimeDiagnostics = type(ctx.getRuntimeDiagnostics) == "function" and ctx.getRuntimeDiagnostics or function()
 		return {}
 	end
@@ -46,6 +67,16 @@ function PerformanceHUDService.create(ctx)
 	local getAutomationSummary = type(ctx.getAutomationSummary) == "function" and ctx.getAutomationSummary or function()
 		return { scheduled = 0, rules = 0 }
 	end
+	local localize = type(ctx.localize) == "function" and ctx.localize or function(_, fallback)
+		return tostring(fallback or "")
+	end
+	local function L(key, fallback)
+		local okValue, value = pcall(localize, key, fallback)
+		if okValue and type(value) == "string" and value ~= "" then
+			return value
+		end
+		return tostring(fallback or key or "")
+	end
 
 	local defaultEnabled = not (type(_G) == "table" and _G.__RAYFIELD_PERF_HUD_ENABLED == false)
 	local defaultHz = clampNumber(type(_G) == "table" and _G.__RAYFIELD_PERF_HUD_UPDATE_HZ or 4, 1, 30, 4)
@@ -55,8 +86,9 @@ function PerformanceHUDService.create(ctx)
 		enabled = defaultEnabled,
 		updateHz = defaultHz,
 		opacity = defaultOpacity,
-		position = { x = 16, y = 52 },
-		size = { width = 260, height = 176 },
+		position = cloneValue(DEFAULT_POSITION),
+		size = cloneValue(DEFAULT_SIZE),
+		dock = DEFAULT_DOCK,
 		visible = false,
 		lastUpdatedAt = 0,
 		lastMetrics = {},
@@ -91,18 +123,135 @@ function PerformanceHUDService.create(ctx)
 		return nil
 	end
 
+	local function getParentAbsoluteSize()
+		local parent = getHudParent()
+		if parent and parent.AbsoluteSize then
+			return parent.AbsoluteSize
+		end
+		return nil
+	end
+
+	local function clampStateSize()
+		state.size.width = math.max(220, math.floor(tonumber(state.size.width) or DEFAULT_SIZE.width))
+		state.size.height = math.max(140, math.floor(tonumber(state.size.height) or DEFAULT_SIZE.height))
+	end
+
+	local function clampStatePosition()
+		state.position.x = math.max(0, math.floor(tonumber(state.position.x) or DEFAULT_POSITION.x))
+		state.position.y = math.max(0, math.floor(tonumber(state.position.y) or DEFAULT_POSITION.y))
+		local parentSize = getParentAbsoluteSize()
+		if not parentSize then
+			return
+		end
+		local maxX = math.max(0, parentSize.X - state.size.width - VIEWPORT_PADDING)
+		local maxY = math.max(0, parentSize.Y - state.size.height - VIEWPORT_PADDING)
+		state.position.x = math.min(state.position.x, maxX)
+		state.position.y = math.min(state.position.y, maxY)
+	end
+
+	local function resolveDockPosition(dock)
+		local parentSize = getParentAbsoluteSize()
+		local key = normalizeDock(dock)
+		if key == "custom" then
+			return state.position.x, state.position.y
+		end
+		if not parentSize then
+			if key == "top_right" then
+				return DEFAULT_POSITION.x + 140, DEFAULT_POSITION.y
+			elseif key == "bottom_left" then
+				return DEFAULT_POSITION.x, DEFAULT_POSITION.y + 120
+			elseif key == "bottom_right" then
+				return DEFAULT_POSITION.x + 140, DEFAULT_POSITION.y + 120
+			elseif key == "center" then
+				return DEFAULT_POSITION.x + 70, DEFAULT_POSITION.y + 60
+			end
+			return DEFAULT_POSITION.x, DEFAULT_POSITION.y
+		end
+		local maxX = math.max(0, parentSize.X - state.size.width - VIEWPORT_PADDING)
+		local maxY = math.max(0, parentSize.Y - state.size.height - VIEWPORT_PADDING)
+		if key == "top_right" then
+			return maxX, TOP_SAFE_OFFSET
+		elseif key == "bottom_left" then
+			return VIEWPORT_PADDING, maxY
+		elseif key == "bottom_right" then
+			return maxX, maxY
+		elseif key == "center" then
+			return math.max(0, math.floor((parentSize.X - state.size.width) / 2)), math.max(0, math.floor((parentSize.Y - state.size.height) / 2))
+		end
+		return VIEWPORT_PADDING, TOP_SAFE_OFFSET
+	end
+
+	local function makePersistedSnapshot()
+		return {
+			updateHz = state.updateHz,
+			opacity = state.opacity,
+			position = {
+				x = state.position.x,
+				y = state.position.y
+			},
+			size = {
+				width = state.size.width,
+				height = state.size.height
+			},
+			dock = state.dock
+		}
+	end
+
+	local function persistState()
+		if type(saveState) ~= "function" then
+			return
+		end
+		pcall(saveState, makePersistedSnapshot())
+	end
+
+	local function applyPersistedState(raw)
+		if type(raw) ~= "table" then
+			return
+		end
+		if raw.updateHz ~= nil then
+			state.updateHz = clampNumber(raw.updateHz, 1, 30, state.updateHz)
+		end
+		if raw.opacity ~= nil then
+			state.opacity = clampNumber(raw.opacity, 0.15, 1, state.opacity)
+		end
+		if type(raw.position) == "table" then
+			state.position.x = math.floor(tonumber(raw.position.x or raw.position.X) or state.position.x)
+			state.position.y = math.floor(tonumber(raw.position.y or raw.position.Y) or state.position.y)
+		end
+		if type(raw.size) == "table" then
+			state.size.width = math.floor(tonumber(raw.size.width or raw.size.w) or state.size.width)
+			state.size.height = math.floor(tonumber(raw.size.height or raw.size.h) or state.size.height)
+		end
+		state.dock = normalizeDock(raw.dock)
+		clampStateSize()
+		clampStatePosition()
+	end
+
+	if type(loadState) == "function" then
+		local okLoad, persisted = pcall(loadState)
+		if okLoad and type(persisted) == "table" then
+			applyPersistedState(persisted)
+		end
+	end
+
 	local function updateRootVisual()
 		if not refs.Root then
 			return
 		end
+		clampStateSize()
+		clampStatePosition()
 		refs.Root.BackgroundTransparency = 1 - state.opacity
-		refs.Root.Visible = state.visible and state.enabled
+		refs.Root.Visible = state.visible
 		refs.Root.Position = UDim2.fromOffset(state.position.x, state.position.y)
 		refs.Root.Size = UDim2.fromOffset(state.size.width, state.size.height)
 	end
 
 	local function ensureGui()
 		if refs.Root and refs.Root.Parent then
+			local parent = getHudParent()
+			if parent and refs.Root.Parent ~= parent then
+				refs.Root.Parent = parent
+			end
 			return true
 		end
 		local parent = getHudParent()
@@ -137,7 +286,7 @@ function PerformanceHUDService.create(ctx)
 		titleBar.Font = Enum.Font.GothamBold
 		titleBar.TextSize = 11
 		titleBar.TextXAlignment = Enum.TextXAlignment.Left
-		titleBar.Text = "  Performance HUD"
+		titleBar.Text = "  " .. L("hud.title", "Performance HUD")
 		titleBar.TextColor3 = Color3.fromRGB(235, 240, 255)
 		titleBar.ZIndex = 96
 		titleBar.Parent = root
@@ -168,7 +317,7 @@ function PerformanceHUDService.create(ctx)
 		body.TextWrapped = true
 		body.RichText = false
 		body.TextColor3 = Color3.fromRGB(222, 232, 255)
-		body.Text = "HUD ready."
+		body.Text = L("hud.status.ready", "HUD ready.")
 		body.ZIndex = 96
 		body.Parent = root
 
@@ -215,8 +364,12 @@ function PerformanceHUDService.create(ctx)
 		if UserInputService then
 			table.insert(connections, UserInputService.InputEnded:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					local hadMovement = dragging or resizing
 					dragging = false
 					resizing = false
+					if hadMovement then
+						persistState()
+					end
 				end
 			end))
 
@@ -230,6 +383,7 @@ function PerformanceHUDService.create(ctx)
 					local deltaY = current.Y - dragStart.Y
 					state.position.x = math.max(0, math.floor(positionStart.x + deltaX))
 					state.position.y = math.max(0, math.floor(positionStart.y + deltaY))
+					state.dock = "custom"
 					updateRootVisual()
 				elseif resizing and dragStart and sizeStart then
 					local current = UserInputService:GetMouseLocation()
@@ -237,6 +391,7 @@ function PerformanceHUDService.create(ctx)
 					local deltaY = current.Y - dragStart.Y
 					state.size.width = math.max(220, math.floor(sizeStart.width + deltaX))
 					state.size.height = math.max(140, math.floor(sizeStart.height + deltaY))
+					state.dock = "custom"
 					updateRootVisual()
 				end
 			end))
@@ -245,6 +400,7 @@ function PerformanceHUDService.create(ctx)
 		table.insert(connections, closeButton.MouseButton1Click:Connect(function()
 			state.visible = false
 			updateRootVisual()
+			persistState()
 		end))
 
 		updateRootVisual()
@@ -314,34 +470,37 @@ function PerformanceHUDService.create(ctx)
 		state.lastUpdatedAt = os.clock()
 
 		local lines = {
-			string.format("FPS: %s", tostring(metrics.fps)),
-			string.format("Ping: %s", tostring(metrics.ping)),
-			string.format("Tweens: %s | Text: %s", tostring(metrics.activeTweens), tostring(metrics.activeTextHandles)),
-			string.format("Ownership scopes/tasks: %s/%s", tostring(metrics.ownershipScopes), tostring(metrics.ownershipTasks)),
-			string.format("UI visible: %s | minimized: %s", tostring(metrics.visible), tostring(metrics.minimized)),
-			string.format("Macro rec/exec: %s/%s", tostring(metrics.macroRecording), tostring(metrics.macroExecuting)),
-			string.format("Automation scheduled/rules: %s/%s", tostring(metrics.scheduledActions), tostring(metrics.automationRules))
+			string.format(L("hud.metric.fps", "FPS: %s"), tostring(metrics.fps)),
+			string.format(L("hud.metric.ping", "Ping: %s"), tostring(metrics.ping)),
+			string.format(L("hud.metric.tweens_text", "Tweens: %s | Text: %s"), tostring(metrics.activeTweens), tostring(metrics.activeTextHandles)),
+			string.format(L("hud.metric.ownership", "Ownership scopes/tasks: %s/%s"), tostring(metrics.ownershipScopes), tostring(metrics.ownershipTasks)),
+			string.format(L("hud.metric.ui_state", "UI visible: %s | minimized: %s"), tostring(metrics.visible), tostring(metrics.minimized)),
+			string.format(L("hud.metric.macro", "Macro rec/exec: %s/%s"), tostring(metrics.macroRecording), tostring(metrics.macroExecuting)),
+			string.format(L("hud.metric.automation", "Automation scheduled/rules: %s/%s"), tostring(metrics.scheduledActions), tostring(metrics.automationRules))
 		}
 		refs.Body.Text = table.concat(lines, "\n")
 	end
 
 	local function openHUD()
 		if destroyed then
-			return false, "Performance HUD is destroyed."
+			return false, L("hud.error.destroyed", "Performance HUD is destroyed.")
 		end
 		if not ensureGui() then
-			return false, "Performance HUD parent unavailable."
+			return false, L("hud.error.parent_unavailable", "Performance HUD parent unavailable.")
 		end
+		state.enabled = true
 		state.visible = true
 		updateRootVisual()
 		updateBody()
-		return true, "Performance HUD opened."
+		persistState()
+		return true, L("hud.status.opened", "Performance HUD opened.")
 	end
 
 	local function closeHUD()
 		state.visible = false
 		updateRootVisual()
-		return true, "Performance HUD closed."
+		persistState()
+		return true, L("hud.status.closed", "Performance HUD closed.")
 	end
 
 	local function toggleHUD()
@@ -353,6 +512,9 @@ function PerformanceHUDService.create(ctx)
 
 	local function configureHUD(options)
 		options = type(options) == "table" and options or {}
+		if options.enabled ~= nil then
+			state.enabled = options.enabled == true
+		end
 		if options.updateHz ~= nil then
 			state.updateHz = clampNumber(options.updateHz, 1, 30, state.updateHz)
 		end
@@ -362,16 +524,45 @@ function PerformanceHUDService.create(ctx)
 		if type(options.position) == "table" then
 			state.position.x = math.max(0, math.floor(tonumber(options.position.x or options.position.X) or state.position.x))
 			state.position.y = math.max(0, math.floor(tonumber(options.position.y or options.position.Y) or state.position.y))
+			state.dock = "custom"
 		end
 		if type(options.size) == "table" then
 			state.size.width = math.max(220, math.floor(tonumber(options.size.width or options.size.w) or state.size.width))
 			state.size.height = math.max(140, math.floor(tonumber(options.size.height or options.h) or state.size.height))
+			state.dock = "custom"
+		end
+		if options.dock ~= nil then
+			local dock = normalizeDock(options.dock)
+			state.dock = dock
+			if dock ~= "custom" then
+				local nextX, nextY = resolveDockPosition(dock)
+				state.position.x = nextX
+				state.position.y = nextY
+			end
 		end
 		if options.visible ~= nil then
 			state.visible = options.visible == true
 		end
 		updateRootVisual()
-		return true, "Performance HUD configured."
+		if state.visible then
+			updateBody()
+		end
+		persistState()
+		return true, L("hud.status.configured", "Performance HUD configured.")
+	end
+
+	local function resetPosition(dock)
+		local nextDock = normalizeDock(dock or DEFAULT_DOCK)
+		if nextDock == "custom" then
+			nextDock = DEFAULT_DOCK
+		end
+		state.dock = nextDock
+		local nextX, nextY = resolveDockPosition(nextDock)
+		state.position.x = nextX
+		state.position.y = nextY
+		updateRootVisual()
+		persistState()
+		return true, L("hud.status.position_reset", "Performance HUD position reset.")
 	end
 
 	local function getStateSnapshot()
@@ -387,44 +578,45 @@ function PerformanceHUDService.create(ctx)
 	local function registerProvider(id, providerFn, options)
 		local key = tostring(id or "")
 		if key == "" then
-			return false, "Provider id is required."
+			return false, L("hud.error.provider_id_required", "Provider id is required.")
 		end
 		if type(providerFn) ~= "function" then
-			return false, "Provider must be a function."
+			return false, L("hud.error.provider_must_be_function", "Provider must be a function.")
 		end
 		providers[key] = {
 			fn = providerFn,
 			options = type(options) == "table" and cloneValue(options) or {}
 		}
 		state.registeredProviders[key] = true
-		return true, "HUD provider registered: " .. key
+		return true, L("hud.status.provider_registered", "HUD provider registered: ") .. key
 	end
 
 	local function unregisterProvider(id)
 		local key = tostring(id or "")
 		if key == "" then
-			return false, "Provider id is required."
+			return false, L("hud.error.provider_id_required", "Provider id is required.")
 		end
 		providers[key] = nil
 		state.registeredProviders[key] = nil
-		return true, "HUD provider removed: " .. key
+		return true, L("hud.status.provider_removed", "HUD provider removed: ") .. key
 	end
 
 	task.spawn(function()
 		while destroyed == false do
 			local delaySec = 1 / math.max(1, state.updateHz)
 			task.wait(delaySec)
-			if state.enabled and state.visible then
+			if state.visible then
 				ensureGui()
 				updateBody()
 			end
 		end
 	end)
 
+	ensureGui()
 	if defaultEnabled then
 		openHUD()
 	else
-		ensureGui()
+		state.visible = false
 		updateRootVisual()
 	end
 
@@ -446,6 +638,7 @@ function PerformanceHUDService.create(ctx)
 		close = closeHUD,
 		toggle = toggleHUD,
 		configure = configureHUD,
+		resetPosition = resetPosition,
 		getState = getStateSnapshot,
 		registerProvider = registerProvider,
 		unregisterProvider = unregisterProvider,

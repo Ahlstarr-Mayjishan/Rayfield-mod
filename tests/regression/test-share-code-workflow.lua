@@ -1,4 +1,4 @@
---[[
+﻿--[[
 	Rayfield share code regression
 	Validates RFSC1 export/import/copy workflow for config + internal settings.
 
@@ -102,6 +102,9 @@ assertTrue(type(Rayfield.ImportCode) == "function", "ImportCode missing")
 assertTrue(type(Rayfield.ImportSettings) == "function", "ImportSettings missing")
 assertTrue(type(Rayfield.ExportSettings) == "function", "ExportSettings missing")
 assertTrue(type(Rayfield.CopyShareCode) == "function", "CopyShareCode missing")
+assertTrue(type(Rayfield.SetControlDisplayLabel) == "function", "SetControlDisplayLabel missing")
+assertTrue(type(Rayfield.SetLocalizationLanguageTag) == "function", "SetLocalizationLanguageTag missing")
+assertTrue(type(Rayfield.ResetDisplayLanguage) == "function", "ResetDisplayLanguage missing")
 
 local Window = Rayfield:CreateWindow({
 	Name = "Share Code Regression",
@@ -157,6 +160,34 @@ assertTrue(importSettingsOk == true, "ImportSettings should apply active payload
 
 assertEquals(toggle:Get(), true, "Toggle should restore from share payload")
 assertEquals(input.CurrentValue, "alpha", "Input should restore from share payload")
+
+local utf8ShareLabel = "\229\138\160\233\128\159"
+local setLabelOk = select(1, Rayfield:SetControlDisplayLabel("share_toggle_flag", utf8ShareLabel))
+assertTrue(setLabelOk == true, "SetControlDisplayLabel should succeed for flagged control")
+local setLangOk = select(1, Rayfield:SetLocalizationLanguageTag("vi"))
+assertTrue(setLangOk == true, "SetLocalizationLanguageTag should succeed")
+
+local foreignCode, foreignExportStatus = Rayfield:ExportSettings()
+assertTrue(type(foreignCode) == "string" and foreignCode:sub(1, 6) == "RFSC1:", "Foreign ExportSettings should return RFSC1 code")
+assertEquals(foreignExportStatus, "ok", "Foreign ExportSettings status mismatch")
+
+toggle:Set(false)
+input:Set("mutated-foreign")
+
+local importForeignCodeOk, importForeignCodeMessage = Rayfield:ImportCode(foreignCode)
+assertTrue(importForeignCodeOk == true, "ImportCode should accept foreign localization payload: " .. tostring(importForeignCodeMessage))
+
+local importForeignSettingsOk, importForeignSettingsMessage = Rayfield:ImportSettings()
+assertTrue(importForeignSettingsOk == false, "ImportSettings should require confirm for foreign display payload")
+assertTrue(type(importForeignSettingsMessage) == "string" and string.find(string.lower(importForeignSettingsMessage), "confirm", 1, true) ~= nil, "Foreign display warning should mention confirm")
+
+local confirmForeignOk, confirmForeignMessage = Rayfield:ImportSettings({ confirmForeignDisplay = true })
+assertTrue(confirmForeignOk == true, "ImportSettings(confirmForeignDisplay=true) should apply payload: " .. tostring(confirmForeignMessage))
+assertEquals(toggle:Get(), true, "Toggle should restore after foreign confirm import")
+assertEquals(input.CurrentValue, "alpha", "Input should restore after foreign confirm import")
+
+local resetLanguageOk = select(1, Rayfield:ResetDisplayLanguage({ languageTag = "en" }))
+assertTrue(resetLanguageOk == true, "ResetDisplayLanguage should succeed")
 
 local partialPayloadCode = encodeSharePayload({
 	type = "rayfield_share",

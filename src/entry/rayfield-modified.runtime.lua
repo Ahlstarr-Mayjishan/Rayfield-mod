@@ -30,307 +30,118 @@ local function getService(name)
 	return game:GetService(name)
 end
 
-local function ensureExecPolicyEngine()
-	local globalEnv = type(_G) == "table" and _G or nil
-	local policyVersion = 2
-	if globalEnv
-		and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_VERSION) == policyVersion
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY) == "table"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.decideExecutionMode) == "function"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markTimeout) == "function"
-		and type(globalEnv.__RAYFIELD_EXEC_POLICY.markSuccess) == "function" then
-		return globalEnv.__RAYFIELD_EXEC_POLICY
-	end
-
-	local state = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_STATE or nil
-	if type(state) ~= "table" then
-		state = {}
-	end
-	if type(state.ops) ~= "table" then
-		state.ops = {}
-	end
-	if type(state.history) ~= "table" then
-		state.history = {}
-	end
-
-	local function pushHistory(entry)
-		table.insert(state.history, entry)
-		if #state.history > 240 then
-			table.remove(state.history, 1)
-		end
-	end
-
-	local function resolveConfig()
-		local configTable = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_CONFIG or nil
-		if type(configTable) ~= "table" then
-			configTable = {}
-		end
-
-		local mode = globalEnv and globalEnv.__RAYFIELD_EXEC_POLICY_MODE or configTable.mode or "auto"
-		mode = string.lower(tostring(mode))
-		if mode ~= "auto" and mode ~= "soft" and mode ~= "hard" then
-			mode = "auto"
-		end
-
-		local escalateAfter = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_ESCALATE_AFTER)
-			or tonumber(configTable.escalateAfter)
-			or tonumber(configTable.escalate_after)
-			or 2
-		escalateAfter = math.max(1, math.floor(escalateAfter))
-
-		local windowSec = globalEnv and tonumber(globalEnv.__RAYFIELD_EXEC_POLICY_WINDOW_SEC)
-			or tonumber(configTable.windowSec)
-			or tonumber(configTable.window_sec)
-			or tonumber(configTable.timeoutWindowSec)
-			or 90
-		windowSec = math.max(1, windowSec)
-
-		return {
-			mode = mode,
-			escalateAfter = escalateAfter,
-			windowSec = windowSec
-		}
-	end
-
-	local function ensureOp(opKey)
-		local key = tostring(opKey or "default")
-		local op = state.ops[key]
-		if type(op) ~= "table" then
-			op = {
-				consecutiveTimeouts = 0,
-				lastTimeoutAt = nil,
-				lastSuccessAt = nil
-			}
-			state.ops[key] = op
-		end
-		return key, op
-	end
-
-	local policy = {}
-
-	function policy.decideExecutionMode(opKey, isBlocking, timeoutSeconds, now)
-		local cfg = resolveConfig()
-		local current = tonumber(now) or os.clock()
-		local key, op = ensureOp(opKey)
-		local mode = "soft"
-		local reason = "default-soft"
-
-		if cfg.mode == "hard" then
-			mode = "hard"
-			reason = "forced-hard"
-		elseif cfg.mode == "soft" then
-			mode = "soft"
-			reason = "forced-soft"
-		else
-			local streak = tonumber(op.consecutiveTimeouts) or 0
-			local withinWindow = type(op.lastTimeoutAt) == "number" and (current - op.lastTimeoutAt) <= cfg.windowSec
-			if streak >= math.max(1, cfg.escalateAfter - 1) and withinWindow then
-				mode = "hard"
-				reason = string.format("auto-escalated:%d/%d<=%ss", streak + 1, cfg.escalateAfter, tostring(cfg.windowSec))
-			elseif streak > 0 and withinWindow then
-				mode = "soft"
-				reason = string.format("auto-soft-streak:%d/%d", streak, cfg.escalateAfter)
-			else
-				mode = "soft"
-				reason = "auto-soft-reset"
-			end
-		end
-
-		op.lastDecision = mode
-		op.lastReason = reason
-		op.lastIsBlocking = isBlocking == true
-		op.lastTimeoutSeconds = timeoutSeconds
-		op.lastUpdatedAt = current
-		state.lastDecision = {
-			op = key,
-			mode = mode,
-			reason = reason,
-			at = current,
-			isBlocking = isBlocking == true,
-			timeoutSeconds = timeoutSeconds
-		}
-		pushHistory({
-			type = "decision",
-			op = key,
-			mode = mode,
-			reason = reason,
-			at = current
-		})
-
-		return {
-			mode = mode,
-			cancelOnTimeout = mode == "hard",
-			reason = reason
-		}
-	end
-
-	function policy.markTimeout(opKey, now, meta)
-		local cfg = resolveConfig()
-		local current = tonumber(now) or os.clock()
-		local key, op = ensureOp(opKey)
-		local withinWindow = type(op.lastTimeoutAt) == "number" and (current - op.lastTimeoutAt) <= cfg.windowSec
-		if withinWindow then
-			op.consecutiveTimeouts = (tonumber(op.consecutiveTimeouts) or 0) + 1
-		else
-			op.consecutiveTimeouts = 1
-		end
-		op.lastTimeoutAt = current
-		op.lastUpdatedAt = current
-		state.lastTimeout = {
-			op = key,
-			at = current,
-			consecutive = op.consecutiveTimeouts,
-			meta = meta
-		}
-		pushHistory({
-			type = "timeout",
-			op = key,
-			at = current,
-			consecutive = op.consecutiveTimeouts
-		})
-		return op.consecutiveTimeouts
-	end
-
-	function policy.markSuccess(opKey, now, meta)
-		local current = tonumber(now) or os.clock()
-		local key, op = ensureOp(opKey)
-		op.consecutiveTimeouts = 0
-		op.lastSuccessAt = current
-		op.lastUpdatedAt = current
-		state.lastSuccess = {
-			op = key,
-			at = current,
-			meta = meta
-		}
-		pushHistory({
-			type = "success",
-			op = key,
-			at = current
-		})
-	end
-
-	function policy.getState()
-		return state
-	end
-	policy.version = policyVersion
-
-	if globalEnv then
-		globalEnv.__RAYFIELD_EXEC_POLICY_STATE = state
-		globalEnv.__RAYFIELD_EXEC_POLICY = policy
-		globalEnv.__RAYFIELD_EXEC_POLICY_VERSION = policyVersion
-	end
-	return policy
+-- Compatibility wrapper for loadstring (some executors use different names)
+local compileString = loadstring or load
+if not compileString then
+	error("No Lua compiler function available (loadstring/load). Your executor may not support dynamic code loading.")
 end
 
-local ExecPolicy = ensureExecPolicyEngine()
+-- Load external modules through shared API loader
+local MODULE_ROOT_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+if type(_G) == "table" then
+	_G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
+end
 
--- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
--- Errors with the function are caught and logged to the output
+local function loadBootstrapService(path, validatorFn)
+	local fullUrl = MODULE_ROOT_URL .. tostring(path)
+	local okFetch, sourceOrErr = pcall(game.HttpGet, game, fullUrl)
+	if not okFetch then
+		warn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_FETCH] " .. tostring(path) .. " | " .. tostring(sourceOrErr))
+		return nil
+	end
+	if type(sourceOrErr) ~= "string" or sourceOrErr == "" then
+		warn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_EMPTY] " .. tostring(path))
+		return nil
+	end
+	local chunk, compileErr = compileString(sourceOrErr)
+	if not chunk then
+		warn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_COMPILE] " .. tostring(path) .. " | " .. tostring(compileErr))
+		return nil
+	end
+	local okExecute, moduleOrErr = pcall(chunk)
+	if not okExecute then
+		warn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_EXECUTE] " .. tostring(path) .. " | " .. tostring(moduleOrErr))
+		return nil
+	end
+	if type(validatorFn) == "function" and not validatorFn(moduleOrErr) then
+		warn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_CONTRACT] " .. tostring(path))
+		return nil
+	end
+	return moduleOrErr
+end
+
+local ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
+	return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
+end)
+local HttpLoaderServiceLib = loadBootstrapService("src/services/http-loader.lua", function(moduleValue)
+	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+end)
+local AnalyticsReporterServiceLib = loadBootstrapService("src/services/analytics-reporter.lua", function(moduleValue)
+	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+end)
+local RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
+	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+end)
+
+local ExecPolicy = nil
+if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
+	ExecPolicy = ExecutionPolicyServiceLib.ensure(_G)
+else
+	warn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
+	ExecPolicy = {
+		decideExecutionMode = function()
+			return {
+				mode = "soft",
+				cancelOnTimeout = false,
+				reason = "fallback"
+			}
+		end,
+		markTimeout = function()
+			return 0
+		end,
+		markSuccess = function()
+			return
+		end,
+		getState = function()
+			return {}
+		end
+	}
+end
+
+local HttpLoaderService = nil
+if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
+	HttpLoaderService = HttpLoaderServiceLib.create({
+		compileString = compileString,
+		execPolicy = ExecPolicy,
+		httpGet = function(url)
+			return game:HttpGet(url)
+		end,
+		warn = warn,
+		taskLib = task,
+		clock = os.clock
+	})
+end
+
 local function loadWithTimeout(url, timeout)
-	assert(type(url) == "string", "Expected string, got " .. type(url))
-	timeout = timeout or 5
-	local opKey = "runtime:loadWithTimeout:" .. tostring(url)
-	local policyDecision = ExecPolicy.decideExecutionMode(opKey, true, timeout, os.clock())
-	local policyMode = policyDecision.mode
-	local policyReason = policyDecision.reason
-	local cancelOnTimeout = policyDecision.cancelOnTimeout == true
-	if type(_G) == "table" and _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT ~= nil then
-		cancelOnTimeout = _G.__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT == true
-		policyMode = cancelOnTimeout and "hard" or "soft"
-		policyReason = "legacy-override:__RAYFIELD_HTTP_CANCEL_ON_TIMEOUT"
+	if type(HttpLoaderService) == "table" and type(HttpLoaderService.loadWithTimeout) == "function" then
+		return HttpLoaderService.loadWithTimeout(url, timeout)
 	end
-	local requestCompleted = false
-	local success, result = false, nil
-
-	local requestThread = task.spawn(function()
-		local fetchSuccess, fetchResult = pcall(game.HttpGet, game, url) -- game:HttpGet(url)
-		if requestCompleted then
-			return
-		end
-		-- Handle executor/network edge-cases where fetchResult can be nil/non-string.
-		if not fetchSuccess then
-			success, result = false, tostring(fetchResult or "HTTP request failed")
-			requestCompleted = true
-			return
-		end
-
-		if type(fetchResult) ~= "string" then
-			success, result = false, "Invalid HTTP response type: " .. type(fetchResult)
-			requestCompleted = true
-			return
-		end
-
-		-- If the request succeeds but content is empty, surface a readable error.
-		if #fetchResult == 0 then
-			success, result = false, "Empty response"
-			requestCompleted = true
-			return
-		end
-		local content = fetchResult -- Fetched content
-
-		-- Improvement 2: Validate content before passing to loadstring
-		if type(content) ~= "string" then
-			success, result = false, "Invalid content type: expected string, got " .. type(content)
-			requestCompleted = true
-			return
-		end
-
-		if #content == 0 then
-			success, result = false, "Content is empty"
-			requestCompleted = true
-			return
-		end
-
-		local execSuccess, execResult = pcall(function()
-			return loadstring(content)()
-		end)
-		if requestCompleted then
-			return
-		end
-		success, result = execSuccess, execResult
-		requestCompleted = true
-	end)
-
-	local timeoutThread = task.delay(timeout, function()
-		if not requestCompleted then
-			warn("Request for " .. url .. " timed out after " .. tostring(timeout) .. " seconds"
-				.. " | policy=" .. tostring(policyMode)
-				.. " | reason=" .. tostring(policyReason))
-			if cancelOnTimeout then
-				pcall(task.cancel, requestThread)
-			end
-			result = "Request timed out"
-				.. " | policy=" .. tostring(policyMode)
-				.. " | reason=" .. tostring(policyReason)
-			requestCompleted = true
-			ExecPolicy.markTimeout(opKey, os.clock(), {
-				mode = policyMode,
-				reason = policyReason,
-				timeoutSeconds = timeout,
-				canceled = cancelOnTimeout,
-				isBlocking = true
-			})
-		end
-	end)
-
-	-- Wait for completion or timeout
-	while not requestCompleted do
-		task.wait()
+	local okFetch, sourceOrErr = pcall(game.HttpGet, game, tostring(url))
+	if not okFetch or type(sourceOrErr) ~= "string" or sourceOrErr == "" then
+		warn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(sourceOrErr))
+		return nil
 	end
-	-- Cancel timeout thread if still running when request completes
-	pcall(task.cancel, timeoutThread)
-	if success then
-		ExecPolicy.markSuccess(opKey, os.clock(), {
-			mode = policyMode,
-			reason = policyReason,
-			timeoutSeconds = timeout,
-			isBlocking = true
-		})
+	local chunk, compileErr = compileString(sourceOrErr)
+	if not chunk then
+		warn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(compileErr))
+		return nil
 	end
-	if not success then
-		warn("Failed to process " .. tostring(url) .. ": " .. tostring(result))
+	local okRun, runResult = pcall(chunk)
+	if not okRun then
+		warn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(runResult))
+		return nil
 	end
-	return if success then result else nil
+	return runResult
 end
 
 local requestsDisabled = true --getgenv and getgenv().DISABLE_RAYFIELD_REQUESTS
@@ -407,53 +218,34 @@ if debugX then
 	warn('Settings Loaded')
 end
 
-local analyticsLib
 local sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
-if not requestsDisabled then
-	if debugX then
-		warn('Querying Settings for Reporter Information')
-	end	
-	analyticsLib = loadWithTimeout("https://analytics.sirius.menu/script")
-	if not analyticsLib then
-		warn("Failed to load analytics reporter")
-		analyticsLib = nil
-	elseif analyticsLib and type(analyticsLib.load) == "function" then
-		analyticsLib:load()
-	else
-		warn("Analytics library loaded but missing load function")
-		analyticsLib = nil
-	end
-	sendReport = function(ev_n, sc_n)
-		if not (type(analyticsLib) == "table" and type(analyticsLib.isLoaded) == "function" and analyticsLib:isLoaded()) then
-			warn("Analytics library not loaded")
-			return
+if type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
+	local analyticsReporter = AnalyticsReporterServiceLib.create({
+		requestsDisabled = requestsDisabled,
+		useStudio = useStudio,
+		debug = debugX == true,
+		release = Release,
+		interfaceBuild = InterfaceBuild,
+		loadWithTimeout = loadWithTimeout,
+		scriptName = "Rayfield",
+		warn = warn,
+		print = print
+	})
+	if type(analyticsReporter) == "table" then
+		if type(analyticsReporter.init) == "function" then
+			pcall(analyticsReporter.init)
 		end
-		if useStudio then
-			print('Sending Analytics')
-		else
-			if debugX then warn('Reporting Analytics') end
-			analyticsLib:report(
-				{
-					["name"] = ev_n,
-					["script"] = {["name"] = sc_n, ["version"] = Release}
-				},
-				{
-					["version"] = InterfaceBuild
-				}
-			)
-			if debugX then warn('Finished Report') end
+		if type(analyticsReporter.sendReport) == "function" then
+			sendReport = function(ev_n, sc_n)
+				local okReport, reportErr = pcall(analyticsReporter.sendReport, ev_n, sc_n)
+				if not okReport then
+					warn("Analytics report error: " .. tostring(reportErr))
+				end
+			end
 		end
 	end
-	local shouldReportExecution = false
-	if type(cachedSettings) == "table" then
-		shouldReportExecution = (next(cachedSettings) == nil) or (cachedSettings.System and cachedSettings.System.usageAnalytics and cachedSettings.System.usageAnalytics.Value)
-	elseif cachedSettings == nil then
-		shouldReportExecution = true
-	end
-
-	if shouldReportExecution then
-		sendReport("execution", "Rayfield")
-	end
+elseif not requestsDisabled then
+	warn("Rayfield Mod: [W_ANALYTICS_SERVICE] Analytics reporter service unavailable.")
 end
 
 local promptUser = 2
@@ -481,23 +273,150 @@ local RayfieldLibrary = {
 	Theme = {}
 }
 
--- Compatibility wrapper for loadstring (some executors use different names)
-local compileString = loadstring or load
-if not compileString then
-	error("No Lua compiler function available (loadstring/load). Your executor may not support dynamic code loading.")
+local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
+
+local function getScriptRef()
+	local scriptRef = nil
+	pcall(function()
+		scriptRef = script
+	end)
+	return scriptRef
 end
 
--- Load external modules through shared API loader
-local MODULE_ROOT_URL = "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-_G.__RAYFIELD_RUNTIME_ROOT_URL = MODULE_ROOT_URL
-
-local ApiClient = compileString(game:HttpGet(MODULE_ROOT_URL .. "src/api/client.lua"))()
-local function fetchExecuteSafely(path)
-	local ok, result = pcall(ApiClient.fetchAndExecute, MODULE_ROOT_URL .. path)
-	if ok then
-		return true, result
+local LoaderHelpers = nil
+if type(RuntimeLoaderHelpersServiceLib) == "table" and type(RuntimeLoaderHelpersServiceLib.create) == "function" then
+	local okHelpers, helpersOrErr = pcall(RuntimeLoaderHelpersServiceLib.create, {
+		rootUrl = MODULE_ROOT_URL,
+		apiClient = ApiClient,
+		useStudio = useStudio,
+		getScriptRef = getScriptRef,
+		warn = warn,
+		globalEnv = _G
+	})
+	if okHelpers and type(helpersOrErr) == "table" then
+		LoaderHelpers = helpersOrErr
+	else
+		warn("Rayfield Mod: [W_LOADER_HELPERS] Failed to initialize runtime loader helpers: " .. tostring(helpersOrErr))
 	end
-	return false, tostring(result)
+end
+
+if type(LoaderHelpers) ~= "table" then
+	local loaderDiagnosticsFallback = {
+		optionalFailed = {},
+		notified = false,
+		performanceProfile = nil
+	}
+	if _G then
+		_G.__RAYFIELD_LOADER_DIAGNOSTICS = loaderDiagnosticsFallback
+	end
+
+	local apiLoaderFallback = nil
+	local function loadModuleFallback(moduleName)
+		if type(apiLoaderFallback) ~= "table" or type(apiLoaderFallback.load) ~= "function" then
+			return false, "API loader unavailable"
+		end
+		local opts = {
+			tryStudioRequire = useStudio,
+			scriptRef = getScriptRef(),
+			allowLegacyFallback = true
+		}
+		if type(apiLoaderFallback.tryLoad) == "function" then
+			return apiLoaderFallback.tryLoad(moduleName, opts)
+		end
+		local okLoad, result = pcall(apiLoaderFallback.load, moduleName, opts)
+		if okLoad then
+			return true, result
+		end
+		return false, tostring(result)
+	end
+
+	local function formatLoaderError(code, message)
+		return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
+	end
+
+	LoaderHelpers = {
+		fetchExecuteSafely = function(path)
+			local ok, result = pcall(ApiClient.fetchAndExecute, MODULE_ROOT_URL .. tostring(path))
+			if ok then
+				return true, result
+			end
+			return false, tostring(result)
+		end,
+		setApiLoader = function(loader)
+			apiLoaderFallback = loader
+			return true
+		end,
+		requireModule = function(moduleName, hint)
+			local okLoad, result = loadModuleFallback(moduleName)
+			if okLoad then
+				return result
+			end
+			local reason = tostring(result)
+			if hint then
+				reason = tostring(hint) .. "\n" .. reason
+			end
+			error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
+		end,
+		optionalModule = function(moduleName, fallbackModule, hint)
+			local okLoad, result = loadModuleFallback(moduleName)
+			if okLoad then
+				return result
+			end
+			table.insert(loaderDiagnosticsFallback.optionalFailed, {
+				module = moduleName,
+				error = tostring(result)
+			})
+			local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
+			if hint then
+				message = message .. " " .. tostring(hint)
+			end
+			warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
+			return fallbackModule
+		end,
+		optionalModuleWithContract = function(moduleName, validatorFn, hint)
+			local okLoad, result = loadModuleFallback(moduleName)
+			if okLoad and type(validatorFn) == "function" and validatorFn(result) then
+				return result
+			end
+			table.insert(loaderDiagnosticsFallback.optionalFailed, {
+				module = moduleName,
+				error = okLoad and "Invalid module contract" or tostring(result)
+			})
+			local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Feature disabled."
+			if hint then
+				message = message .. " " .. tostring(hint)
+			end
+			local detail = okLoad and "Invalid module contract" or tostring(result)
+			warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. detail))
+			return nil
+		end,
+		maybeNotifyFallback = function(notifyFn)
+			if loaderDiagnosticsFallback.notified or #loaderDiagnosticsFallback.optionalFailed == 0 then
+				return
+			end
+			loaderDiagnosticsFallback.notified = true
+			local moduleNames = {}
+			for _, item in ipairs(loaderDiagnosticsFallback.optionalFailed) do
+				table.insert(moduleNames, tostring(item.module))
+			end
+			local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
+			if type(notifyFn) == "function" then
+				local okNotify, notifyErr = pcall(notifyFn, message)
+				if not okNotify then
+					warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | notify failed: " .. tostring(notifyErr)))
+				end
+				return
+			end
+			warn(formatLoaderError("W_OPTIONAL_MODULE", message))
+		end,
+		getDiagnostics = function()
+			return loaderDiagnosticsFallback
+		end
+	}
+end
+
+local function fetchExecuteSafely(path)
+	return LoaderHelpers.fetchExecuteSafely(path)
 end
 
 local okCompatibility, compatibilityResult = fetchExecuteSafely("src/services/compatibility.lua")
@@ -575,112 +494,39 @@ local ApiLoader = apiLoaderResult
 if type(ApiLoader) ~= "table" or type(ApiLoader.load) ~= "function" then
 	error("Rayfield Mod: [E_BOOTSTRAP_LOADER] Invalid API loader contract")
 end
-
-local function getScriptRef()
-	local scriptRef = nil
-	pcall(function()
-		scriptRef = script
-	end)
-	return scriptRef
-end
-
-local function loadModule(moduleName)
-	local opts = {
-		tryStudioRequire = useStudio,
-		scriptRef = getScriptRef(),
-		allowLegacyFallback = true
-	}
-	if type(ApiLoader.tryLoad) == "function" then
-		return ApiLoader.tryLoad(moduleName, opts)
-	end
-	local ok, result = pcall(ApiLoader.load, moduleName, opts)
-	if ok then
-		return true, result
-	end
-	return false, tostring(result)
-end
-
-local function formatLoaderError(code, message)
-	return string.format("Rayfield Mod: [%s] %s", tostring(code or "E_LOADER"), tostring(message or "Unknown loader error"))
+if type(LoaderHelpers.setApiLoader) == "function" then
+	LoaderHelpers.setApiLoader(ApiLoader)
 end
 
 local function requireModule(moduleName, hint)
-	local ok, result = loadModule(moduleName)
-	if ok then
-		return result
-	end
-	local reason = tostring(result)
-	if hint then
-		reason = tostring(hint) .. "\n" .. reason
-	end
-	error(formatLoaderError("E_REQUIRED_MODULE", "Failed to load required module '" .. tostring(moduleName) .. "'.\n" .. reason))
+	return LoaderHelpers.requireModule(moduleName, hint)
 end
 
-local loaderDiagnostics = {
-	optionalFailed = {},
-	notified = false,
-	performanceProfile = nil
-}
-if _G then
-	_G.__RAYFIELD_LOADER_DIAGNOSTICS = loaderDiagnostics
-end
+local loaderDiagnostics = type(LoaderHelpers.getDiagnostics) == "function" and LoaderHelpers.getDiagnostics() or nil
 
 local function optionalModule(moduleName, fallbackModule, hint)
-	local ok, result = loadModule(moduleName)
-	if ok then
-		return result
-	end
-	table.insert(loaderDiagnostics.optionalFailed, {
-		module = moduleName,
-		error = tostring(result)
-	})
-	local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Using fallback."
-	if hint then
-		message = message .. " " .. tostring(hint)
-	end
-	warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. tostring(result)))
-	return fallbackModule
+	return LoaderHelpers.optionalModule(moduleName, fallbackModule, hint)
 end
 
 local function optionalModuleWithContract(moduleName, validatorFn, hint)
-	local ok, result = loadModule(moduleName)
-	if ok and validatorFn and validatorFn(result) then
-		return result
-	end
-	table.insert(loaderDiagnostics.optionalFailed, {
-		module = moduleName,
-		error = ok and "Invalid module contract" or tostring(result)
-	})
-	local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Feature disabled."
-	if hint then
-		message = message .. " " .. tostring(hint)
-	end
-	local detail = ok and "Invalid module contract" or tostring(result)
-	warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. detail))
-	return nil
+	return LoaderHelpers.optionalModuleWithContract(moduleName, validatorFn, hint)
 end
 
 local function maybeNotifyLoaderFallback()
-	if loaderDiagnostics.notified or #loaderDiagnostics.optionalFailed == 0 then
+	if type(LoaderHelpers.maybeNotifyFallback) ~= "function" then
 		return
 	end
-	loaderDiagnostics.notified = true
-	local moduleNames = {}
-	for _, item in ipairs(loaderDiagnostics.optionalFailed) do
-		table.insert(moduleNames, tostring(item.module))
-	end
-	local message = "Loaded with fallback modules: " .. table.concat(moduleNames, ", ")
-	if type(RayfieldLibrary.Notify) == "function" then
-		pcall(function()
+	LoaderHelpers.maybeNotifyFallback(function(message)
+		if type(RayfieldLibrary.Notify) == "function" then
 			RayfieldLibrary:Notify({
 				Title = "Rayfield Loader",
 				Content = message,
 				Duration = 8
 			})
-		end)
-	else
-		warn(formatLoaderError("W_OPTIONAL_MODULE", message))
-	end
+			return
+		end
+		warn("Rayfield Mod: [W_OPTIONAL_MODULE] " .. tostring(message))
+	end)
 end
 
 local FallbackElementSyncModule = {
@@ -809,18 +655,28 @@ local FallbackViewportVirtualizationModule = {
 }
 
 local ThemeModule = requireModule("theme")
+local ThemePresetsModuleLib = requireModule("themePresets")
 -- Load utilities early so shared helpers are registered globally before other services initialize.
 local UtilitiesModuleLib = requireModule("utilities")
 local SettingsModuleLib = requireModule("settings")
+local SettingsStoreModuleLib = requireModule("settingsStore")
+local SettingsPersistenceModuleLib = requireModule("settingsPersistence")
+local SettingsUIModuleLib = requireModule("settingsUI")
+local SettingsShareCodeModuleLib = requireModule("settingsShareCode")
 local OwnershipTrackerModuleLib = optionalModule("ownershipTracker", FallbackOwnershipTrackerModule, "Scoped ownership cleanup will run in compatibility mode.")
 local ElementSyncModuleLib = optionalModule("elementSync", FallbackElementSyncModule, "Element state sync will run in compatibility mode.")
 local KeybindSequenceLib = requireModule("keybindSequence")
 local DragModuleLib = optionalModule("drag", FallbackDragModule, "Detach/reorder advanced drag features are disabled for this session.")
 local UIStateModuleLib = requireModule("uiState")
+local UIStateNotificationManagerLib = requireModule("uiStateNotificationManager")
+local UIStateSearchEngineLib = requireModule("uiStateSearchEngine")
+local UIStateWindowManagerLib = requireModule("uiStateWindowManager")
 local ElementsModuleLib = requireModule("elements")
 local ConfigModuleLib = requireModule("config")
 local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
 local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
+local VirtualizationEngineModuleLib = requireModule("virtualizationEngine")
+local VirtualHostManagerModuleLib = requireModule("virtualHostManager")
 local TabSplitModuleLib = optionalModule("tabSplit", FallbackTabSplitModule, "Tab split features are disabled for this session.")
 local AnimationEngineLib = requireModule("animationEngine")
 local AnimationPublicLib = requireModule("animationPublic")
@@ -830,18 +686,42 @@ local AnimationTextLib = requireModule("animationText")
 local AnimationCleanupLib = requireModule("animationCleanup")
 local VisibilityControllerLib = requireModule("runtimeVisibilityController")
 local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
+local RuntimeBindingsUXLib = requireModule("runtimeBindingsUX")
+local RuntimeBindingsAudioLib = requireModule("runtimeBindingsAudio")
+local RuntimeBindingsThemeLib = requireModule("runtimeBindingsTheme")
+local RuntimeBindingsFavoritesLib = requireModule("runtimeBindingsFavorites")
+local RuntimeBindingsPersistenceLib = requireModule("runtimeBindingsPersistence")
+local RuntimeBindingsDiagnosticsLib = requireModule("runtimeBindingsDiagnostics")
+local RuntimeBindingsAutomationLib = requireModule("runtimeBindingsAutomation")
+local RuntimeBindingsDiscoveryLib = requireModule("runtimeBindingsDiscovery")
+local RuntimeBindingsAIAssistantLib = requireModule("runtimeBindingsAIAssistant")
+local RuntimeBindingsCommunicationLib = requireModule("runtimeBindingsCommunication")
+local RuntimeBindingsLocalizationLib = requireModule("runtimeBindingsLocalization")
+local RuntimeBindingsUIEventsLib = requireModule("runtimeBindingsUIEvents")
+local RuntimeBindingsMovementEventsLib = requireModule("runtimeBindingsMovementEvents")
+local RuntimeBindingsCombatEventsLib = requireModule("runtimeBindingsCombatEvents")
 local WorkspaceServiceLib = requireModule("runtimeWorkspaceService")
 local CommandPaletteServiceLib = requireModule("runtimeCommandPaletteService")
+local CommandPaletteSearchAlgorithmsLib = requireModule("runtimeCommandPaletteSearchAlgorithms")
 local SmartSearchServiceLib = requireModule("runtimeSmartSearchService")
 local MultiInstanceBridgeServiceLib = requireModule("runtimeMultiInstanceBridgeService")
 local AutomationEngineServiceLib = requireModule("runtimeAutomationEngineService")
 local UsageAnalyticsServiceLib = requireModule("runtimeUsageAnalyticsService")
 local MacroRecorderServiceLib = requireModule("runtimeMacroRecorderService")
 local DevExperienceServiceLib = requireModule("runtimeDevExperienceService")
+local LocalizationServiceLib = requireModule("runtimeLocalizationService")
+local UIStringRegistryLib = requireModule("runtimeUIStringRegistry")
+local ShareCodeServiceLib = requireModule("runtimeShareCodeService")
 local PerformanceHUDServiceLib = requireModule("runtimePerformanceHUDService")
 local RuntimeApiLib = requireModule("runtimeApi")
 local DataGridFactoryModuleLib = nil
 local ChartFactoryModuleLib = nil
+local ButtonFactoryModuleLib = nil
+local InputFactoryModuleLib = nil
+local DropdownFactoryModuleLib = nil
+local KeybindFactoryModuleLib = nil
+local ToggleFactoryModuleLib = nil
+local SliderFactoryModuleLib = nil
 local function resolveDataGridFactoryModule()
 	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
 		return DataGridFactoryModuleLib
@@ -867,6 +747,84 @@ local function resolveChartFactoryModule()
 		"Chart elements will be unavailable."
 	)
 	return ChartFactoryModuleLib
+end
+local function resolveButtonFactoryModule()
+	if type(ButtonFactoryModuleLib) == "table" and type(ButtonFactoryModuleLib.create) == "function" then
+		return ButtonFactoryModuleLib
+	end
+	ButtonFactoryModuleLib = optionalModuleWithContract(
+		"elementsButtonFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Button elements will use built-in fallback."
+	)
+	return ButtonFactoryModuleLib
+end
+local function resolveInputFactoryModule()
+	if type(InputFactoryModuleLib) == "table" and type(InputFactoryModuleLib.create) == "function" then
+		return InputFactoryModuleLib
+	end
+	InputFactoryModuleLib = optionalModuleWithContract(
+		"elementsInputFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Input elements will use built-in fallback."
+	)
+	return InputFactoryModuleLib
+end
+local function resolveDropdownFactoryModule()
+	if type(DropdownFactoryModuleLib) == "table" and type(DropdownFactoryModuleLib.create) == "function" then
+		return DropdownFactoryModuleLib
+	end
+	DropdownFactoryModuleLib = optionalModuleWithContract(
+		"elementsDropdownFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Dropdown elements will use built-in fallback."
+	)
+	return DropdownFactoryModuleLib
+end
+local function resolveKeybindFactoryModule()
+	if type(KeybindFactoryModuleLib) == "table" and type(KeybindFactoryModuleLib.create) == "function" then
+		return KeybindFactoryModuleLib
+	end
+	KeybindFactoryModuleLib = optionalModuleWithContract(
+		"elementsKeybindFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Keybind elements will use built-in fallback."
+	)
+	return KeybindFactoryModuleLib
+end
+local function resolveToggleFactoryModule()
+	if type(ToggleFactoryModuleLib) == "table" and type(ToggleFactoryModuleLib.create) == "function" then
+		return ToggleFactoryModuleLib
+	end
+	ToggleFactoryModuleLib = optionalModuleWithContract(
+		"elementsToggleFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Toggle elements will use built-in fallback."
+	)
+	return ToggleFactoryModuleLib
+end
+local function resolveSliderFactoryModule()
+	if type(SliderFactoryModuleLib) == "table" and type(SliderFactoryModuleLib.create) == "function" then
+		return SliderFactoryModuleLib
+	end
+	SliderFactoryModuleLib = optionalModuleWithContract(
+		"elementsSliderFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Slider elements will use built-in fallback."
+	)
+	return SliderFactoryModuleLib
 end
 
 -- Services
@@ -1198,7 +1156,8 @@ local ThemeSystem = ThemeModule.init({
 	Topbar = Topbar,
 	Elements = Elements,
 	Notifications = Notifications,
-	Icons = Icons
+	Icons = Icons,
+	ThemePresetsModule = ThemePresetsModuleLib
 })
 
 local bindTheme = ThemeSystem.bindTheme
@@ -1261,7 +1220,11 @@ local SettingsSystem = SettingsModuleLib.init({
 	callSafely = callSafely,
 	Topbar = Topbar,
 	TabList = TabList,
-	Elements = Elements
+	Elements = Elements,
+	SettingsStoreModule = SettingsStoreModuleLib,
+	SettingsPersistenceModule = SettingsPersistenceModuleLib,
+	SettingsUIModule = SettingsUIModuleLib,
+	SettingsShareCodeModule = SettingsShareCodeModuleLib
 })
 
 -- Initialize Configuration Module
@@ -1362,6 +1325,41 @@ if requestsDisabled then
 	overrideSetting("System", "usageAnalytics", false)
 end
 
+local DefaultUIStringRegistry = UIStringRegistryLib.create()
+local LocalizationService = LocalizationServiceLib.create({
+	HttpService = HttpService,
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	rayfieldFolder = RayfieldFolder,
+	getHubSlug = function()
+		if type(CFileName) == "string" and CFileName ~= "" then
+			return CFileName
+		end
+		local activeWorkspace = getSetting("Workspaces", "active")
+		if type(activeWorkspace) == "string" and activeWorkspace ~= "" then
+			return activeWorkspace
+		end
+		return "default"
+	end,
+	getStringFallbacks = function()
+		return DefaultUIStringRegistry.getDefaults()
+	end
+})
+local UIStringRegistry = UIStringRegistryLib.create({
+	getOverride = function(stringKey)
+		if LocalizationService and type(LocalizationService.getSystemLabel) == "function" then
+			return LocalizationService.getSystemLabel(stringKey)
+		end
+		return nil
+	end
+})
+local function localizeString(key, fallback)
+	return UIStringRegistry.resolve(key, fallback)
+end
+
 -- Initialize Drag Module
 local DragSystem = DragModuleLib.init({
 	UserInputService = UserInputService,
@@ -1417,6 +1415,7 @@ local getPinBadgesVisibleFromUi = nil
 local togglePerformanceHUDFromUi = nil
 local openPerformanceHUDFromUi = nil
 local closePerformanceHUDFromUi = nil
+local resetPerformanceHUDFromUi = nil
 local setVisibility = nil
 local commandPaletteConfirmationState = {
 	key = "",
@@ -1443,6 +1442,7 @@ local UIStateSystem = UIStateModuleLib.init({
 	getSelectedTheme = function() return SelectedTheme end,
 	rayfieldDestroyed = function() return rayfieldDestroyed end,
 	getSetting = getSetting,
+	localize = localizeString,
 	UserInputService = UserInputService,
 	useMobileSizing = useMobileSizing,
 	useMobilePrompt = useMobilePrompt,
@@ -1500,6 +1500,12 @@ local UIStateSystem = UIStateModuleLib.init({
 		end
 		return false, "Performance HUD handler unavailable."
 	end,
+	onResetPerformanceHUD = function()
+		if type(resetPerformanceHUDFromUi) == "function" then
+			return resetPerformanceHUDFromUi()
+		end
+		return false, "Performance HUD reset handler unavailable."
+	end,
 	getAudioFeedbackEnabled = function()
 		return ExperienceState and ExperienceState.audioState and ExperienceState.audioState.enabled == true
 	end,
@@ -1538,7 +1544,10 @@ local UIStateSystem = UIStateModuleLib.init({
 			return inspectElementAtPointerInternal(anchor)
 		end
 		return false, "Element inspector unavailable."
-	end
+	end,
+	NotificationManagerModule = UIStateNotificationManagerLib,
+	SearchEngineModule = UIStateSearchEngineLib,
+	WindowManagerModule = UIStateWindowManagerLib
 })
 
 local TabSplitSystem = nil
@@ -1643,122 +1652,6 @@ local function SaveConfiguration()
 	return ConfigSystem.SaveConfiguration()
 end
 
-local SHARE_CODE_PREFIX = "RFSC1:"
-local SHARE_PAYLOAD_VERSION = 1
-local SHARE_PAYLOAD_TYPE = "rayfield_share"
-local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-local activeShareCode = ""
-local activeSharePayload = nil
-
-local function trimString(value)
-	value = tostring(value or "")
-	value = value:gsub("^%s+", "")
-	value = value:gsub("%s+$", "")
-	return value
-end
-
-local function fallbackBase64Encode(input)
-	local source = tostring(input or "")
-	local bits = source:gsub(".", function(character)
-		local byteValue = string.byte(character)
-		local chunk = ""
-		for index = 8, 1, -1 do
-			if byteValue % (2 ^ index) - byteValue % (2 ^ (index - 1)) > 0 then
-				chunk = chunk .. "1"
-			else
-				chunk = chunk .. "0"
-			end
-		end
-		return chunk
-	end)
-
-	local paddedBits = bits .. "0000"
-	local encoded = paddedBits:gsub("%d%d%d?%d?%d?%d?", function(chunk)
-		if #chunk < 6 then
-			return ""
-		end
-		local value = 0
-		for index = 1, 6 do
-			if chunk:sub(index, index) == "1" then
-				value += 2 ^ (6 - index)
-			end
-		end
-		return BASE64_ALPHABET:sub(value + 1, value + 1)
-	end)
-
-	return encoded .. ({ "", "==", "=" })[#source % 3 + 1]
-end
-
-local function fallbackBase64Decode(input)
-	local source = tostring(input or "")
-	source = source:gsub("%s+", "")
-	source = source:gsub("[^" .. BASE64_ALPHABET .. "=]", "")
-
-	local bits = source:gsub(".", function(character)
-		if character == "=" then
-			return ""
-		end
-		local index = BASE64_ALPHABET:find(character, 1, true)
-		if not index then
-			return ""
-		end
-		local value = index - 1
-		local chunk = ""
-		for bit = 6, 1, -1 do
-			if value % (2 ^ bit) - value % (2 ^ (bit - 1)) > 0 then
-				chunk = chunk .. "1"
-			else
-				chunk = chunk .. "0"
-			end
-		end
-		return chunk
-	end)
-
-	return bits:gsub("%d%d%d?%d?%d?%d?%d?%d?", function(chunk)
-		if #chunk ~= 8 then
-			return ""
-		end
-		local value = 0
-		for index = 1, 8 do
-			if chunk:sub(index, index) == "1" then
-				value += 2 ^ (8 - index)
-			end
-		end
-		return string.char(value)
-	end)
-end
-
-local function encodeBase64(input)
-	if HttpService and type(HttpService.Base64Encode) == "function" then
-		local okEncoded, encoded = pcall(HttpService.Base64Encode, HttpService, input)
-		if okEncoded and type(encoded) == "string" then
-			return true, encoded
-		end
-	end
-
-	local okFallback, encoded = pcall(fallbackBase64Encode, input)
-	if not okFallback then
-		return false, tostring(encoded)
-	end
-	return true, encoded
-end
-
-local function decodeBase64(input)
-	if HttpService and type(HttpService.Base64Decode) == "function" then
-		local okDecoded, decoded = pcall(HttpService.Base64Decode, HttpService, input)
-		if okDecoded and type(decoded) == "string" then
-			return true, decoded
-		end
-	end
-
-	local okFallback, decoded = pcall(fallbackBase64Decode, input)
-	if not okFallback then
-		return false, tostring(decoded)
-	end
-	return true, decoded
-end
-
 local function buildGeneratedAtStamp()
 	local okDate, value = pcall(function()
 		return os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -1775,283 +1668,88 @@ local function buildGeneratedAtStamp()
 	return "unknown"
 end
 
-local function validateSharePayload(payload)
-	if type(payload) ~= "table" then
-		return false, "Share code payload is invalid."
-	end
-	if payload.type ~= SHARE_PAYLOAD_TYPE then
-		return false, "Share code payload type is invalid."
-	end
-	if tonumber(payload.version) ~= SHARE_PAYLOAD_VERSION then
-		return false, "Share code version is unsupported."
-	end
-	if type(payload.configuration) ~= "table" then
-		return false, "Share code is missing configuration data."
-	end
-	if type(payload.internalSettings) ~= "table" then
-		return false, "Share code is missing internal settings data."
-	end
-	return true
-end
-
-local function setActiveSharePayload(code, payload)
-	activeShareCode = tostring(code or "")
-	activeSharePayload = payload
-	if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
-		pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
-	end
-end
-
-local function encodeSharePayload(payload)
-	local okJson, jsonOrErr = pcall(function()
-		return HttpService:JSONEncode(payload)
-	end)
-	if not okJson or type(jsonOrErr) ~= "string" then
-		return nil, "Failed to encode share payload."
-	end
-
-	local okBase64, encodedOrErr = encodeBase64(jsonOrErr)
-	if not okBase64 then
-		return nil, "Failed to encode share payload as Base64."
-	end
-
-	return SHARE_CODE_PREFIX .. encodedOrErr
-end
-
-local function decodeShareCode(code)
-	local normalized = trimString(code)
-	if normalized == "" then
-		return false, "Share code cannot be empty."
-	end
-	if normalized:sub(1, #SHARE_CODE_PREFIX) ~= SHARE_CODE_PREFIX then
-		return false, "Share code prefix is invalid."
-	end
-
-	local encodedBody = normalized:sub(#SHARE_CODE_PREFIX + 1):gsub("%s+", "")
-	if encodedBody == "" then
-		return false, "Share code payload is empty."
-	end
-
-	local okDecode, decodedOrErr = decodeBase64(encodedBody)
-	if not okDecode or type(decodedOrErr) ~= "string" then
-		return false, "Share code Base64 payload is invalid."
-	end
-
-	local okJson, payloadOrErr = pcall(function()
-		return HttpService:JSONDecode(decodedOrErr)
-	end)
-	if not okJson or type(payloadOrErr) ~= "table" then
-		return false, "Share code JSON payload is invalid."
-	end
-
-	return true, SHARE_CODE_PREFIX .. encodedBody, payloadOrErr
-end
-
-local function notifyShareCodeStatus(success, message)
-	if not UIStateSystem or type(UIStateSystem.Notify) ~= "function" then
-		return
-	end
-	local content = tostring(message or "")
-	if content == "" then
-		if success then
-			content = "Share code operation completed."
-		else
-			content = "Share code operation failed."
-		end
-	end
-	pcall(UIStateSystem.Notify, {
-		Title = "Rayfield Share Code",
-		Content = content,
-		Image = success and 4483362458 or 4384402990
+local ShareCodeSystem = nil
+if type(ShareCodeServiceLib) == "table" and type(ShareCodeServiceLib.create) == "function" then
+	local okShareCreate, shareOrErr = pcall(ShareCodeServiceLib.create, {
+		HttpService = HttpService,
+		ConfigSystem = ConfigSystem,
+		SettingsSystem = SettingsSystem,
+		UIStateSystem = UIStateSystem,
+		LocalizationService = LocalizationService,
+		InterfaceBuild = InterfaceBuild,
+		Release = Release,
+		SHARE_CODE_PREFIX = "RFSC1:",
+		SHARE_PAYLOAD_VERSION = 1,
+		SHARE_PAYLOAD_TYPE = "rayfield_share",
+		buildGeneratedAtStamp = buildGeneratedAtStamp
 	})
+	if okShareCreate and type(shareOrErr) == "table" then
+		ShareCodeSystem = shareOrErr
+	else
+		warn("Rayfield Mod: [W_SHARECODE_SERVICE] " .. tostring(shareOrErr))
+	end
+end
+
+if type(ShareCodeSystem) ~= "table" then
+	ShareCodeSystem = {
+		importCode = function()
+			return false, "Share code service unavailable."
+		end,
+		importSettings = function()
+			return false, "Share code service unavailable."
+		end,
+		exportSettings = function()
+			return nil, "Share code service unavailable."
+		end,
+		copyShareCode = function()
+			return false, "Share code service unavailable."
+		end,
+		getActiveShareCode = function()
+			return ""
+		end,
+		notifyStatus = function()
+			return
+		end
+	}
 end
 
 function RayfieldLibrary:ImportCode(code)
-	local okDecode, canonicalOrMessage, payload = decodeShareCode(code)
-	if not okDecode then
-		return false, tostring(canonicalOrMessage)
-	end
-
-	local validPayload, payloadMessage = validateSharePayload(payload)
-	if not validPayload then
-		return false, tostring(payloadMessage)
-	end
-
-	setActiveSharePayload(canonicalOrMessage, payload)
-	return true, "Share code imported."
+	return ShareCodeSystem.importCode(code)
 end
 
-function RayfieldLibrary:ImportSettings()
-	if type(activeSharePayload) ~= "table" then
-		return false, "No active share code. Import code first."
-	end
-
-	local validPayload, payloadMessage = validateSharePayload(activeSharePayload)
-	if not validPayload then
-		return false, tostring(payloadMessage)
-	end
-
-	if not ConfigSystem or type(ConfigSystem.ImportConfigurationData) ~= "function" then
-		return false, "Configuration import is unavailable."
-	end
-	if not SettingsSystem or type(SettingsSystem.ImportInternalSettingsData) ~= "function" then
-		return false, "Internal settings import is unavailable."
-	end
-
-	local okConfig, configSuccess, configDetail = pcall(ConfigSystem.ImportConfigurationData, activeSharePayload.configuration)
-	if not okConfig then
-		return false, "Failed to apply configuration data: " .. tostring(configSuccess)
-	end
-	if configSuccess ~= true then
-		return false, tostring(configDetail or "Failed to apply configuration data.")
-	end
-
-	local okInternal, internalSuccess, internalDetail = pcall(SettingsSystem.ImportInternalSettingsData, activeSharePayload.internalSettings)
-	if not okInternal then
-		return false, "Failed to apply internal settings: " .. tostring(internalSuccess)
-	end
-	if internalSuccess ~= true then
-		return false, tostring(internalDetail or "Failed to apply internal settings.")
-	end
-
-	local persistenceWarnings = {}
-	if ConfigSystem and type(ConfigSystem.SaveConfigurationForced) == "function" then
-		local okPersistConfig, persistedConfig = pcall(ConfigSystem.SaveConfigurationForced)
-		if not okPersistConfig or persistedConfig == false then
-			table.insert(persistenceWarnings, "configuration")
-		end
-	end
-
-	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
-		local okPersistSettings, persistedSettings = pcall(SettingsSystem.saveSettings)
-		if not okPersistSettings or persistedSettings == false then
-			table.insert(persistenceWarnings, "internal settings")
-		end
-	end
-
-	if #persistenceWarnings > 0 then
-		return true, "Share settings applied, but persistence failed for: " .. table.concat(persistenceWarnings, ", ") .. "."
-	end
-
-	local changedConfiguration = configDetail == true
-	local appliedInternalCount = tonumber(internalDetail) or 0
-	if changedConfiguration or appliedInternalCount > 0 then
-		return true, "Share settings applied."
-	end
-
-	return true, "Share settings were already up to date."
+function RayfieldLibrary:ImportSettings(options)
+	return ShareCodeSystem.importSettings(options)
 end
 
 function RayfieldLibrary:ExportSettings()
-	if not ConfigSystem or type(ConfigSystem.ExportConfigurationData) ~= "function" then
-		return nil, "Configuration export is unavailable."
-	end
-	if not SettingsSystem or type(SettingsSystem.ExportInternalSettingsData) ~= "function" then
-		return nil, "Internal settings export is unavailable."
-	end
-
-	local okConfig, configurationData = pcall(ConfigSystem.ExportConfigurationData)
-	if not okConfig or type(configurationData) ~= "table" then
-		return nil, "Failed to collect configuration data."
-	end
-
-	local okSettings, internalSettingsData = pcall(SettingsSystem.ExportInternalSettingsData)
-	if not okSettings or type(internalSettingsData) ~= "table" then
-		return nil, "Failed to collect internal settings data."
-	end
-
-	local payload = {
-		type = SHARE_PAYLOAD_TYPE,
-		version = SHARE_PAYLOAD_VERSION,
-		configuration = configurationData,
-		internalSettings = internalSettingsData,
-		meta = {
-			generatedAt = buildGeneratedAtStamp(),
-			interfaceBuild = InterfaceBuild,
-			release = Release
-		}
-	}
-
-	local encodedCode, encodedErr = encodeSharePayload(payload)
-	if type(encodedCode) ~= "string" then
-		return nil, tostring(encodedErr or "Failed to export share code.")
-	end
-
-	setActiveSharePayload(encodedCode, payload)
-	return encodedCode, "ok"
+	return ShareCodeSystem.exportSettings()
 end
 
 function RayfieldLibrary:CopyShareCode(suppressNotify)
-	local shouldNotify = suppressNotify ~= true
-
-	if type(activeShareCode) ~= "string" or activeShareCode == "" then
-		local message = "No active share code. Export or import a code first."
-		if shouldNotify then
-			notifyShareCodeStatus(false, message)
-		end
-		return false, message
-	end
-
-	local clipboardWriter = nil
-	if type(setclipboard) == "function" then
-		clipboardWriter = setclipboard
-	elseif type(toclipboard) == "function" then
-		clipboardWriter = toclipboard
-	end
-
-	if type(clipboardWriter) ~= "function" then
-		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
-			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
-		end
-		local message = "Clipboard is unavailable. Share code was placed in the Share Code input."
-		if shouldNotify then
-			notifyShareCodeStatus(false, message)
-		end
-		return false, message
-	end
-
-	local okCopy, copyErr = pcall(clipboardWriter, activeShareCode)
-	if not okCopy then
-		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
-			pcall(SettingsSystem.setShareCodeInputValue, activeShareCode)
-		end
-		local message = "Failed to copy share code: " .. tostring(copyErr)
-		if shouldNotify then
-			notifyShareCodeStatus(false, message)
-		end
-		return false, message
-	end
-
-	local message = "Share code copied to clipboard."
-	if shouldNotify then
-		notifyShareCodeStatus(true, message)
-	end
-	return true, message
+	return ShareCodeSystem.copyShareCode(suppressNotify)
 end
 
 if SettingsSystem and type(SettingsSystem.setShareCodeHandlers) == "function" then
 	SettingsSystem.setShareCodeHandlers({
 		importCode = function(code)
-			local ok, message = RayfieldLibrary:ImportCode(code)
-			return ok, message
+			return ShareCodeSystem.importCode(code)
 		end,
-		importSettings = function()
-			local ok, message = RayfieldLibrary:ImportSettings()
-			return ok, message
+		importSettings = function(options)
+			return ShareCodeSystem.importSettings(options)
 		end,
 		exportSettings = function()
-			local code, message = RayfieldLibrary:ExportSettings()
-			return code, message
+			return ShareCodeSystem.exportSettings()
 		end,
 		copyShareCode = function()
-			local ok, message = RayfieldLibrary:CopyShareCode(true)
-			return ok, message
+			return ShareCodeSystem.copyShareCode(true)
 		end,
 		getActiveShareCode = function()
-			return activeShareCode
+			return ShareCodeSystem.getActiveShareCode()
 		end,
 		notify = function(success, message)
-			notifyShareCodeStatus(success == true, message)
+			if type(ShareCodeSystem.notifyStatus) == "function" then
+				ShareCodeSystem.notifyStatus(success == true, message)
+			end
 		end
 	})
 end
@@ -2880,10 +2578,22 @@ local runCommandPaletteItemInternal = nil
 local openPerformanceHUDInternal = nil
 local closePerformanceHUDInternal = nil
 local togglePerformanceHUDInternal = nil
+local resetPerformanceHUDInternal = nil
 local configurePerformanceHUDInternal = nil
 local getPerformanceHUDStateInternal = nil
 local registerHUDMetricProviderInternal = nil
 local unregisterHUDMetricProviderInternal = nil
+local setControlDisplayLabelInternal = nil
+local getControlDisplayLabelInternal = nil
+local resetControlDisplayLabelInternal = nil
+local setSystemDisplayLabelInternal = nil
+local getSystemDisplayLabelInternal = nil
+local resetDisplayLanguageInternal = nil
+local getLocalizationStateInternal = nil
+local setLocalizationLanguageTagInternal = nil
+local exportLocalizationInternal = nil
+local importLocalizationInternal = nil
+local localizeStringInternal = nil
 local getUsageAnalyticsInternal = nil
 local clearUsageAnalyticsInternal = nil
 local startMacroRecordingInternal = nil
@@ -3488,6 +3198,7 @@ local WorkspaceService = WorkspaceServiceLib.create({
 	settingsSystem = SettingsSystem,
 	buildGeneratedAtStamp = buildGeneratedAtStamp,
 	cloneValue = cloneValue,
+	localize = localizeString,
 	onRestoreAfterLoad = function()
 		if ExperienceBindings and type(ExperienceBindings.restoreFromSettings) == "function" then
 			pcall(ExperienceBindings.restoreFromSettings, ExperienceState.favoritesTabWindow)
@@ -3546,6 +3257,7 @@ end
 local PerformanceHUDService = PerformanceHUDServiceLib.create({
 	Main = Main,
 	UserInputService = UserInputService,
+	localize = localizeString,
 	getRuntimeDiagnostics = function()
 		if type(RayfieldLibrary.GetRuntimeDiagnostics) == "function" then
 			local okDiag, diagnostics = pcall(RayfieldLibrary.GetRuntimeDiagnostics, RayfieldLibrary)
@@ -3574,6 +3286,18 @@ local PerformanceHUDService = PerformanceHUDServiceLib.create({
 			scheduled = type(scheduled) == "table" and #scheduled or 0,
 			rules = type(rules) == "table" and #rules or 0
 		}
+	end,
+	loadState = function()
+		local saved = getSetting("UIExperience", "performanceHudConfig")
+		if type(saved) == "table" then
+			return saved
+		end
+		return nil
+	end,
+	saveState = function(nextState)
+		if type(nextState) == "table" then
+			setSettingValue("UIExperience", "performanceHudConfig", nextState, true)
+		end
 	end
 })
 
@@ -3587,6 +3311,13 @@ end
 
 togglePerformanceHUDInternal = function()
 	return PerformanceHUDService.toggle()
+end
+
+resetPerformanceHUDInternal = function(anchor)
+	if type(PerformanceHUDService.resetPosition) == "function" then
+		return PerformanceHUDService.resetPosition(anchor)
+	end
+	return false, "Performance HUD reset unavailable."
 end
 
 configurePerformanceHUDInternal = function(options)
@@ -3609,7 +3340,9 @@ local CommandPaletteService = CommandPaletteServiceLib.create({
 	getElementsSystem = function()
 		return ElementsSystem
 	end,
+	localize = localizeString,
 	usageAnalytics = UsageAnalyticsService,
+	searchAlgorithms = CommandPaletteSearchAlgorithmsLib,
 	queryDiscovery = function(query)
 		if type(queryDiscoveryInternal) == "function" then
 			return queryDiscoveryInternal(query)
@@ -3699,6 +3432,9 @@ local CommandPaletteService = CommandPaletteServiceLib.create({
 	end,
 	togglePerformanceHUD = function()
 		return togglePerformanceHUDInternal()
+	end,
+	resetPerformanceHUDPosition = function(anchor)
+		return resetPerformanceHUDInternal(anchor or "top_left")
 	end,
 	confirmCommandPaletteItem = function(item)
 		local key = tostring(type(item) == "table" and (item.id or item.action or item.name) or "")
@@ -3852,6 +3588,10 @@ closePerformanceHUDFromUi = function()
 	return closePerformanceHUDInternal()
 end
 
+resetPerformanceHUDFromUi = function()
+	return resetPerformanceHUDInternal("top_left")
+end
+
 commandPaletteQueryProvider = function(query)
 	return CommandPaletteService.query(query)
 end
@@ -3874,6 +3614,242 @@ end
 
 runCommandPaletteItemInternal = function(item, mode)
 	return CommandPaletteService.runItem(item, mode)
+end
+
+setControlDisplayLabelInternal = function(idOrFlag, label, options)
+	options = type(options) == "table" and options or {}
+	local controlKey = trimString(idOrFlag)
+	if controlKey == "" then
+		return false, "Control key is required."
+	end
+	local shouldPersist = options.persist ~= false
+
+	if not shouldPersist and ElementsSystem and type(ElementsSystem.setControlDisplayLabel) == "function" then
+		return ElementsSystem.setControlDisplayLabel(controlKey, label, {
+			persist = false,
+			source = "experience_binding_temporary"
+		})
+	end
+
+	if shouldPersist and LocalizationService and type(LocalizationService.setControlLabel) == "function" then
+		local okCall, okSet, resultMessage = pcall(LocalizationService.setControlLabel, controlKey, label)
+		if not okCall then
+			return false, tostring(okSet)
+		end
+		if okSet ~= true then
+			return false, tostring(resultMessage or "Failed to set control display label.")
+		end
+		if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+			pcall(SettingsSystem.saveSettings)
+		end
+		return true, "Control display label updated."
+	end
+
+	if ElementsSystem and type(ElementsSystem.setControlDisplayLabel) == "function" then
+		return ElementsSystem.setControlDisplayLabel(controlKey, label, {
+			persist = true,
+			source = "experience_binding"
+		})
+	end
+	return false, "Control localization handler unavailable."
+end
+
+getControlDisplayLabelInternal = function(idOrFlag)
+	local controlKey = trimString(idOrFlag)
+	if controlKey == "" then
+		return nil
+	end
+
+	if LocalizationService and type(LocalizationService.getControlLabel) == "function" then
+		local okCall, value = pcall(LocalizationService.getControlLabel, controlKey)
+		if okCall and type(value) == "string" and value ~= "" then
+			return value
+		end
+	end
+
+	if ElementsSystem and type(ElementsSystem.getControlDisplayLabel) == "function" then
+		local okCall, value = pcall(ElementsSystem.getControlDisplayLabel, controlKey)
+		if okCall and type(value) == "string" and value ~= "" then
+			return value
+		end
+	end
+
+	if ElementsSystem and type(ElementsSystem.getControlRecordByIdOrFlag) == "function" then
+		local okRecord, record = pcall(ElementsSystem.getControlRecordByIdOrFlag, controlKey)
+		if okRecord and type(record) == "table" then
+			return tostring(record.DisplayName or record.Name or "")
+		end
+	end
+	return nil
+end
+
+resetControlDisplayLabelInternal = function(idOrFlag, options)
+	options = type(options) == "table" and options or {}
+	local controlKey = trimString(idOrFlag)
+	if controlKey == "" then
+		return false, "Control key is required."
+	end
+	local shouldPersist = options.persist ~= false
+
+	if not shouldPersist and ElementsSystem and type(ElementsSystem.resetControlDisplayLabel) == "function" then
+		return ElementsSystem.resetControlDisplayLabel(controlKey, {
+			persist = false,
+			source = "experience_binding_temporary"
+		})
+	end
+
+	if shouldPersist and LocalizationService and type(LocalizationService.resetControlLabel) == "function" then
+		local okCall, okReset, resultMessage = pcall(LocalizationService.resetControlLabel, controlKey)
+		if not okCall then
+			return false, tostring(okReset)
+		end
+		if okReset ~= true then
+			return false, tostring(resultMessage or "Failed to reset control display label.")
+		end
+		if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+			pcall(SettingsSystem.saveSettings)
+		end
+		return true, "Control display label reset."
+	end
+
+	if ElementsSystem and type(ElementsSystem.resetControlDisplayLabel) == "function" then
+		return ElementsSystem.resetControlDisplayLabel(controlKey, {
+			persist = true,
+			source = "experience_binding"
+		})
+	end
+	return false, "Control localization handler unavailable."
+end
+
+setSystemDisplayLabelInternal = function(key, label)
+	local stringKey = trimString(key)
+	if stringKey == "" then
+		return false, "System localization key is required."
+	end
+	if not (LocalizationService and type(LocalizationService.setSystemLabel) == "function") then
+		return false, "System localization handler unavailable."
+	end
+
+	local okCall, okSet, resultMessage = pcall(LocalizationService.setSystemLabel, stringKey, label)
+	if not okCall then
+		return false, tostring(okSet)
+	end
+	if okSet ~= true then
+		return false, tostring(resultMessage or "Failed to set system display label.")
+	end
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		pcall(SettingsSystem.saveSettings)
+	end
+	return true, "System display label updated."
+end
+
+getSystemDisplayLabelInternal = function(key)
+	local stringKey = trimString(key)
+	if stringKey == "" then
+		return nil
+	end
+	if LocalizationService and type(LocalizationService.getSystemLabel) == "function" then
+		local okCall, value = pcall(LocalizationService.getSystemLabel, stringKey)
+		if okCall and type(value) == "string" and value ~= "" then
+			return value
+		end
+	end
+	return localizeString(stringKey, stringKey)
+end
+
+resetDisplayLanguageInternal = function(options)
+	options = type(options) == "table" and options or {}
+	if not (LocalizationService and type(LocalizationService.resetAllToEnglish) == "function") then
+		return false, "Localization reset handler unavailable."
+	end
+
+	local okCall, okReset, message = pcall(LocalizationService.resetAllToEnglish)
+	if not okCall then
+		return false, tostring(okReset)
+	end
+	if okReset ~= true then
+		return false, tostring(message or "Failed to reset localization.")
+	end
+
+	local nextLanguageTag = trimString(options.languageTag)
+	if nextLanguageTag ~= "" and nextLanguageTag ~= "en" and type(LocalizationService.setLanguageTag) == "function" then
+		pcall(LocalizationService.setLanguageTag, nextLanguageTag)
+	end
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		pcall(SettingsSystem.saveSettings)
+	end
+	return true, tostring(message or "Localization reset to English.")
+end
+
+getLocalizationStateInternal = function()
+	if LocalizationService and type(LocalizationService.getState) == "function" then
+		local okCall, state = pcall(LocalizationService.getState)
+		if okCall and type(state) == "table" then
+			return state
+		end
+	end
+	return {
+		scopeMode = "unavailable",
+		scopeKey = "",
+		scopePath = "",
+		meta = {
+			languageTag = "en"
+		},
+		controlLabelCount = 0,
+		systemLabelCount = 0
+	}
+end
+
+setLocalizationLanguageTagInternal = function(languageTag)
+	if not (LocalizationService and type(LocalizationService.setLanguageTag) == "function") then
+		return false, "Localization language handler unavailable."
+	end
+	local okCall, okSet, resolved = pcall(LocalizationService.setLanguageTag, languageTag)
+	if not okCall then
+		return false, tostring(okSet)
+	end
+	if okSet ~= true then
+		return false, tostring(resolved or "Failed to set language tag.")
+	end
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		pcall(SettingsSystem.saveSettings)
+	end
+	return true, tostring(resolved or "en")
+end
+
+exportLocalizationInternal = function(options)
+	if not (LocalizationService and type(LocalizationService.exportScopePack) == "function") then
+		return false, "Localization export handler unavailable."
+	end
+	local okCall, okExport, payloadOrErr = pcall(LocalizationService.exportScopePack, options)
+	if not okCall then
+		return false, tostring(okExport)
+	end
+	if okExport ~= true then
+		return false, tostring(payloadOrErr or "Failed to export localization pack.")
+	end
+	return true, payloadOrErr
+end
+
+importLocalizationInternal = function(payload, options)
+	if not (LocalizationService and type(LocalizationService.importScopePack) == "function") then
+		return false, "Localization import handler unavailable."
+	end
+	local okCall, okImport, message = pcall(LocalizationService.importScopePack, payload, options)
+	if not okCall then
+		return false, tostring(okImport)
+	end
+	if okImport ~= true then
+		return false, tostring(message or "Failed to import localization pack.")
+	end
+	if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+		pcall(SettingsSystem.saveSettings)
+	end
+	return true, tostring(message or "Localization imported.")
+end
+
+localizeStringInternal = function(key, fallback)
+	return localizeString(key, fallback)
 end
 
 local function ensureOnboardingOverlay()
@@ -4299,10 +4275,22 @@ ExperienceBindings = ExperienceBindingsLib.bind({
 	openPerformanceHUDInternal = openPerformanceHUDInternal,
 	closePerformanceHUDInternal = closePerformanceHUDInternal,
 	togglePerformanceHUDInternal = togglePerformanceHUDInternal,
+	resetPerformanceHUDInternal = resetPerformanceHUDInternal,
 	configurePerformanceHUDInternal = configurePerformanceHUDInternal,
 	getPerformanceHUDStateInternal = getPerformanceHUDStateInternal,
 	registerHUDMetricProviderInternal = registerHUDMetricProviderInternal,
 	unregisterHUDMetricProviderInternal = unregisterHUDMetricProviderInternal,
+	setControlDisplayLabelInternal = setControlDisplayLabelInternal,
+	getControlDisplayLabelInternal = getControlDisplayLabelInternal,
+	resetControlDisplayLabelInternal = resetControlDisplayLabelInternal,
+	setSystemDisplayLabelInternal = setSystemDisplayLabelInternal,
+	getSystemDisplayLabelInternal = getSystemDisplayLabelInternal,
+	resetDisplayLanguageInternal = resetDisplayLanguageInternal,
+	getLocalizationStateInternal = getLocalizationStateInternal,
+	setLocalizationLanguageTagInternal = setLocalizationLanguageTagInternal,
+	exportLocalizationInternal = exportLocalizationInternal,
+	importLocalizationInternal = importLocalizationInternal,
+	localizeStringInternal = localizeStringInternal,
 	getUsageAnalyticsInternal = getUsageAnalyticsInternal,
 	clearUsageAnalyticsInternal = clearUsageAnalyticsInternal,
 	startMacroRecordingInternal = startMacroRecordingInternal,
@@ -4351,6 +4339,28 @@ ExperienceBindings = ExperienceBindingsLib.bind({
 	end,
 	applyLiveThemeDraftInternal = applyLiveThemeDraftInternal,
 	exportLiveThemeLuaInternal = exportLiveThemeLuaInternal,
+	uiEventModules = {
+		RuntimeBindingsUXLib,
+		RuntimeBindingsThemeLib,
+		RuntimeBindingsFavoritesLib,
+		RuntimeBindingsDiscoveryLib,
+		RuntimeBindingsDiagnosticsLib,
+		RuntimeBindingsLocalizationLib
+	},
+	movementEventModules = {
+		RuntimeBindingsAudioLib,
+		RuntimeBindingsPersistenceLib
+	},
+	combatEventModules = {
+		RuntimeBindingsAutomationLib,
+		RuntimeBindingsAIAssistantLib,
+		RuntimeBindingsCommunicationLib
+	},
+	bindingModules = {
+		RuntimeBindingsUIEventsLib,
+		RuntimeBindingsMovementEventsLib,
+		RuntimeBindingsCombatEventsLib
+	},
 	openSettingsTabInternal = function()
 		return openSettingsTabFromTopbar()
 	end
@@ -5471,6 +5481,8 @@ function RayfieldLibrary:CreateWindow(Settings)
 		TweenService = TweenService,
 		UserInputService = UserInputService,
 		AnimationEngine = AnimationEngine,
+		VirtualizationEngineModule = VirtualizationEngineModuleLib,
+		VirtualHostManagerModule = VirtualHostManagerModuleLib,
 		RootGui = Rayfield,
 		warn = function(message)
 			warn("Rayfield | ViewportVirtualization " .. tostring(message))
@@ -5561,10 +5573,41 @@ function RayfieldLibrary:CreateWindow(Settings)
 				pcall(UsageAnalyticsService.trackTabOpen, payload)
 			end
 		end,
+		resolveControlDisplayLabel = function(record)
+			if LocalizationService and type(LocalizationService.resolveControlLabel) == "function" then
+				return LocalizationService.resolveControlLabel(record)
+			end
+			return nil
+		end,
+		persistControlDisplayLabel = function(record, label)
+			if LocalizationService and type(LocalizationService.setControlLabel) == "function" then
+				return LocalizationService.setControlLabel(record, label)
+			end
+			return false, "Localization persistence unavailable."
+		end,
+		resetControlDisplayLabel = function(record)
+			if LocalizationService and type(LocalizationService.resetControlLabel) == "function" then
+				return LocalizationService.resetControlLabel(record)
+			end
+			return false, "Localization reset unavailable."
+		end,
+		localizeSystemString = localizeString,
 		DataGridFactoryModule = DataGridFactoryModuleLib,
 		ResolveDataGridFactory = resolveDataGridFactoryModule,
 		ChartFactoryModule = ChartFactoryModuleLib,
 		ResolveChartFactory = resolveChartFactoryModule,
+		ButtonFactoryModule = ButtonFactoryModuleLib,
+		ResolveButtonFactory = resolveButtonFactoryModule,
+		InputFactoryModule = InputFactoryModuleLib,
+		ResolveInputFactory = resolveInputFactoryModule,
+		DropdownFactoryModule = DropdownFactoryModuleLib,
+		ResolveDropdownFactory = resolveDropdownFactoryModule,
+		KeybindFactoryModule = KeybindFactoryModuleLib,
+		ResolveKeybindFactory = resolveKeybindFactoryModule,
+		ToggleFactoryModule = ToggleFactoryModuleLib,
+		ResolveToggleFactory = resolveToggleFactoryModule,
+		SliderFactoryModule = SliderFactoryModuleLib,
+		ResolveSliderFactory = resolveSliderFactoryModule,
 		showContextMenu = function(items, anchor)
 			if UIStateSystem and type(UIStateSystem.ShowContextMenu) == "function" then
 				return UIStateSystem.ShowContextMenu(items, anchor)
@@ -5583,6 +5626,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResourceOwnership = OwnershipSystem,
 		Settings = Settings
 	})
+	if LocalizationService and type(LocalizationService.applyControlLabelsToUi) == "function" then
+		pcall(LocalizationService.applyControlLabelsToUi)
+	end
 	if favoritesRegistryUnsubscribe then
 		pcall(favoritesRegistryUnsubscribe)
 		favoritesRegistryUnsubscribe = nil

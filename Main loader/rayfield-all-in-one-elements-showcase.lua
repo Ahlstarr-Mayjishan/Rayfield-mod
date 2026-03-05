@@ -1275,6 +1275,18 @@ tabSystem:CreateButton({
 	end
 })
 
+tabSystem:CreateButton({
+	Name = "Reset HUD Position",
+	Callback = function()
+		if type(Rayfield.ResetPerformanceHUDPosition) ~= "function" then
+			sampleLog("warn", "ResetPerformanceHUDPosition unavailable.")
+			return
+		end
+		local okReset, status = Rayfield:ResetPerformanceHUDPosition("top_left")
+		sampleLog(okReset and "info" or "error", "ResetPerformanceHUDPosition => " .. tostring(status))
+	end
+})
+
 local showcaseMacroName = "showcase-macro"
 
 tabSystem:CreateButton({
@@ -1435,6 +1447,7 @@ local function runShowcaseChecks()
 			and type(Rayfield.OpenPerformanceHUD) == "function"
 			and type(Rayfield.ClosePerformanceHUD) == "function"
 			and type(Rayfield.TogglePerformanceHUD) == "function"
+			and type(Rayfield.ResetPerformanceHUDPosition) == "function"
 			and type(Rayfield.GetPerformanceHUDState) == "function"
 			and type(Rayfield.GetUsageAnalytics) == "function"
 			and type(Rayfield.StartMacroRecording) == "function"

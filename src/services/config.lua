@@ -318,7 +318,21 @@ function ConfigModule.init(ctx)
 	local function applyFlagValue(entry)
 		local flagName = entry.flagName
 		local flag = entry.flag
-		local flagValue = entry.rawValue
+		local wrapped = entry.rawValue
+		local flagValue = wrapped
+		local customLabel = nil
+		local hasWrappedValue = false
+		if type(wrapped) == "table" and wrapped.Value ~= nil then
+			hasWrappedValue = true
+			flagValue = wrapped.Value
+			if type(wrapped.CustomLabel) == "string" then
+				customLabel = wrapped.CustomLabel
+			elseif type(wrapped.DisplayLabel) == "string" then
+				customLabel = wrapped.DisplayLabel
+			elseif type(wrapped.Label) == "string" then
+				customLabel = wrapped.Label
+			end
+		end
 		local beforeValue = getPersistValue(flag)
 		local nextValue = cloneValue(flagValue)
 		if flag.Type == "ColorPicker" and type(flagValue) == "table" then
@@ -331,6 +345,13 @@ function ConfigModule.init(ctx)
 			end
 		else
 			warn("Rayfield | Flag '" .. tostring(flagName) .. "' is missing Set()")
+		end
+		if hasWrappedValue then
+			if type(customLabel) == "string" and customLabel ~= "" and type(flag.SetDisplayLabel) == "function" then
+				pcall(flag.SetDisplayLabel, flag, customLabel)
+			elseif (wrapped.CustomLabel == nil or wrapped.CustomLabel == "") and type(flag.ResetDisplayLabel) == "function" then
+				pcall(flag.ResetDisplayLabel, flag)
+			end
 		end
 		local afterValue = getPersistValue(flag)
 		return not valuesEqual(beforeValue, afterValue)
