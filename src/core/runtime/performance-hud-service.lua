@@ -52,7 +52,13 @@ end
 function PerformanceHUDService.create(ctx)
 	ctx = ctx or {}
 	local Main = ctx.Main
+	local Topbar = ctx.Topbar
+	local RunService = ctx.RunService
 	local UserInputService = ctx.UserInputService
+	local bindTheme = type(ctx.bindTheme) == "function" and ctx.bindTheme or nil
+	local getSelectedTheme = type(ctx.getSelectedTheme) == "function" and ctx.getSelectedTheme or function()
+		return nil
+	end
 	local loadState = type(ctx.loadState) == "function" and ctx.loadState or nil
 	local saveState = type(ctx.saveState) == "function" and ctx.saveState or nil
 	local getRuntimeDiagnostics = type(ctx.getRuntimeDiagnostics) == "function" and ctx.getRuntimeDiagnostics or function()
@@ -77,6 +83,34 @@ function PerformanceHUDService.create(ctx)
 		end
 		return tostring(fallback or key or "")
 	end
+	local function getValueType(value)
+		if type(typeof) == "function" then
+			return typeof(value)
+		end
+		return type(value)
+	end
+	local function isColor3(value)
+		return getValueType(value) == "Color3"
+	end
+	local function getThemeColor(themeKey, fallback)
+		local selectedTheme = getSelectedTheme()
+		if type(selectedTheme) == "table" then
+			local themedValue = selectedTheme[themeKey]
+			if isColor3(themedValue) then
+				return themedValue
+			end
+		end
+		return fallback
+	end
+	local function resolveMainCornerRadius()
+		if Main and type(Main.FindFirstChildOfClass) == "function" then
+			local mainCorner = Main:FindFirstChildOfClass("UICorner")
+			if mainCorner and mainCorner.CornerRadius then
+				return mainCorner.CornerRadius
+			end
+		end
+		return UDim.new(0, 8)
+	end
 
 	local defaultEnabled = not (type(_G) == "table" and _G.__RAYFIELD_PERF_HUD_ENABLED == false)
 	local defaultHz = clampNumber(type(_G) == "table" and _G.__RAYFIELD_PERF_HUD_UPDATE_HZ or 4, 1, 30, 4)
@@ -99,9 +133,11 @@ function PerformanceHUDService.create(ctx)
 	local destroyed = false
 	local providers = {}
 	local connections = {}
+	local themeBound = false
 	local fpsState = {
 		lastClock = os.clock(),
-		smoothed = 0
+		smoothed = 0,
+		samplerBound = false
 	}
 
 	local function disconnectAll()
@@ -113,6 +149,141 @@ function PerformanceHUDService.create(ctx)
 				end)
 			end
 			connections[index] = nil
+		end
+	end
+
+	local function connectSignal(signal, callback)
+		if not signal or type(callback) ~= "function" then
+			return nil
+		end
+		local okConnect, connectionOrErr = pcall(function()
+			return signal:Connect(callback)
+		end)
+		if okConnect and connectionOrErr then
+			table.insert(connections, connectionOrErr)
+			return connectionOrErr
+		end
+		return nil
+	end
+
+	local function sampleFpsFromDelta(deltaTime)
+		local delta = tonumber(deltaTime)
+		if not delta or delta <= 0 then
+			return
+		end
+		local instantFps = 1 / delta
+		if instantFps <= 0 or instantFps > 1000 then
+			return
+		end
+		fpsState.lastClock = os.clock()
+		if fpsState.smoothed <= 0 then
+			fpsState.smoothed = instantFps
+		else
+			fpsState.smoothed = (fpsState.smoothed * 0.9) + (instantFps * 0.1)
+		end
+	end
+
+	local function bindFpsSampler()
+		if fpsState.samplerBound or not RunService then
+			return
+		end
+		local signal = RunService.RenderStepped or RunService.Heartbeat
+		if not signal then
+			return
+		end
+		local okConnect, connectionOrErr = pcall(function()
+			return signal:Connect(function(deltaTime)
+				sampleFpsFromDelta(deltaTime)
+			end)
+		end)
+		if okConnect and connectionOrErr then
+			fpsState.samplerBound = true
+			table.insert(connections, connectionOrErr)
+		end
+	end
+
+	local function applyThemeFallbackColors()
+		if bindTheme then
+			return
+		end
+		if refs.Root then
+			refs.Root.BackgroundColor3 = getThemeColor("Background", Color3.fromRGB(16, 20, 26))
+		end
+		if refs.Stroke then
+			refs.Stroke.Color = getThemeColor("ElementStroke", Color3.fromRGB(150, 180, 255))
+		end
+		if refs.TitleBar then
+			refs.TitleBar.BackgroundColor3 = getThemeColor("Topbar", Color3.fromRGB(24, 30, 42))
+			refs.TitleBar.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(235, 240, 255))
+		end
+		if refs.CloseButton then
+			refs.CloseButton.BackgroundColor3 = getThemeColor("SecondaryElementBackground", Color3.fromRGB(48, 60, 82))
+			refs.CloseButton.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(230, 235, 245))
+		end
+		if refs.Body then
+			refs.Body.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(222, 232, 255))
+		end
+		if refs.ResizeHandle then
+			refs.ResizeHandle.BackgroundColor3 = getThemeColor("SecondaryElementBackground", Color3.fromRGB(64, 78, 104))
+			refs.ResizeHandle.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(230, 240, 255))
+		end
+	end
+
+	local function bindThemeColors()
+		if themeBound or not bindTheme or not refs.Root then
+			return
+		end
+		themeBound = true
+		pcall(bindTheme, refs.Root, "BackgroundColor3", "Background")
+		pcall(bindTheme, refs.Stroke, "Color", "ElementStroke")
+		pcall(bindTheme, refs.TitleBar, "BackgroundColor3", "Topbar")
+		pcall(bindTheme, refs.TitleBar, "TextColor3", "TextColor")
+		pcall(bindTheme, refs.CloseButton, "BackgroundColor3", "SecondaryElementBackground")
+		pcall(bindTheme, refs.CloseButton, "TextColor3", "TextColor")
+		pcall(bindTheme, refs.Body, "TextColor3", "TextColor")
+		pcall(bindTheme, refs.ResizeHandle, "BackgroundColor3", "SecondaryElementBackground")
+		pcall(bindTheme, refs.ResizeHandle, "TextColor3", "TextColor")
+	end
+
+	local function syncStyleFromMain()
+		if not refs.Root then
+			return
+		end
+		local cornerRadius = resolveMainCornerRadius()
+		if refs.Corner then
+			refs.Corner.CornerRadius = cornerRadius
+		end
+
+		local topbarTransparency = nil
+		if Topbar then
+			topbarTransparency = tonumber(Topbar.BackgroundTransparency)
+		end
+		if topbarTransparency == nil and Main then
+			topbarTransparency = tonumber(Main.BackgroundTransparency)
+		end
+		topbarTransparency = clampNumber(topbarTransparency, 0, 1, 0.15)
+
+		if refs.TitleBar then
+			refs.TitleBar.BackgroundTransparency = topbarTransparency
+		end
+		if refs.CloseButton then
+			refs.CloseButton.BackgroundTransparency = clampNumber(topbarTransparency + 0.1, 0, 1, 0.25)
+		end
+		if refs.ResizeHandle then
+			refs.ResizeHandle.BackgroundTransparency = clampNumber(topbarTransparency + 0.1, 0, 1, 0.2)
+		end
+
+		local topbarTitle = Topbar and Topbar:FindFirstChild("Title")
+		if topbarTitle and topbarTitle:IsA("TextLabel") then
+			local titleTextSize = clampNumber(topbarTitle.TextSize, 10, 24, 11)
+			if refs.TitleBar then
+				refs.TitleBar.Font = topbarTitle.Font
+				refs.TitleBar.TextSize = titleTextSize
+			end
+			if refs.Body then
+				refs.Body.Font = topbarTitle.Font
+				refs.Body.TextSize = clampNumber(titleTextSize - 1, 10, 22, 11)
+			end
 		end
 	end
 
@@ -240,10 +411,14 @@ function PerformanceHUDService.create(ctx)
 		end
 		clampStateSize()
 		clampStatePosition()
-		refs.Root.BackgroundTransparency = 1 - state.opacity
+		local baseTransparency = 1 - state.opacity
+		local mainTransparency = Main and tonumber(Main.BackgroundTransparency) or 0
+		refs.Root.BackgroundTransparency = clampNumber(baseTransparency + (clampNumber(mainTransparency, 0, 1, 0) * 0.2), 0, 1, baseTransparency)
 		refs.Root.Visible = state.visible
 		refs.Root.Position = UDim2.fromOffset(state.position.x, state.position.y)
 		refs.Root.Size = UDim2.fromOffset(state.size.width, state.size.height)
+		syncStyleFromMain()
+		applyThemeFallbackColors()
 	end
 
 	local function ensureGui()
@@ -252,6 +427,9 @@ function PerformanceHUDService.create(ctx)
 			if parent and refs.Root.Parent ~= parent then
 				refs.Root.Parent = parent
 			end
+			bindThemeColors()
+			syncStyleFromMain()
+			applyThemeFallbackColors()
 			return true
 		end
 		local parent = getHudParent()
@@ -263,23 +441,23 @@ function PerformanceHUDService.create(ctx)
 		root.Name = "RayfieldPerformanceHUD"
 		root.BorderSizePixel = 0
 		root.ZIndex = 95
-		root.BackgroundColor3 = Color3.fromRGB(16, 20, 26)
+		root.BackgroundColor3 = getThemeColor("Background", Color3.fromRGB(16, 20, 26))
 		root.Parent = parent
 
 		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 8)
+		corner.CornerRadius = resolveMainCornerRadius()
 		corner.Parent = root
 
 		local stroke = Instance.new("UIStroke")
 		stroke.Transparency = 0.3
 		stroke.Thickness = 1
-		stroke.Color = Color3.fromRGB(150, 180, 255)
+		stroke.Color = getThemeColor("ElementStroke", Color3.fromRGB(150, 180, 255))
 		stroke.Parent = root
 
 		local titleBar = Instance.new("TextButton")
 		titleBar.Name = "TitleBar"
 		titleBar.BorderSizePixel = 0
-		titleBar.BackgroundColor3 = Color3.fromRGB(24, 30, 42)
+		titleBar.BackgroundColor3 = getThemeColor("Topbar", Color3.fromRGB(24, 30, 42))
 		titleBar.BackgroundTransparency = 0.15
 		titleBar.Size = UDim2.new(1, -24, 0, 22)
 		titleBar.Position = UDim2.fromOffset(0, 0)
@@ -287,21 +465,21 @@ function PerformanceHUDService.create(ctx)
 		titleBar.TextSize = 11
 		titleBar.TextXAlignment = Enum.TextXAlignment.Left
 		titleBar.Text = "  " .. L("hud.title", "Performance HUD")
-		titleBar.TextColor3 = Color3.fromRGB(235, 240, 255)
+		titleBar.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(235, 240, 255))
 		titleBar.ZIndex = 96
 		titleBar.Parent = root
 
 		local closeButton = Instance.new("TextButton")
 		closeButton.Name = "Close"
 		closeButton.BorderSizePixel = 0
-		closeButton.BackgroundColor3 = Color3.fromRGB(48, 60, 82)
+		closeButton.BackgroundColor3 = getThemeColor("SecondaryElementBackground", Color3.fromRGB(48, 60, 82))
 		closeButton.BackgroundTransparency = 0.15
 		closeButton.Size = UDim2.fromOffset(22, 22)
 		closeButton.Position = UDim2.new(1, -22, 0, 0)
 		closeButton.Font = Enum.Font.GothamBold
 		closeButton.TextSize = 12
 		closeButton.Text = "x"
-		closeButton.TextColor3 = Color3.fromRGB(230, 235, 245)
+		closeButton.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(230, 235, 245))
 		closeButton.ZIndex = 96
 		closeButton.Parent = root
 
@@ -316,7 +494,7 @@ function PerformanceHUDService.create(ctx)
 		body.TextYAlignment = Enum.TextYAlignment.Top
 		body.TextWrapped = true
 		body.RichText = false
-		body.TextColor3 = Color3.fromRGB(222, 232, 255)
+		body.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(222, 232, 255))
 		body.Text = L("hud.status.ready", "HUD ready.")
 		body.ZIndex = 96
 		body.Parent = root
@@ -324,24 +502,57 @@ function PerformanceHUDService.create(ctx)
 		local resizeHandle = Instance.new("TextButton")
 		resizeHandle.Name = "ResizeHandle"
 		resizeHandle.BorderSizePixel = 0
-		resizeHandle.BackgroundColor3 = Color3.fromRGB(64, 78, 104)
+		resizeHandle.BackgroundColor3 = getThemeColor("SecondaryElementBackground", Color3.fromRGB(64, 78, 104))
 		resizeHandle.BackgroundTransparency = 0.1
 		resizeHandle.Size = UDim2.fromOffset(16, 16)
 		resizeHandle.Position = UDim2.new(1, -16, 1, -16)
 		resizeHandle.Font = Enum.Font.GothamBold
 		resizeHandle.TextSize = 10
 		resizeHandle.Text = "<>"
-		resizeHandle.TextColor3 = Color3.fromRGB(230, 240, 255)
+		resizeHandle.TextColor3 = getThemeColor("TextColor", Color3.fromRGB(230, 240, 255))
 		resizeHandle.ZIndex = 96
 		resizeHandle.Parent = root
 
 		refs = {
 			Root = root,
+			Corner = corner,
+			Stroke = stroke,
 			TitleBar = titleBar,
 			CloseButton = closeButton,
 			Body = body,
 			ResizeHandle = resizeHandle
 		}
+
+		local function refreshStyleFromSources()
+			syncStyleFromMain()
+			applyThemeFallbackColors()
+		end
+
+		bindThemeColors()
+		refreshStyleFromSources()
+
+		if Main and type(Main.GetPropertyChangedSignal) == "function" then
+			connectSignal(Main:GetPropertyChangedSignal("BackgroundTransparency"), refreshStyleFromSources)
+			local mainCorner = Main:FindFirstChildOfClass("UICorner")
+			if mainCorner and type(mainCorner.GetPropertyChangedSignal) == "function" then
+				connectSignal(mainCorner:GetPropertyChangedSignal("CornerRadius"), refreshStyleFromSources)
+			end
+			connectSignal(Main.ChildAdded, function(child)
+				if child and child:IsA("UICorner") and type(child.GetPropertyChangedSignal) == "function" then
+					connectSignal(child:GetPropertyChangedSignal("CornerRadius"), refreshStyleFromSources)
+					refreshStyleFromSources()
+				end
+			end)
+		end
+
+		if Topbar and type(Topbar.GetPropertyChangedSignal) == "function" then
+			connectSignal(Topbar:GetPropertyChangedSignal("BackgroundTransparency"), refreshStyleFromSources)
+			local topbarTitle = Topbar:FindFirstChild("Title")
+			if topbarTitle and topbarTitle:IsA("TextLabel") and type(topbarTitle.GetPropertyChangedSignal) == "function" then
+				connectSignal(topbarTitle:GetPropertyChangedSignal("Font"), refreshStyleFromSources)
+				connectSignal(topbarTitle:GetPropertyChangedSignal("TextSize"), refreshStyleFromSources)
+			end
+		end
 
 		local dragging = false
 		local dragStart = nil
@@ -429,14 +640,10 @@ function PerformanceHUDService.create(ctx)
 		local visibility = getVisibilityState() or {}
 		local macroState = getMacroState() or {}
 		local automation = getAutomationSummary() or {}
-		local nowClock = os.clock()
-		local delta = math.max(0.0001, nowClock - (fpsState.lastClock or nowClock))
-		local instantFps = 1 / delta
-		fpsState.lastClock = nowClock
 		if fpsState.smoothed <= 0 then
-			fpsState.smoothed = instantFps
-		else
-			fpsState.smoothed = (fpsState.smoothed * 0.82) + (instantFps * 0.18)
+			local nowClock = os.clock()
+			local delta = math.max(0.0001, nowClock - (fpsState.lastClock or nowClock))
+			sampleFpsFromDelta(delta)
 		end
 
 		return {
@@ -459,6 +666,9 @@ function PerformanceHUDService.create(ctx)
 		if not refs.Body then
 			return
 		end
+		bindThemeColors()
+		syncStyleFromMain()
+		applyThemeFallbackColors()
 		local metrics = collectDefaultMetrics()
 		for id, provider in pairs(providers) do
 			local okProvider, providerValue = pcall(provider.fn, metrics, cloneValue(state))
@@ -600,6 +810,8 @@ function PerformanceHUDService.create(ctx)
 		state.registeredProviders[key] = nil
 		return true, L("hud.status.provider_removed", "HUD provider removed: ") .. key
 	end
+
+	bindFpsSampler()
 
 	task.spawn(function()
 		while destroyed == false do

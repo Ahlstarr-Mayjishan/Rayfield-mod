@@ -32,6 +32,18 @@ local function createMethods(context)
 		return nil, "Invalid component widget context."
 	end
 
+	if (typeof(self.Elements) ~= "Instance" or self.Elements == nil) and typeof(TabPage) == "Instance" then
+		local candidateParent = TabPage.Parent
+		if typeof(candidateParent) == "Instance" and candidateParent:FindFirstChild("Template") then
+			self.Elements = candidateParent
+		end
+	end
+
+	local templateRoot = typeof(self.Elements) == "Instance" and self.Elements:FindFirstChild("Template") or nil
+	if typeof(templateRoot) ~= "Instance" then
+		return nil, "Component widget template unavailable (Elements.Template)."
+	end
+
 	local Tab = {}
 			function Tab:CreateColorPicker(ColorPickerSettings) -- by Throit
 				ColorPickerSettings.Type = "ColorPicker"
@@ -1229,8 +1241,12 @@ local function createMethods(context)
 			-- Paragraph
 			function Tab:CreateParagraph(ParagraphSettings)
 				local ParagraphValue = {}
-	
-				local Paragraph = self.Elements.Template.Paragraph:Clone()
+				local paragraphTemplate = templateRoot:FindFirstChild("Paragraph")
+				if typeof(paragraphTemplate) ~= "Instance" then
+					warn("Rayfield | Paragraph template missing in Elements.Template.")
+					return nil
+				end
+				local Paragraph = paragraphTemplate:Clone()
 				Paragraph.Title.Text = ParagraphSettings.Title
 				Paragraph.Content.Text = ParagraphSettings.Content
 				Paragraph.Visible = true

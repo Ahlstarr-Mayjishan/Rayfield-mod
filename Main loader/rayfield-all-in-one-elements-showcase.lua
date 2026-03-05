@@ -1393,6 +1393,197 @@ tabSettings:CreateColorPicker({
 })
 
 -- System tab
+local showcaseMacroName = "showcase-macro"
+
+local MANUALLY_SHOWCASED_RAYFIELD_METHODS = {
+	ApplyThemeStudioTheme = true,
+	ClosePerformanceHUD = true,
+	CopyProfileToWorkspace = true,
+	CopyWorkspaceToProfile = true,
+	ExecuteMacro = true,
+	ExportLiveThemeDraftLua = true,
+	ExportSettings = true,
+	GetCommandPaletteExecutionMode = true,
+	GetNotificationHistoryEx = true,
+	GetPerformanceHUDState = true,
+	GetUnreadNotificationCount = true,
+	GetUsageAnalytics = true,
+	ImportCode = true,
+	IsMacroExecuting = true,
+	ListMacros = true,
+	ListProfiles = true,
+	ListWorkspaces = true,
+	LoadProfile = true,
+	LoadWorkspace = true,
+	Notify = true,
+	OpenActionCenter = true,
+	OpenCommandPalette = true,
+	OpenLiveThemeEditor = true,
+	OpenPerformanceHUD = true,
+	RegisterHubMetadata = true,
+	ResetPerformanceHUDPosition = true,
+	RunCommandPaletteItem = true,
+	SaveProfile = true,
+	SaveWorkspace = true,
+	SetCommandPaletteExecutionMode = true,
+	SetOnboardingSuppressed = true,
+	SetTransitionProfile = true,
+	SetUIPreset = true,
+	StartMacroRecording = true,
+	StopMacroRecording = true,
+	ToggleElementInspector = true,
+	TogglePerformanceHUD = true
+}
+
+local FEATURE_SCAN_IGNORE = {
+	CreateWindow = true,
+	Destroy = true,
+	IsDestroyed = true
+}
+
+local function collectRayfieldFunctionNames()
+	local names = {}
+	local seen = {}
+	if type(Rayfield) ~= "table" then
+		return names
+	end
+	for methodName, methodValue in pairs(Rayfield) do
+		if type(methodName) == "string"
+			and methodName ~= ""
+			and type(methodValue) == "function"
+			and not seen[methodName]
+			and not FEATURE_SCAN_IGNORE[methodName] then
+			seen[methodName] = true
+			table.insert(names, methodName)
+		end
+	end
+	table.sort(names)
+	return names
+end
+
+local function buildRayfieldCoverageSnapshot()
+	local allMethods = collectRayfieldFunctionNames()
+	local uncoveredMethods = {}
+	for _, methodName in ipairs(allMethods) do
+		if MANUALLY_SHOWCASED_RAYFIELD_METHODS[methodName] ~= true then
+			table.insert(uncoveredMethods, methodName)
+		end
+	end
+	return {
+		allMethods = allMethods,
+		uncoveredMethods = uncoveredMethods
+	}
+end
+
+local function formatMethodList(methods, maxCount)
+	local out = {}
+	local cap = math.max(1, tonumber(maxCount) or 12)
+	for index, methodName in ipairs(methods or {}) do
+		if index > cap then
+			table.insert(out, "... +" .. tostring(#methods - cap) .. " more")
+			break
+		end
+		table.insert(out, tostring(methodName))
+	end
+	return table.concat(out, ", ")
+end
+
+local function invokeRayfieldMethodByName(methodName)
+	local fn = type(Rayfield) == "table" and Rayfield[methodName] or nil
+	if type(fn) ~= "function" then
+		return false, "Method unavailable: " .. tostring(methodName)
+	end
+
+	local defaultArgsByMethod = {
+		ExecuteMacro = { showcaseMacroName },
+		GetUsageAnalytics = { 8 },
+		LoadProfile = { "showcase-profile" },
+		LoadWorkspace = { "showcase-workspace" },
+		OpenCommandPalette = { "open" },
+		RegisterHubMetadata = {
+			{
+				Name = "Elements Showcase",
+				Author = "Rayfield Mod",
+				Version = "Auto-Coverage",
+				UpdateLog = "Dynamic API coverage enabled",
+				Discord = "discord.gg/example"
+			}
+		},
+		ResetPerformanceHUDPosition = { "top_left" },
+		SaveProfile = { "showcase-profile" },
+		SaveWorkspace = { "showcase-workspace" },
+		SetCommandPaletteExecutionMode = { "auto" },
+		StartMacroRecording = { showcaseMacroName }
+	}
+
+	local args = defaultArgsByMethod[methodName] or {}
+	local okCall, resultA, resultB = pcall(fn, Rayfield, table.unpack(args))
+	if not okCall then
+		return false, resultA
+	end
+	if type(resultA) == "boolean" then
+		return resultA, resultB
+	end
+	return true, resultA
+end
+
+local featureCoverageSnapshot = buildRayfieldCoverageSnapshot()
+local dynamicMethodOptions = (#featureCoverageSnapshot.uncoveredMethods > 0 and featureCoverageSnapshot.uncoveredMethods)
+	or featureCoverageSnapshot.allMethods
+if #dynamicMethodOptions == 0 then
+	dynamicMethodOptions = { "(none)" }
+end
+local selectedDynamicMethod = dynamicMethodOptions[1]
+
+tabSystem:CreateParagraph({
+	Title = "Auto Feature Coverage",
+	Content = string.format(
+		"Discovered API methods: %d | Auto-covered (new/unmapped): %d\n%s",
+		#featureCoverageSnapshot.allMethods,
+		#featureCoverageSnapshot.uncoveredMethods,
+		#featureCoverageSnapshot.uncoveredMethods > 0
+			and ("New methods: " .. formatMethodList(featureCoverageSnapshot.uncoveredMethods, 10))
+			or "No uncovered methods at startup."
+	)
+})
+
+tabSystem:CreateDropdown({
+	Name = "Dynamic API Method",
+	Options = dynamicMethodOptions,
+	CurrentOption = selectedDynamicMethod,
+	Callback = function(value)
+		local methodName = firstOption(value)
+		if methodName ~= "" then
+			selectedDynamicMethod = methodName
+		end
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Run Selected Dynamic Method",
+	Callback = function()
+		if selectedDynamicMethod == nil or selectedDynamicMethod == "" or selectedDynamicMethod == "(none)" then
+			sampleLog("warn", "No dynamic method selected.")
+			return
+		end
+		local okInvoke, status = invokeRayfieldMethodByName(selectedDynamicMethod)
+		sampleLog(okInvoke and "info" or "error", "DynamicMethod(" .. tostring(selectedDynamicMethod) .. ") => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Log Dynamic API Coverage",
+	Callback = function()
+		featureCoverageSnapshot = buildRayfieldCoverageSnapshot()
+		sampleLog("info", "API discovered=" .. tostring(#featureCoverageSnapshot.allMethods))
+		if #featureCoverageSnapshot.uncoveredMethods > 0 then
+			sampleLog("warn", "Uncovered methods => " .. formatMethodList(featureCoverageSnapshot.uncoveredMethods, 24))
+		else
+			sampleLog("info", "All discovered methods are mapped by showcase.")
+		end
+	end
+})
+
 local importCodeInput = tabSystem:CreateInput({
 	Name = "Settings Code Buffer",
 	PlaceholderText = "RFSC1:....",
@@ -1513,8 +1704,6 @@ tabSystem:CreateButton({
 		sampleLog(okReset and "info" or "error", "ResetPerformanceHUDPosition => " .. tostring(status))
 	end
 })
-
-local showcaseMacroName = "showcase-macro"
 
 tabSystem:CreateButton({
 	Name = "Show Usage Analytics",
@@ -1883,6 +2072,15 @@ local function runShowcaseChecks()
 			and type(Rayfield.OpenLiveThemeEditor) == "function"
 			and type(Rayfield.ExportLiveThemeDraftLua) == "function"
 			and type(Rayfield.Notify) == "function"
+	end)
+
+	runCheck("Dynamic API auto-coverage is active", function()
+		featureCoverageSnapshot = buildRayfieldCoverageSnapshot()
+		sampleLog("info", "API coverage snapshot => discovered=" .. tostring(#featureCoverageSnapshot.allMethods) .. ", uncovered=" .. tostring(#featureCoverageSnapshot.uncoveredMethods))
+		if #featureCoverageSnapshot.uncoveredMethods > 0 then
+			sampleLog("warn", "Uncovered methods detected and auto-routed via Dynamic API Method dropdown.")
+		end
+		return #featureCoverageSnapshot.allMethods > 0
 	end)
 
 	runCheck("DataGrid API available (if supported)", function()

@@ -37,7 +37,7 @@ local function cloneArray(source)
 	return result
 end
 
-local function cloneTable(source)
+local function cloneTable(source, seen)
 	local shared = getSharedUtils()
 	if shared and type(shared.cloneTable) == "function" then
 		return shared.cloneTable(source)
@@ -45,13 +45,16 @@ local function cloneTable(source)
 	if type(source) ~= "table" then
 		return source
 	end
+
+	seen = seen or {}
+	if seen[source] then
+		return seen[source]
+	end
+
 	local result = {}
+	seen[source] = result
 	for key, value in pairs(source) do
-		if type(value) == "table" then
-			result[key] = cloneTable(value)
-		else
-			result[key] = value
-		end
+		result[cloneTable(key, seen)] = cloneTable(value, seen)
 	end
 	return result
 end
@@ -69,10 +72,15 @@ local function deepEqual(left, right, seen)
 	end
 
 	seen = seen or {}
-	if seen[left] and seen[left] == right then
+	local leftVisited = seen[left]
+	if leftVisited and leftVisited[right] then
 		return true
 	end
-	seen[left] = right
+	if not leftVisited then
+		leftVisited = {}
+		seen[left] = leftVisited
+	end
+	leftVisited[right] = true
 
 	for key, value in pairs(left) do
 		if not deepEqual(value, right[key], seen) then

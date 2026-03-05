@@ -1262,6 +1262,7 @@ local togglePerformanceHUDFromUi = nil
 local openPerformanceHUDFromUi = nil
 local closePerformanceHUDFromUi = nil
 local resetPerformanceHUDFromUi = nil
+local refreshMainResizeHandleVisibility = function() end
 local setVisibility = nil
 local commandPaletteConfirmationState = {
 	key = "",
@@ -1450,18 +1451,30 @@ local VisibilityController = VisibilityControllerLib.create({
 
 function Hide(notify)
 	VisibilityController.Hide(notify)
+	if type(refreshMainResizeHandleVisibility) == "function" then
+		refreshMainResizeHandleVisibility()
+	end
 end
 
 function Unhide()
 	VisibilityController.Unhide()
+	if type(refreshMainResizeHandleVisibility) == "function" then
+		refreshMainResizeHandleVisibility()
+	end
 end
 
 function Maximise()
 	VisibilityController.Maximise()
+	if type(refreshMainResizeHandleVisibility) == "function" then
+		refreshMainResizeHandleVisibility()
+	end
 end
 
 function Minimise()
 	VisibilityController.Minimise()
+	if type(refreshMainResizeHandleVisibility) == "function" then
+		refreshMainResizeHandleVisibility()
+	end
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
@@ -2037,6 +2050,17 @@ function resolveGlassMode(mode)
 end
 
 function ensureGlassLayerRoot(resolvedMode)
+	local function resolveMainCornerRadius()
+		if not Main then
+			return nil
+		end
+		local mainCorner = Main:FindFirstChildOfClass("UICorner")
+		if mainCorner and mainCorner.CornerRadius then
+			return mainCorner.CornerRadius
+		end
+		return nil
+	end
+
 	local glassState = ExperienceState.glassState
 	if resolvedMode == "off" then
 		cleanupGlassLayer()
@@ -2057,6 +2081,7 @@ function ensureGlassLayerRoot(resolvedMode)
 	root.ZIndex = 1
 	root.Active = false
 	root.Selectable = false
+	root.ClipsDescendants = true
 	root.Parent = Main
 
 	local gradient = Instance.new("UIGradient")
@@ -2075,6 +2100,11 @@ function ensureGlassLayerRoot(resolvedMode)
 	stroke.Thickness = 1
 	stroke.Transparency = 0.45
 	stroke.Parent = root
+
+	local corner = Instance.new("UICorner")
+	corner.Name = "GlassCorner"
+	corner.CornerRadius = resolveMainCornerRadius() or UDim.new(0, 8)
+	corner.Parent = root
 
 	if resolvedMode == "canvas" and root:IsA("CanvasGroup") then
 		root.GroupTransparency = 0.08
@@ -2114,6 +2144,14 @@ applyGlassLayer = function()
 	if stroke and stroke:IsA("UIStroke") then
 		stroke.Color = strokeColor
 		stroke.Transparency = 0.68 - (intensity * 0.35)
+	end
+
+	local corner = root:FindFirstChild("GlassCorner")
+	if corner and corner:IsA("UICorner") and Main then
+		local mainCorner = Main:FindFirstChildOfClass("UICorner")
+		if mainCorner and mainCorner.CornerRadius then
+			corner.CornerRadius = mainCorner.CornerRadius
+		end
 	end
 
 	if root:IsA("CanvasGroup") then
@@ -3178,7 +3216,13 @@ end
 
 local PerformanceHUDService = PerformanceHUDServiceLib.create({
 	Main = Main,
+	Topbar = Topbar,
+	RunService = RunService,
 	UserInputService = UserInputService,
+	bindTheme = bindTheme,
+	getSelectedTheme = function()
+		return SelectedTheme
+	end,
 	localize = localizeString,
 	getRuntimeDiagnostics = function()
 		if type(RayfieldLibrary.GetRuntimeDiagnostics) == "function" then
@@ -4288,6 +4332,38 @@ ExperienceBindings = ExperienceBindingsLib.bind({
 	end
 })
 
+if type(RayfieldLibrary.SetOnboardingSuppressed) ~= "function" then
+	function RayfieldLibrary:SetOnboardingSuppressed(value)
+		ExperienceState.onboardingSuppressed = value == true
+		setSettingValue("Onboarding", "suppressed", ExperienceState.onboardingSuppressed, true)
+		return true, ExperienceState.onboardingSuppressed and "Onboarding suppressed." or "Onboarding enabled."
+	end
+end
+
+if type(RayfieldLibrary.IsOnboardingSuppressed) ~= "function" then
+	function RayfieldLibrary:IsOnboardingSuppressed()
+		return ExperienceState.onboardingSuppressed == true
+	end
+end
+
+if type(RayfieldLibrary.ShowOnboarding) ~= "function" then
+	function RayfieldLibrary:ShowOnboarding(force)
+		if ExperienceState.onboardingSuppressed and force ~= true then
+			return false, "Onboarding is suppressed."
+		end
+		local overlayRef = ensureOnboardingOverlay()
+		if not overlayRef or not overlayRef.Root then
+			return false, "Onboarding UI unavailable."
+		end
+		overlayRef.State.step = 1
+		overlayRef.State.dontShowAgain = false
+		overlayRef.Render()
+		overlayRef.Root.Visible = true
+		ExperienceState.onboardingRendered = true
+		return true, "Onboarding shown."
+	end
+end
+
 function restoreExperienceStateFromSettings(windowRef)
 	if ExperienceBindings and type(ExperienceBindings.restoreFromSettings) == "function" then
 		return ExperienceBindings.restoreFromSettings(windowRef)
@@ -5132,6 +5208,176 @@ function RayfieldLibrary:CreateWindow(Settings)
 	makeDraggable(Main, Topbar, false, {dragOffset, dragOffsetMobile})
 	if dragBar then dragBar.Position = useMobileSizing and UDim2.new(0.5, 0, 0.5, dragOffsetMobile) or UDim2.new(0.5, 0, 0.5, dragOffset) makeDraggable(Main, dragInteract, true, {dragOffset, dragOffsetMobile}) end
 
+	local function setupMainResizeHandle()
+		if not (Main and UserInputService) then
+			return
+		end
+
+		local handle = Main:FindFirstChild("ResizeHandle")
+		local handleStroke = nil
+		local handleIndicator = nil
+		if not handle then
+			handle = Instance.new("TextButton")
+			handle.Name = "ResizeHandle"
+			handle.AnchorPoint = Vector2.new(1, 1)
+			handle.Position = UDim2.new(1, -8, 1, -8)
+			handle.Size = UDim2.fromOffset(18, 18)
+			handle.BorderSizePixel = 0
+			handle.AutoButtonColor = false
+			handle.Text = ""
+			handle.ZIndex = 25
+			handle.Parent = Main
+
+			local handleCorner = Instance.new("UICorner")
+			handleCorner.CornerRadius = UDim.new(0, 5)
+			handleCorner.Parent = handle
+
+			handleStroke = Instance.new("UIStroke")
+			handleStroke.Name = "Stroke"
+			handleStroke.Thickness = 1
+			handleStroke.Transparency = 0.18
+			handleStroke.Parent = handle
+
+			handleIndicator = Instance.new("TextLabel")
+			handleIndicator.Name = "Indicator"
+			handleIndicator.BackgroundTransparency = 1
+			handleIndicator.Size = UDim2.new(1, -2, 1, -2)
+			handleIndicator.Position = UDim2.fromOffset(1, 1)
+			handleIndicator.Font = Enum.Font.Code
+			handleIndicator.TextSize = 11
+			handleIndicator.Text = "//"
+			handleIndicator.TextXAlignment = Enum.TextXAlignment.Center
+			handleIndicator.TextYAlignment = Enum.TextYAlignment.Center
+			handleIndicator.ZIndex = 26
+			handleIndicator.Parent = handle
+		else
+			handleStroke = handle:FindFirstChild("Stroke")
+			handleIndicator = handle:FindFirstChild("Indicator")
+		end
+
+		if bindTheme and type(bindTheme) == "function" then
+			pcall(bindTheme, handle, "BackgroundColor3", "SecondaryElementBackground")
+			if handleStroke then
+				pcall(bindTheme, handleStroke, "Color", "ElementStroke")
+			end
+			if handleIndicator then
+				pcall(bindTheme, handleIndicator, "TextColor3", "TextColor")
+			end
+		else
+			handle.BackgroundColor3 = Color3.fromRGB(44, 52, 66)
+			if handleStroke then
+				handleStroke.Color = Color3.fromRGB(140, 150, 170)
+			end
+			if handleIndicator then
+				handleIndicator.TextColor3 = Color3.fromRGB(230, 235, 245)
+			end
+		end
+
+		local function clampResizeTarget(width, height)
+			local minWidth = 320
+			local minHeight = useMobileSizing and 170 or 220
+			local clampedWidth = math.max(minWidth, math.floor(tonumber(width) or minWidth))
+			local clampedHeight = math.max(minHeight, math.floor(tonumber(height) or minHeight))
+			local parentGui = Main.Parent
+			if parentGui and parentGui.AbsoluteSize then
+				local viewport = parentGui.AbsoluteSize
+				if viewport.X > 0 then
+					clampedWidth = math.min(clampedWidth, math.max(minWidth, viewport.X - 24))
+				end
+				if viewport.Y > 0 then
+					clampedHeight = math.min(clampedHeight, math.max(minHeight, viewport.Y - 24))
+				end
+			end
+			return clampedWidth, clampedHeight
+		end
+
+		local function applyResizeTarget(width, height)
+			local nextWidth, nextHeight = clampResizeTarget(width, height)
+			Main.Size = UDim2.fromOffset(nextWidth, nextHeight)
+			if Topbar then
+				Topbar.Size = UDim2.fromOffset(nextWidth, 45)
+			end
+			if UIStateSystem and type(UIStateSystem.setExpandedSize) == "function" then
+				pcall(UIStateSystem.setExpandedSize, {
+					width = nextWidth,
+					height = nextHeight
+				})
+			end
+			markLayoutDirty("main", "resize_drag")
+		end
+
+		local function canResizeNow()
+			if Hidden == true or Minimised == true then
+				return false
+			end
+			if Main.Visible ~= true then
+				return false
+			end
+			if UIStateSystem and type(UIStateSystem.getDebounce) == "function" and UIStateSystem.getDebounce() then
+				return false
+			end
+			return true
+		end
+
+		refreshMainResizeHandleVisibility = function()
+			if handle and handle.Parent then
+				handle.Visible = canResizeNow()
+			end
+		end
+		refreshMainResizeHandleVisibility()
+
+		local resizing = false
+		local resizeStartPointer = nil
+		local resizeStartSize = nil
+
+		handle.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if not canResizeNow() then
+				return
+			end
+			local okPointer, pointer = pcall(UserInputService.GetMouseLocation, UserInputService)
+			if not okPointer or not pointer then
+				return
+			end
+			resizing = true
+			resizeStartPointer = Vector2.new(pointer.X, pointer.Y)
+			resizeStartSize = Main.AbsoluteSize
+		end)
+
+		UserInputService.InputChanged:Connect(function(input)
+			if not resizing then
+				return
+			end
+			if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			local okPointer, pointer = pcall(UserInputService.GetMouseLocation, UserInputService)
+			if not okPointer or not pointer or not resizeStartPointer or not resizeStartSize then
+				return
+			end
+			local deltaX = pointer.X - resizeStartPointer.X
+			local deltaY = pointer.Y - resizeStartPointer.Y
+			applyResizeTarget(resizeStartSize.X + deltaX, resizeStartSize.Y + deltaY)
+		end)
+
+		UserInputService.InputEnded:Connect(function(input)
+			if not resizing then
+				return
+			end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				resizing = false
+				resizeStartPointer = nil
+				resizeStartSize = nil
+				markLayoutDirty("main", "resize_commit")
+				refreshMainResizeHandleVisibility()
+			end
+		end)
+	end
+
+	setupMainResizeHandle()
+
 	for _, TabButton in ipairs(TabList:GetChildren()) do
 		if TabButton.ClassName == "Frame" and TabButton.Name ~= "Placeholder" then
 			TabButton.BackgroundTransparency = 1
@@ -5866,6 +6112,9 @@ Topbar.ChangeSize.MouseButton1Click:Connect(function()
 	else
 		Minimised = true
 		Minimise()
+	end
+	if type(refreshMainResizeHandleVisibility) == "function" then
+		refreshMainResizeHandleVisibility()
 	end
 end)
 

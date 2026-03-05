@@ -150,6 +150,9 @@ function ExperienceBindings.bind(context)
 	local applyLiveThemeDraftInternal = context.applyLiveThemeDraftInternal
 	local exportLiveThemeLuaInternal = context.exportLiveThemeLuaInternal
 	local bindingModules = type(context.bindingModules) == "table" and context.bindingModules or {}
+	local uiEventModules = type(context.uiEventModules) == "table" and context.uiEventModules or {}
+	local movementEventModules = type(context.movementEventModules) == "table" and context.movementEventModules or {}
+	local combatEventModules = type(context.combatEventModules) == "table" and context.combatEventModules or {}
 
 	local function experienceState()
 		return getExperienceState()
@@ -421,7 +424,10 @@ function ExperienceBindings.bind(context)
 		setLiveThemeValueInternal = setLiveThemeValueInternal,
 		getLiveThemeDraftInternal = getLiveThemeDraftInternal,
 		applyLiveThemeDraftInternal = applyLiveThemeDraftInternal,
-		exportLiveThemeLuaInternal = exportLiveThemeLuaInternal
+		exportLiveThemeLuaInternal = exportLiveThemeLuaInternal,
+		uiEventModules = uiEventModules,
+		movementEventModules = movementEventModules,
+		combatEventModules = combatEventModules
 	}
 
 	for _, moduleValue in ipairs(bindingModules) do
