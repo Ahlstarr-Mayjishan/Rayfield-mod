@@ -20,6 +20,15 @@ function ConfigModule.init(ctx)
 	self.getLayoutSnapshot = ctx.getLayoutSnapshot
 	self.applyLayoutSnapshot = ctx.applyLayoutSnapshot
 	self.getElementsSystem = ctx.getElementsSystem
+	self.StorageAdapter = ctx.StorageAdapter
+	if type(self.StorageAdapter) ~= "table" and type(ctx.StorageAdapterModule) == "table" and type(ctx.StorageAdapterModule.create) == "function" then
+		local okAdapter, adapterOrErr = pcall(ctx.StorageAdapterModule.create, {
+			callSafely = self.callSafely
+		})
+		if okAdapter and type(adapterOrErr) == "table" then
+			self.StorageAdapter = adapterOrErr
+		end
+	end
 	self.layoutKey = tostring(ctx.layoutKey or "__rayfield_layout")
 	self.useStudio = ctx.useStudio
 	self.debugX = ctx.debugX
@@ -464,6 +473,17 @@ function ConfigModule.init(ctx)
 
 		if self.debugX then
 			warn(encoded)
+		end
+
+		if type(self.StorageAdapter) == "table" and type(self.StorageAdapter.write) == "function" then
+			if type(self.StorageAdapter.ensureFolder) == "function" then
+				self.StorageAdapter.ensureFolder(self.ConfigurationFolder)
+			end
+			local okWrite = self.StorageAdapter.write(
+				self.ConfigurationFolder .. "/" .. self.getCFileName() .. self.ConfigurationExtension,
+				encoded
+			)
+			return okWrite == true
 		end
 
 		if type(writefile) ~= "function" then

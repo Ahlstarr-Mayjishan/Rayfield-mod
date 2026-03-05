@@ -66,6 +66,10 @@ local function resolveThemePresets(ctx)
 		if type(fromCtx) == "table" and type(fromCtx.Default) == "table" then
 			return fromCtx
 		end
+		local defaultThemeData = ctx.ThemeDefaultThemesModule or ctx.DefaultThemesModule
+		if type(defaultThemeData) == "table" and type(defaultThemeData.Default) == "table" then
+			return defaultThemeData
+		end
 	end
 
 	if type(ThemeModule.Themes) == "table" and type(ThemeModule.Themes.Default) == "table" then

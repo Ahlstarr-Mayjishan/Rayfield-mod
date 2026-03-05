@@ -2,7 +2,7 @@ local Engine = {}
 Engine.__index = Engine
 
 local DefaultCleanup = {}
-local TRANSITION_PROFILES = {
+local FALLBACK_TRANSITION_PROFILES = {
 	Smooth = {
 		durationScale = 1.0,
 		suppressTextEffects = false
@@ -20,6 +20,13 @@ local TRANSITION_PROFILES = {
 		suppressTextEffects = true
 	}
 }
+
+local function resolveTransitionProfiles(constantsModule)
+	if type(constantsModule) == "table" and type(constantsModule.TransitionProfiles) == "table" then
+		return constantsModule.TransitionProfiles
+	end
+	return FALLBACK_TRANSITION_PROFILES
+end
 
 function DefaultCleanup.safeDisconnect(connection)
 	if not connection then
@@ -124,6 +131,7 @@ function Engine.new(opts)
 	local tweenService = opts.TweenService or game:GetService("TweenService")
 	local runService = opts.RunService or game:GetService("RunService")
 	local cleanup = opts.Cleanup or DefaultCleanup
+	local transitionProfiles = resolveTransitionProfiles(opts.Constants)
 
 	local self = setmetatable({}, Engine)
 	self.TweenService = tweenService
@@ -136,10 +144,12 @@ function Engine.new(opts)
 	self._cleanupHooks = setmetatable({}, { __mode = "k" })
 	self._textHandles = setmetatable({}, { __mode = "k" })
 	self._textHeartbeat = nil
+	self._transitionProfiles = transitionProfiles
 	self._transitionProfileName = "Smooth"
+	local smoothProfile = transitionProfiles.Smooth or FALLBACK_TRANSITION_PROFILES.Smooth
 	self._transitionProfile = {
-		durationScale = TRANSITION_PROFILES.Smooth.durationScale,
-		suppressTextEffects = TRANSITION_PROFILES.Smooth.suppressTextEffects
+		durationScale = smoothProfile.durationScale,
+		suppressTextEffects = smoothProfile.suppressTextEffects
 	}
 	return self
 end
@@ -174,7 +184,7 @@ function Engine:SetTransitionProfile(profileName, profileSpec)
 		return false, "Invalid transition profile."
 	end
 
-	local defaultSpec = TRANSITION_PROFILES[canonicalName]
+	local defaultSpec = (self._transitionProfiles and self._transitionProfiles[canonicalName]) or FALLBACK_TRANSITION_PROFILES[canonicalName]
 	local nextSpec = cloneProfileSpec(defaultSpec)
 	if type(profileSpec) == "table" then
 		if profileSpec.durationScale ~= nil then

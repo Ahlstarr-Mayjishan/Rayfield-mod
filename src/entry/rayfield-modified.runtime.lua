@@ -70,46 +70,90 @@ local function loadBootstrapService(path, validatorFn)
 	return moduleOrErr
 end
 
-local ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
-end)
-local HttpLoaderServiceLib = loadBootstrapService("src/services/http-loader.lua", function(moduleValue)
+local RuntimeBootstrapperLib = loadBootstrapService("src/core/runtime/bootstrapper.lua", function(moduleValue)
 	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 end)
-local AnalyticsReporterServiceLib = loadBootstrapService("src/services/analytics-reporter.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-end)
-local RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-end)
-
-local ExecPolicy = nil
-if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
-	ExecPolicy = ExecutionPolicyServiceLib.ensure(_G)
-else
-	warn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
-	ExecPolicy = {
-		decideExecutionMode = function()
-			return {
-				mode = "soft",
-				cancelOnTimeout = false,
-				reason = "fallback"
-			}
+local RuntimeBootstrap = nil
+if type(RuntimeBootstrapperLib) == "table" and type(RuntimeBootstrapperLib.create) == "function" then
+	local okBootstrap, bootstrapOrErr = pcall(RuntimeBootstrapperLib.create, {
+		compileString = compileString,
+		httpGet = function(url)
+			return game:HttpGet(url)
 		end,
-		markTimeout = function()
-			return 0
-		end,
-		markSuccess = function()
-			return
-		end,
-		getState = function()
-			return {}
-		end
-	}
+		moduleRootUrl = MODULE_ROOT_URL,
+		globalEnv = _G,
+		taskLib = task,
+		clock = os.clock,
+		warn = warn
+	})
+	if okBootstrap and type(bootstrapOrErr) == "table" then
+		RuntimeBootstrap = bootstrapOrErr
+	else
+		warn("Rayfield Mod: [W_BOOTSTRAPPER] Failed to initialize runtime bootstrapper.")
+	end
 end
 
-local HttpLoaderService = nil
-if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
+local ExecutionPolicyServiceLib = RuntimeBootstrap and RuntimeBootstrap.ExecutionPolicyServiceLib
+local HttpLoaderServiceLib = RuntimeBootstrap and RuntimeBootstrap.HttpLoaderServiceLib
+local AnalyticsReporterServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsReporterServiceLib
+local AnalyticsProviderServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsProviderServiceLib
+local RuntimeLoaderHelpersServiceLib = RuntimeBootstrap and RuntimeBootstrap.RuntimeLoaderHelpersServiceLib
+
+if type(ExecutionPolicyServiceLib) ~= "table" or type(ExecutionPolicyServiceLib.ensure) ~= "function" then
+	ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
+	end)
+end
+if type(HttpLoaderServiceLib) ~= "table" or type(HttpLoaderServiceLib.create) ~= "function" then
+	HttpLoaderServiceLib = loadBootstrapService("src/services/http-loader.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(AnalyticsReporterServiceLib) ~= "table" or type(AnalyticsReporterServiceLib.create) ~= "function" then
+	AnalyticsReporterServiceLib = loadBootstrapService("src/services/analytics-reporter.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(AnalyticsProviderServiceLib) ~= "table" or type(AnalyticsProviderServiceLib.create) ~= "function" then
+	AnalyticsProviderServiceLib = loadBootstrapService("src/services/analytics/analytics-provider.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(RuntimeLoaderHelpersServiceLib) ~= "table" or type(RuntimeLoaderHelpersServiceLib.create) ~= "function" then
+	RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+
+local ExecPolicy = RuntimeBootstrap and RuntimeBootstrap.ExecPolicy or nil
+if type(ExecPolicy) ~= "table" then
+	if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
+		ExecPolicy = ExecutionPolicyServiceLib.ensure(_G)
+	else
+		warn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
+		ExecPolicy = {
+			decideExecutionMode = function()
+				return {
+					mode = "soft",
+					cancelOnTimeout = false,
+					reason = "fallback"
+				}
+			end,
+			markTimeout = function()
+				return 0
+			end,
+			markSuccess = function()
+				return
+			end,
+			getState = function()
+				return {}
+			end
+		}
+	end
+end
+
+local HttpLoaderService = RuntimeBootstrap and RuntimeBootstrap.HttpLoaderService or nil
+if type(HttpLoaderService) ~= "table" and type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
 	HttpLoaderService = HttpLoaderServiceLib.create({
 		compileString = compileString,
 		execPolicy = ExecPolicy,
@@ -123,6 +167,9 @@ if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) =
 end
 
 local function loadWithTimeout(url, timeout)
+	if RuntimeBootstrap and type(RuntimeBootstrap.loadWithTimeout) == "function" then
+		return RuntimeBootstrap.loadWithTimeout(url, timeout)
+	end
 	if type(HttpLoaderService) == "table" and type(HttpLoaderService.loadWithTimeout) == "function" then
 		return HttpLoaderService.loadWithTimeout(url, timeout)
 	end
@@ -219,7 +266,44 @@ if debugX then
 end
 
 local sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
-if type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
+if RuntimeBootstrap and type(RuntimeBootstrap.createAnalyticsSender) == "function" then
+	sendReport = RuntimeBootstrap.createAnalyticsSender({
+		requestsDisabled = requestsDisabled,
+		useStudio = useStudio,
+		debug = debugX == true,
+		release = Release,
+		interfaceBuild = InterfaceBuild,
+		scriptName = "Rayfield",
+		warn = warn,
+		print = print
+	})
+elseif type(AnalyticsProviderServiceLib) == "table" and type(AnalyticsProviderServiceLib.create) == "function" then
+	local analyticsProvider = AnalyticsProviderServiceLib.create({
+		reporterModule = AnalyticsReporterServiceLib,
+		requestsDisabled = requestsDisabled,
+		useStudio = useStudio,
+		debug = debugX == true,
+		release = Release,
+		interfaceBuild = InterfaceBuild,
+		loadWithTimeout = loadWithTimeout,
+		scriptName = "Rayfield",
+		warn = warn,
+		print = print
+	})
+	if type(analyticsProvider) == "table" then
+		if type(analyticsProvider.init) == "function" then
+			pcall(analyticsProvider.init)
+		end
+		if type(analyticsProvider.sendReport) == "function" then
+			sendReport = function(ev_n, sc_n)
+				local okReport, reportErr = pcall(analyticsProvider.sendReport, ev_n, sc_n)
+				if not okReport then
+					warn("Analytics report error: " .. tostring(reportErr))
+				end
+			end
+		end
+	end
+elseif type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
 	local analyticsReporter = AnalyticsReporterServiceLib.create({
 		requestsDisabled = requestsDisabled,
 		useStudio = useStudio,
@@ -656,6 +740,7 @@ local FallbackViewportVirtualizationModule = {
 
 local ThemeModule = requireModule("theme")
 local ThemePresetsModuleLib = requireModule("themePresets")
+local ThemeDefaultThemesModuleLib = requireModule("themeDefaultThemes")
 -- Load utilities early so shared helpers are registered globally before other services initialize.
 local UtilitiesModuleLib = requireModule("utilities")
 local SettingsModuleLib = requireModule("settings")
@@ -673,6 +758,7 @@ local UIStateSearchEngineLib = requireModule("uiStateSearchEngine")
 local UIStateWindowManagerLib = requireModule("uiStateWindowManager")
 local ElementsModuleLib = requireModule("elements")
 local ConfigModuleLib = requireModule("config")
+local ConfigStorageAdapterModuleLib = requireModule("configStorageAdapter")
 local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
 local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
 local VirtualizationEngineModuleLib = requireModule("virtualizationEngine")
@@ -684,6 +770,9 @@ local AnimationSequenceLib = requireModule("animationSequence")
 local AnimationUILib = requireModule("animationUI")
 local AnimationTextLib = requireModule("animationText")
 local AnimationCleanupLib = requireModule("animationCleanup")
+local AnimationConstantsLib = requireModule("animationConstants")
+local AnimationSchedulerLib = requireModule("animationScheduler")
+local MainShellModuleLib = requireModule("uiShellMainShell")
 local VisibilityControllerLib = requireModule("runtimeVisibilityController")
 local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
 local RuntimeBindingsUXLib = requireModule("runtimeBindingsUX")
@@ -722,6 +811,14 @@ local DropdownFactoryModuleLib = nil
 local KeybindFactoryModuleLib = nil
 local ToggleFactoryModuleLib = nil
 local SliderFactoryModuleLib = nil
+local TabManagerModuleLib = nil
+local HoverProviderModuleLib = nil
+local TooltipEngineModuleLib = nil
+local WidgetAPIInjectorModuleLib = nil
+local MathUtilsModuleLib = nil
+local ResourceGuardModuleLib = nil
+local GridBuilderModuleLib = nil
+local ChartBuilderModuleLib = nil
 local function resolveDataGridFactoryModule()
 	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
 		return DataGridFactoryModuleLib
@@ -826,6 +923,110 @@ local function resolveSliderFactoryModule()
 	)
 	return SliderFactoryModuleLib
 end
+local function resolveTabManagerModule()
+	if type(TabManagerModuleLib) == "table" and type(TabManagerModuleLib.create) == "function" then
+		return TabManagerModuleLib
+	end
+	TabManagerModuleLib = optionalModuleWithContract(
+		"elementsTabManager",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tab manager will use built-in fallback."
+	)
+	return TabManagerModuleLib
+end
+local function resolveHoverProviderModule()
+	if type(HoverProviderModuleLib) == "table" and type(HoverProviderModuleLib.create) == "function" then
+		return HoverProviderModuleLib
+	end
+	HoverProviderModuleLib = optionalModuleWithContract(
+		"elementsHoverProvider",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Hover provider will use built-in fallback."
+	)
+	return HoverProviderModuleLib
+end
+local function resolveTooltipEngineModule()
+	if type(TooltipEngineModuleLib) == "table" and type(TooltipEngineModuleLib.create) == "function" then
+		return TooltipEngineModuleLib
+	end
+	TooltipEngineModuleLib = optionalModuleWithContract(
+		"elementsTooltipEngine",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tooltip engine will use built-in fallback."
+	)
+	return TooltipEngineModuleLib
+end
+local function resolveWidgetAPIInjectorModule()
+	if type(WidgetAPIInjectorModuleLib) == "table" and type(WidgetAPIInjectorModuleLib.inject) == "function" then
+		return WidgetAPIInjectorModuleLib
+	end
+	WidgetAPIInjectorModuleLib = optionalModuleWithContract(
+		"elementsWidgetAPIInjector",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.inject) == "function"
+		end,
+		"Widget injector will use built-in fallback."
+	)
+	return WidgetAPIInjectorModuleLib
+end
+local function resolveMathUtilsModule()
+	if type(MathUtilsModuleLib) == "table" then
+		return MathUtilsModuleLib
+	end
+	MathUtilsModuleLib = optionalModuleWithContract(
+		"elementsMathUtils",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.clampNumber) == "function"
+		end,
+		"Math utility helpers will use built-in fallback."
+	)
+	return MathUtilsModuleLib
+end
+local function resolveResourceGuardModule()
+	if type(ResourceGuardModuleLib) == "table" and type(ResourceGuardModuleLib.create) == "function" then
+		return ResourceGuardModuleLib
+	end
+	ResourceGuardModuleLib = optionalModuleWithContract(
+		"elementsResourceGuard",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Resource guard will use built-in fallback."
+	)
+	return ResourceGuardModuleLib
+end
+local function resolveGridBuilderModule()
+	if type(GridBuilderModuleLib) == "table" and type(GridBuilderModuleLib.create) == "function" then
+		return GridBuilderModuleLib
+	end
+	GridBuilderModuleLib = optionalModuleWithContract(
+		"elementsGridBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Grid builder will use direct factory fallback."
+	)
+	return GridBuilderModuleLib
+end
+local function resolveChartBuilderModule()
+	if type(ChartBuilderModuleLib) == "table" and type(ChartBuilderModuleLib.create) == "function" then
+		return ChartBuilderModuleLib
+	end
+	ChartBuilderModuleLib = optionalModuleWithContract(
+		"elementsChartBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Chart builder will use direct factory fallback."
+	)
+	return ChartBuilderModuleLib
+end
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -836,7 +1037,8 @@ local CoreGui = getService("CoreGui")
 local AnimationEngine = AnimationEngineLib.new({
 	TweenService = TweenService,
 	RunService = RunService,
-	Cleanup = AnimationCleanupLib,
+	Cleanup = AnimationSchedulerLib or AnimationCleanupLib,
+	Constants = AnimationConstantsLib,
 	mode = "raw"
 })
 local Animation = AnimationEngine
@@ -1157,58 +1359,22 @@ local ThemeSystem = ThemeModule.init({
 	Elements = Elements,
 	Notifications = Notifications,
 	Icons = Icons,
-	ThemePresetsModule = ThemePresetsModuleLib
+	ThemePresetsModule = ThemePresetsModuleLib,
+	ThemeDefaultThemesModule = ThemeDefaultThemesModuleLib
 })
 
 local bindTheme = ThemeSystem.bindTheme
 
 -- Apply Reactive Theme to Main UI (with nil guards for UI structure resilience)
-bindTheme(Main, "BackgroundColor3", "Background")
-bindTheme(Topbar, "BackgroundColor3", "Topbar")
-
-local cornerRepair = Topbar:FindFirstChild("CornerRepair")
-if cornerRepair then
-	bindTheme(cornerRepair, "BackgroundColor3", "Topbar")
-end
-
-local shadow = Main:FindFirstChild("Shadow")
-if shadow and shadow:FindFirstChild("Image") then
-	bindTheme(shadow.Image, "ImageColor3", "Shadow")
-end
-
-if Topbar:FindFirstChild("ChangeSize") then
-	bindTheme(Topbar.ChangeSize, "ImageColor3", "TextColor")
-end
-if Topbar:FindFirstChild("Hide") then
-	bindTheme(Topbar.Hide, "ImageColor3", "TextColor")
-end
-if Topbar:FindFirstChild("Search") then
-	bindTheme(Topbar.Search, "ImageColor3", "TextColor")
-end
-
-if Topbar:FindFirstChild('Settings') then
-	bindTheme(Topbar.Settings, "ImageColor3", "TextColor")
-	if Topbar:FindFirstChild('Divider') then
-		bindTheme(Topbar.Divider, "BackgroundColor3", "ElementStroke")
-	end
-end
-
--- Search UI Reactive (guarded)
-local searchFrame = Main:FindFirstChild("Search")
-if searchFrame then
-	bindTheme(searchFrame, "BackgroundColor3", "TextColor")
-	if searchFrame:FindFirstChild("Shadow") then
-		bindTheme(searchFrame.Shadow, "ImageColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("Search") then
-		bindTheme(searchFrame.Search, "ImageColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("Input") then
-		bindTheme(searchFrame.Input, "PlaceholderColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("UIStroke") then
-		bindTheme(searchFrame.UIStroke, "Color", "SecondaryElementStroke")
-	end
+if type(MainShellModuleLib) == "table" and type(MainShellModuleLib.applyReactiveTheme) == "function" then
+	MainShellModuleLib.applyReactiveTheme({
+		Main = Main,
+		Topbar = Topbar,
+		bindTheme = bindTheme
+	})
+else
+	bindTheme(Main, "BackgroundColor3", "Background")
+	bindTheme(Topbar, "BackgroundColor3", "Topbar")
 end
 
 -- Initialize Settings Module
@@ -1228,12 +1394,23 @@ local SettingsSystem = SettingsModuleLib.init({
 })
 
 -- Initialize Configuration Module
+local ConfigStorageAdapter = nil
+if type(ConfigStorageAdapterModuleLib) == "table" and type(ConfigStorageAdapterModuleLib.create) == "function" then
+	local okStorageAdapter, adapterOrErr = pcall(ConfigStorageAdapterModuleLib.create, {
+		callSafely = callSafely
+	})
+	if okStorageAdapter and type(adapterOrErr) == "table" then
+		ConfigStorageAdapter = adapterOrErr
+	end
+end
 local ConfigSystem = ConfigModuleLib.init({
 	HttpService = HttpService,
 	TweenService = TweenService,
 	Animation = Animation,
 	RayfieldLibrary = RayfieldLibrary,
 	callSafely = callSafely,
+	StorageAdapter = ConfigStorageAdapter,
+	StorageAdapterModule = ConfigStorageAdapterModuleLib,
 	ConfigurationFolder = ConfigurationFolder,
 	ConfigurationExtension = ConfigurationExtension,
 	getCFileName = function() return CFileName end,
@@ -5596,6 +5773,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveDataGridFactory = resolveDataGridFactoryModule,
 		ChartFactoryModule = ChartFactoryModuleLib,
 		ResolveChartFactory = resolveChartFactoryModule,
+		GridBuilderModule = GridBuilderModuleLib,
+		ResolveGridBuilderModule = resolveGridBuilderModule,
+		ChartBuilderModule = ChartBuilderModuleLib,
+		ResolveChartBuilderModule = resolveChartBuilderModule,
 		ButtonFactoryModule = ButtonFactoryModuleLib,
 		ResolveButtonFactory = resolveButtonFactoryModule,
 		InputFactoryModule = InputFactoryModuleLib,
@@ -5608,6 +5789,18 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveToggleFactory = resolveToggleFactoryModule,
 		SliderFactoryModule = SliderFactoryModuleLib,
 		ResolveSliderFactory = resolveSliderFactoryModule,
+		TabManagerModule = TabManagerModuleLib,
+		ResolveTabManagerModule = resolveTabManagerModule,
+		HoverProviderModule = HoverProviderModuleLib,
+		ResolveHoverProviderModule = resolveHoverProviderModule,
+		TooltipEngineModule = TooltipEngineModuleLib,
+		ResolveTooltipEngineModule = resolveTooltipEngineModule,
+		WidgetAPIInjectorModule = WidgetAPIInjectorModuleLib,
+		ResolveWidgetAPIInjectorModule = resolveWidgetAPIInjectorModule,
+		MathUtilsModule = MathUtilsModuleLib,
+		ResolveMathUtilsModule = resolveMathUtilsModule,
+		ResourceGuardModule = ResourceGuardModuleLib,
+		ResolveResourceGuardModule = resolveResourceGuardModule,
 		showContextMenu = function(items, anchor)
 			if UIStateSystem and type(UIStateSystem.ShowContextMenu) == "function" then
 				return UIStateSystem.ShowContextMenu(items, anchor)

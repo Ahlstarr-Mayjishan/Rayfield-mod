@@ -853,6 +853,7 @@ end
 return {
 	theme = entry("src/services/theme.lua", "feature/rayfield-theme.lua", "rayfield-theme"),
 	themePresets = entry("src/services/theme/presets.lua", nil, "theme-presets"),
+	themeDefaultThemes = entry("src/services/theme/default-themes.lua", nil, "theme-default-themes"),
 	settings = entry("src/services/settings.lua", "feature/rayfield-settings.lua", "rayfield-settings"),
 	settingsStore = entry("src/services/settings-store.lua", nil, "settings-store"),
 	settingsPersistence = entry("src/services/settings-persistence.lua", nil, "settings-persistence"),
@@ -875,10 +876,12 @@ return {
 	elementsExtracted = entry("src/ui/elements/widgets/index.lua", "feature/rayfield-elements-extracted.lua", "rayfield-elements-extracted"),
 	widgetsBootstrap = entry("src/ui/elements/widgets/bootstrap.lua", nil, "widgets-bootstrap"),
 	config = entry("src/services/config.lua", "feature/rayfield-config.lua", "rayfield-config"),
+	configStorageAdapter = entry("src/services/config/storage-adapter.lua", nil, "config-storage-adapter"),
 	utilities = entry("src/services/utilities.lua", "feature/rayfield-utilities.lua", "rayfield-utilities"),
 	executionPolicyService = entry("src/services/execution-policy.lua", nil, "execution-policy-service"),
 	httpLoaderService = entry("src/services/http-loader.lua", nil, "http-loader-service"),
 	analyticsReporterService = entry("src/services/analytics-reporter.lua", nil, "analytics-reporter-service"),
+	analyticsProviderService = entry("src/services/analytics/analytics-provider.lua", nil, "analytics-provider-service"),
 	runtimeLoaderHelpersService = entry("src/services/runtime-loader-helpers.lua", nil, "runtime-loader-helpers-service"),
 	tabSplit = entry("src/feature/tabsplit/init.lua", "feature/rayfield-tab-split.lua", "rayfield-tab-split"),
 	miniWindow = entry("src/feature/mini-window/init.lua", "feature/mini-window-system.lua", "mini-window-system"),
@@ -891,6 +894,10 @@ return {
 	animationText = entry("src/core/animation/text.lua", nil, "animation-text"),
 	animationEasing = entry("src/core/animation/easing.lua", nil, "animation-easing"),
 	animationCleanup = entry("src/core/animation/cleanup.lua", nil, "animation-cleanup"),
+	animationConstants = entry("src/core/animation/constants.lua", nil, "animation-constants"),
+	animationScheduler = entry("src/core/animation/scheduler.lua", nil, "animation-scheduler"),
+	runtimeBootstrapper = entry("src/core/runtime/bootstrapper.lua", nil, "runtime-bootstrapper"),
+	uiShellMainShell = entry("src/ui/shell/main-shell.lua", nil, "ui-shell-main-shell"),
 	runtimeVisibilityController = entry("src/core/runtime/visibility-controller.lua", nil, "runtime-visibility-controller"),
 	runtimeExperienceBindings = entry("src/core/runtime/experience-bindings.lua", nil, "runtime-experience-bindings"),
 	runtimeWorkspaceService = entry("src/core/runtime/workspace-service.lua", nil, "runtime-workspace-service"),
@@ -929,6 +936,14 @@ return {
 	elementsKeybindFactory = entry("src/ui/elements/factory/keybind-factory.lua", nil, "elements-keybind-factory"),
 	elementsToggleFactory = entry("src/ui/elements/factory/toggle-factory.lua", nil, "elements-toggle-factory"),
 	elementsSliderFactory = entry("src/ui/elements/factory/slider-factory.lua", nil, "elements-slider-factory"),
+	elementsTabManager = entry("src/ui/elements/factory/tab-manager.lua", nil, "elements-tab-manager"),
+	elementsHoverProvider = entry("src/ui/elements/factory/hover-provider.lua", nil, "elements-hover-provider"),
+	elementsTooltipEngine = entry("src/ui/elements/factory/tooltip-engine.lua", nil, "elements-tooltip-engine"),
+	elementsWidgetAPIInjector = entry("src/ui/elements/factory/widget-api-injector.lua", nil, "elements-widget-api-injector"),
+	elementsMathUtils = entry("src/ui/elements/factory/math-utils.lua", nil, "elements-math-utils"),
+	elementsResourceGuard = entry("src/ui/elements/factory/resource-guard.lua", nil, "elements-resource-guard"),
+	elementsGridBuilder = entry("src/ui/elements/factory/widget-builders/grid-builder.lua", nil, "elements-grid-builder"),
+	elementsChartBuilder = entry("src/ui/elements/factory/widget-builders/chart-builder.lua", nil, "elements-chart-builder"),
 	allInOne = entry("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "rayfield-all-in-one"),
 	modifiedEntry = entry("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua", "rayfield-modified")
 }
@@ -1255,6 +1270,29 @@ end
 
 return Cleanup
 ]])
+put("src/core/animation/constants.lua", [[local AnimationConstants = {}
+
+AnimationConstants.TransitionProfiles = {
+	Smooth = {
+		durationScale = 1.0,
+		suppressTextEffects = false
+	},
+	Snappy = {
+		durationScale = 0.75,
+		suppressTextEffects = false
+	},
+	Minimal = {
+		durationScale = 0.55,
+		suppressTextEffects = false
+	},
+	Off = {
+		durationScale = 0.01,
+		suppressTextEffects = true
+	}
+}
+
+return AnimationConstants
+]])
 put("src/core/animation/easing.lua", [[local Easing = {}
 
 Easing.DefaultInfo = TweenInfo.new(0.25, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out)
@@ -1282,7 +1320,7 @@ put("src/core/animation/engine.lua", [[local Engine = {}
 Engine.__index = Engine
 
 local DefaultCleanup = {}
-local TRANSITION_PROFILES = {
+local FALLBACK_TRANSITION_PROFILES = {
 	Smooth = {
 		durationScale = 1.0,
 		suppressTextEffects = false
@@ -1300,6 +1338,13 @@ local TRANSITION_PROFILES = {
 		suppressTextEffects = true
 	}
 }
+
+local function resolveTransitionProfiles(constantsModule)
+	if type(constantsModule) == "table" and type(constantsModule.TransitionProfiles) == "table" then
+		return constantsModule.TransitionProfiles
+	end
+	return FALLBACK_TRANSITION_PROFILES
+end
 
 function DefaultCleanup.safeDisconnect(connection)
 	if not connection then
@@ -1404,6 +1449,7 @@ function Engine.new(opts)
 	local tweenService = opts.TweenService or game:GetService("TweenService")
 	local runService = opts.RunService or game:GetService("RunService")
 	local cleanup = opts.Cleanup or DefaultCleanup
+	local transitionProfiles = resolveTransitionProfiles(opts.Constants)
 
 	local self = setmetatable({}, Engine)
 	self.TweenService = tweenService
@@ -1416,10 +1462,12 @@ function Engine.new(opts)
 	self._cleanupHooks = setmetatable({}, { __mode = "k" })
 	self._textHandles = setmetatable({}, { __mode = "k" })
 	self._textHeartbeat = nil
+	self._transitionProfiles = transitionProfiles
 	self._transitionProfileName = "Smooth"
+	local smoothProfile = transitionProfiles.Smooth or FALLBACK_TRANSITION_PROFILES.Smooth
 	self._transitionProfile = {
-		durationScale = TRANSITION_PROFILES.Smooth.durationScale,
-		suppressTextEffects = TRANSITION_PROFILES.Smooth.suppressTextEffects
+		durationScale = smoothProfile.durationScale,
+		suppressTextEffects = smoothProfile.suppressTextEffects
 	}
 	return self
 end
@@ -1454,7 +1502,7 @@ function Engine:SetTransitionProfile(profileName, profileSpec)
 		return false, "Invalid transition profile."
 	end
 
-	local defaultSpec = TRANSITION_PROFILES[canonicalName]
+	local defaultSpec = (self._transitionProfiles and self._transitionProfiles[canonicalName]) or FALLBACK_TRANSITION_PROFILES[canonicalName]
 	local nextSpec = cloneProfileSpec(defaultSpec)
 	if type(profileSpec) == "table" then
 		if profileSpec.durationScale ~= nil then
@@ -1921,6 +1969,95 @@ function Public.bindToRayfield(rayfieldLibrary, engine, libs)
 end
 
 return Public
+]])
+put("src/core/animation/scheduler.lua", [[local Scheduler = {}
+
+local function safeGet(instance, key)
+	local ok, value = pcall(function()
+		return instance[key]
+	end)
+	if ok then
+		return true, value
+	end
+	return false, nil
+end
+
+function Scheduler.safeDisconnect(connection)
+	if not connection then
+		return
+	end
+	pcall(function()
+		connection:Disconnect()
+	end)
+end
+
+function Scheduler.isAlive(instance)
+	return typeof(instance) == "Instance" and instance.Parent ~= nil
+end
+
+function Scheduler.isVisibleChain(instance)
+	if typeof(instance) ~= "Instance" then
+		return false
+	end
+
+	local current = instance
+	while current do
+		local isGuiObject = current:IsA("GuiObject")
+		local isLayerCollector = current:IsA("LayerCollector")
+		if isGuiObject or isLayerCollector then
+			local hasVisible, visible = safeGet(current, "Visible")
+			if hasVisible and visible == false then
+				return false
+			end
+		end
+		current = current.Parent
+	end
+
+	return true
+end
+
+function Scheduler.bindDestroy(instance, onRemoved)
+	if typeof(instance) ~= "Instance" then
+		return function() end
+	end
+
+	local removed = false
+	local connections = {}
+
+	local function fireOnce()
+		if removed then
+			return
+		end
+		removed = true
+		if type(onRemoved) == "function" then
+			pcall(onRemoved)
+		end
+	end
+
+	table.insert(connections, instance.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			fireOnce()
+		end
+	end))
+
+	local hasDestroying = pcall(function()
+		return instance.Destroying
+	end)
+	if hasDestroying then
+		table.insert(connections, instance.Destroying:Connect(function()
+			fireOnce()
+		end))
+	end
+
+	return function()
+		for _, connection in ipairs(connections) do
+			Scheduler.safeDisconnect(connection)
+		end
+		table.clear(connections)
+	end
+end
+
+return Scheduler
 ]])
 put("src/core/animation/sequence.lua", [[local Sequence = {}
 Sequence.__index = Sequence
@@ -4414,6 +4551,202 @@ function module.attach(ctx)
 end
 
 return module
+]])
+put("src/core/runtime/bootstrapper.lua", [[local RuntimeBootstrapper = {}
+
+local function loadService(options, path, validatorFn)
+	local httpGet = options.httpGet
+	local compileString = options.compileString
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local moduleRootUrl = tostring(options.moduleRootUrl or "")
+	local fullUrl = moduleRootUrl .. tostring(path or "")
+
+	local okFetch, sourceOrErr = pcall(httpGet, fullUrl)
+	if not okFetch then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_FETCH] " .. tostring(path) .. " | " .. tostring(sourceOrErr))
+		return nil
+	end
+	if type(sourceOrErr) ~= "string" or sourceOrErr == "" then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_EMPTY] " .. tostring(path))
+		return nil
+	end
+	local chunk, compileErr = compileString(sourceOrErr)
+	if not chunk then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_COMPILE] " .. tostring(path) .. " | " .. tostring(compileErr))
+		return nil
+	end
+	local okExecute, moduleOrErr = pcall(chunk)
+	if not okExecute then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_EXECUTE] " .. tostring(path) .. " | " .. tostring(moduleOrErr))
+		return nil
+	end
+	if type(validatorFn) == "function" and not validatorFn(moduleOrErr) then
+		warnFn("Rayfield Mod: [W_BOOTSTRAP_SERVICE_CONTRACT] " .. tostring(path))
+		return nil
+	end
+	return moduleOrErr
+end
+
+function RuntimeBootstrapper.create(options)
+	options = type(options) == "table" and options or {}
+	local compileString = options.compileString
+	local httpGet = options.httpGet
+	if type(compileString) ~= "function" or type(httpGet) ~= "function" then
+		return nil
+	end
+
+	local warnFn = type(options.warn) == "function" and options.warn or warn
+	local taskLib = options.taskLib or task
+	local clockFn = type(options.clock) == "function" and options.clock or os.clock
+	local globalEnv = type(options.globalEnv) == "table" and options.globalEnv or nil
+
+	local serviceLoadContext = {
+		compileString = compileString,
+		httpGet = httpGet,
+		moduleRootUrl = options.moduleRootUrl,
+		warn = warnFn
+	}
+
+	local ExecutionPolicyServiceLib = loadService(serviceLoadContext, "src/services/execution-policy.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
+	end)
+	local HttpLoaderServiceLib = loadService(serviceLoadContext, "src/services/http-loader.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+	local AnalyticsReporterServiceLib = loadService(serviceLoadContext, "src/services/analytics-reporter.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+	local AnalyticsProviderServiceLib = loadService(serviceLoadContext, "src/services/analytics/analytics-provider.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+	local RuntimeLoaderHelpersServiceLib = loadService(serviceLoadContext, "src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+
+	local ExecPolicy = nil
+	if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
+		ExecPolicy = ExecutionPolicyServiceLib.ensure(globalEnv)
+	end
+	if type(ExecPolicy) ~= "table" then
+		warnFn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
+		ExecPolicy = {
+			decideExecutionMode = function()
+				return {
+					mode = "soft",
+					cancelOnTimeout = false,
+					reason = "fallback"
+				}
+			end,
+			markTimeout = function()
+				return 0
+			end,
+			markSuccess = function()
+				return
+			end,
+			getState = function()
+				return {}
+			end
+		}
+	end
+
+	local HttpLoaderService = nil
+	if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
+		HttpLoaderService = HttpLoaderServiceLib.create({
+			compileString = compileString,
+			execPolicy = ExecPolicy,
+			httpGet = httpGet,
+			warn = warnFn,
+			taskLib = taskLib,
+			clock = clockFn
+		})
+	end
+
+	local function loadWithTimeout(url, timeout)
+		if type(HttpLoaderService) == "table" and type(HttpLoaderService.loadWithTimeout) == "function" then
+			return HttpLoaderService.loadWithTimeout(url, timeout)
+		end
+		local okFetch, sourceOrErr = pcall(httpGet, tostring(url))
+		if not okFetch or type(sourceOrErr) ~= "string" or sourceOrErr == "" then
+			warnFn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(sourceOrErr))
+			return nil
+		end
+		local chunk, compileErr = compileString(sourceOrErr)
+		if not chunk then
+			warnFn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(compileErr))
+			return nil
+		end
+		local okRun, runResult = pcall(chunk)
+		if not okRun then
+			warnFn("Rayfield Mod: [W_HTTP_LOADER_FALLBACK] " .. tostring(runResult))
+			return nil
+		end
+		return runResult
+	end
+
+	local function createAnalyticsSender(analyticsOptions)
+		analyticsOptions = type(analyticsOptions) == "table" and analyticsOptions or {}
+		local provider = nil
+		if type(AnalyticsProviderServiceLib) == "table" and type(AnalyticsProviderServiceLib.create) == "function" then
+			provider = AnalyticsProviderServiceLib.create({
+				reporterModule = AnalyticsReporterServiceLib,
+				requestsDisabled = analyticsOptions.requestsDisabled,
+				useStudio = analyticsOptions.useStudio,
+				debug = analyticsOptions.debug,
+				release = analyticsOptions.release,
+				interfaceBuild = analyticsOptions.interfaceBuild,
+				loadWithTimeout = loadWithTimeout,
+				scriptName = analyticsOptions.scriptName,
+				warn = analyticsOptions.warn,
+				print = analyticsOptions.print,
+				getCachedSettings = analyticsOptions.getCachedSettings
+			})
+		elseif type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
+			provider = AnalyticsReporterServiceLib.create({
+				requestsDisabled = analyticsOptions.requestsDisabled,
+				useStudio = analyticsOptions.useStudio,
+				debug = analyticsOptions.debug,
+				release = analyticsOptions.release,
+				interfaceBuild = analyticsOptions.interfaceBuild,
+				loadWithTimeout = loadWithTimeout,
+				scriptName = analyticsOptions.scriptName,
+				warn = analyticsOptions.warn,
+				print = analyticsOptions.print,
+				getCachedSettings = analyticsOptions.getCachedSettings
+			})
+		end
+
+		if type(provider) == "table" and type(provider.init) == "function" then
+			pcall(provider.init)
+		end
+		if type(provider) == "table" and type(provider.sendReport) == "function" then
+			return function(eventName, scriptName)
+				local okReport, reportErr = pcall(provider.sendReport, eventName, scriptName)
+				if not okReport then
+					warnFn("Analytics report error: " .. tostring(reportErr))
+					return false
+				end
+				return reportErr ~= false
+			end
+		end
+		return function()
+			return false
+		end
+	end
+
+	return {
+		ExecutionPolicyServiceLib = ExecutionPolicyServiceLib,
+		HttpLoaderServiceLib = HttpLoaderServiceLib,
+		AnalyticsReporterServiceLib = AnalyticsReporterServiceLib,
+		AnalyticsProviderServiceLib = AnalyticsProviderServiceLib,
+		RuntimeLoaderHelpersServiceLib = RuntimeLoaderHelpersServiceLib,
+		ExecPolicy = ExecPolicy,
+		HttpLoaderService = HttpLoaderService,
+		loadWithTimeout = loadWithTimeout,
+		createAnalyticsSender = createAnalyticsSender
+	}
+end
+
+return RuntimeBootstrapper
 ]])
 put("src/core/runtime/command-palette-search-algorithms.lua", [[local SearchAlgorithms = {}
 
@@ -12805,6 +13138,7 @@ end
 return {
 	theme = row("src/services/theme.lua", "feature/rayfield-theme.lua"),
 	themePresets = row("src/services/theme/presets.lua"),
+	themeDefaultThemes = row("src/services/theme/default-themes.lua"),
 	settings = row("src/services/settings.lua", "feature/rayfield-settings.lua"),
 	settingsStore = row("src/services/settings-store.lua"),
 	settingsPersistence = row("src/services/settings-persistence.lua"),
@@ -12819,10 +13153,12 @@ return {
 	virtualHostManager = row("src/services/virtual-host-manager.lua"),
 	viewportVirtualization = row("src/services/viewport-virtualization.lua"),
 	config = row("src/services/config.lua", "feature/rayfield-config.lua"),
+	configStorageAdapter = row("src/services/config/storage-adapter.lua"),
 	utilities = row("src/services/utilities.lua", "feature/rayfield-utilities.lua"),
 	executionPolicyService = row("src/services/execution-policy.lua"),
 	httpLoaderService = row("src/services/http-loader.lua"),
 	analyticsReporterService = row("src/services/analytics-reporter.lua"),
+	analyticsProviderService = row("src/services/analytics/analytics-provider.lua"),
 	runtimeLoaderHelpersService = row("src/services/runtime-loader-helpers.lua"),
 	uiState = row("src/core/ui-state.lua", "feature/rayfield-ui-state.lua"),
 	uiStateNotificationManager = row("src/core/ui-state/notification-manager.lua"),
@@ -12843,6 +13179,10 @@ return {
 	animationText = row("src/core/animation/text.lua"),
 	animationEasing = row("src/core/animation/easing.lua"),
 	animationCleanup = row("src/core/animation/cleanup.lua"),
+	animationConstants = row("src/core/animation/constants.lua"),
+	animationScheduler = row("src/core/animation/scheduler.lua"),
+	runtimeBootstrapper = row("src/core/runtime/bootstrapper.lua"),
+	uiShellMainShell = row("src/ui/shell/main-shell.lua"),
 	runtimeVisibilityController = row("src/core/runtime/visibility-controller.lua"),
 	runtimeExperienceBindings = row("src/core/runtime/experience-bindings.lua"),
 	runtimeWorkspaceService = row("src/core/runtime/workspace-service.lua"),
@@ -12881,6 +13221,14 @@ return {
 	elementsKeybindFactory = row("src/ui/elements/factory/keybind-factory.lua"),
 	elementsToggleFactory = row("src/ui/elements/factory/toggle-factory.lua"),
 	elementsSliderFactory = row("src/ui/elements/factory/slider-factory.lua"),
+	elementsTabManager = row("src/ui/elements/factory/tab-manager.lua"),
+	elementsHoverProvider = row("src/ui/elements/factory/hover-provider.lua"),
+	elementsTooltipEngine = row("src/ui/elements/factory/tooltip-engine.lua"),
+	elementsWidgetAPIInjector = row("src/ui/elements/factory/widget-api-injector.lua"),
+	elementsMathUtils = row("src/ui/elements/factory/math-utils.lua"),
+	elementsResourceGuard = row("src/ui/elements/factory/resource-guard.lua"),
+	elementsGridBuilder = row("src/ui/elements/factory/widget-builders/grid-builder.lua"),
+	elementsChartBuilder = row("src/ui/elements/factory/widget-builders/chart-builder.lua"),
 	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
 	modifiedEntry = row("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua")
 }
@@ -13854,46 +14202,90 @@ local function loadBootstrapService(path, validatorFn)
 	return moduleOrErr
 end
 
-local ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
-end)
-local HttpLoaderServiceLib = loadBootstrapService("src/services/http-loader.lua", function(moduleValue)
+local RuntimeBootstrapperLib = loadBootstrapService("src/core/runtime/bootstrapper.lua", function(moduleValue)
 	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
 end)
-local AnalyticsReporterServiceLib = loadBootstrapService("src/services/analytics-reporter.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-end)
-local RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
-	return type(moduleValue) == "table" and type(moduleValue.create) == "function"
-end)
-
-local ExecPolicy = nil
-if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
-	ExecPolicy = ExecutionPolicyServiceLib.ensure(_G)
-else
-	warn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
-	ExecPolicy = {
-		decideExecutionMode = function()
-			return {
-				mode = "soft",
-				cancelOnTimeout = false,
-				reason = "fallback"
-			}
+local RuntimeBootstrap = nil
+if type(RuntimeBootstrapperLib) == "table" and type(RuntimeBootstrapperLib.create) == "function" then
+	local okBootstrap, bootstrapOrErr = pcall(RuntimeBootstrapperLib.create, {
+		compileString = compileString,
+		httpGet = function(url)
+			return game:HttpGet(url)
 		end,
-		markTimeout = function()
-			return 0
-		end,
-		markSuccess = function()
-			return
-		end,
-		getState = function()
-			return {}
-		end
-	}
+		moduleRootUrl = MODULE_ROOT_URL,
+		globalEnv = _G,
+		taskLib = task,
+		clock = os.clock,
+		warn = warn
+	})
+	if okBootstrap and type(bootstrapOrErr) == "table" then
+		RuntimeBootstrap = bootstrapOrErr
+	else
+		warn("Rayfield Mod: [W_BOOTSTRAPPER] Failed to initialize runtime bootstrapper.")
+	end
 end
 
-local HttpLoaderService = nil
-if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
+local ExecutionPolicyServiceLib = RuntimeBootstrap and RuntimeBootstrap.ExecutionPolicyServiceLib
+local HttpLoaderServiceLib = RuntimeBootstrap and RuntimeBootstrap.HttpLoaderServiceLib
+local AnalyticsReporterServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsReporterServiceLib
+local AnalyticsProviderServiceLib = RuntimeBootstrap and RuntimeBootstrap.AnalyticsProviderServiceLib
+local RuntimeLoaderHelpersServiceLib = RuntimeBootstrap and RuntimeBootstrap.RuntimeLoaderHelpersServiceLib
+
+if type(ExecutionPolicyServiceLib) ~= "table" or type(ExecutionPolicyServiceLib.ensure) ~= "function" then
+	ExecutionPolicyServiceLib = loadBootstrapService("src/services/execution-policy.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.ensure) == "function"
+	end)
+end
+if type(HttpLoaderServiceLib) ~= "table" or type(HttpLoaderServiceLib.create) ~= "function" then
+	HttpLoaderServiceLib = loadBootstrapService("src/services/http-loader.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(AnalyticsReporterServiceLib) ~= "table" or type(AnalyticsReporterServiceLib.create) ~= "function" then
+	AnalyticsReporterServiceLib = loadBootstrapService("src/services/analytics-reporter.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(AnalyticsProviderServiceLib) ~= "table" or type(AnalyticsProviderServiceLib.create) ~= "function" then
+	AnalyticsProviderServiceLib = loadBootstrapService("src/services/analytics/analytics-provider.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+if type(RuntimeLoaderHelpersServiceLib) ~= "table" or type(RuntimeLoaderHelpersServiceLib.create) ~= "function" then
+	RuntimeLoaderHelpersServiceLib = loadBootstrapService("src/services/runtime-loader-helpers.lua", function(moduleValue)
+		return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+	end)
+end
+
+local ExecPolicy = RuntimeBootstrap and RuntimeBootstrap.ExecPolicy or nil
+if type(ExecPolicy) ~= "table" then
+	if type(ExecutionPolicyServiceLib) == "table" and type(ExecutionPolicyServiceLib.ensure) == "function" then
+		ExecPolicy = ExecutionPolicyServiceLib.ensure(_G)
+	else
+		warn("Rayfield Mod: [W_EXEC_POLICY] Using fallback execution policy.")
+		ExecPolicy = {
+			decideExecutionMode = function()
+				return {
+					mode = "soft",
+					cancelOnTimeout = false,
+					reason = "fallback"
+				}
+			end,
+			markTimeout = function()
+				return 0
+			end,
+			markSuccess = function()
+				return
+			end,
+			getState = function()
+				return {}
+			end
+		}
+	end
+end
+
+local HttpLoaderService = RuntimeBootstrap and RuntimeBootstrap.HttpLoaderService or nil
+if type(HttpLoaderService) ~= "table" and type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) == "function" then
 	HttpLoaderService = HttpLoaderServiceLib.create({
 		compileString = compileString,
 		execPolicy = ExecPolicy,
@@ -13907,6 +14299,9 @@ if type(HttpLoaderServiceLib) == "table" and type(HttpLoaderServiceLib.create) =
 end
 
 local function loadWithTimeout(url, timeout)
+	if RuntimeBootstrap and type(RuntimeBootstrap.loadWithTimeout) == "function" then
+		return RuntimeBootstrap.loadWithTimeout(url, timeout)
+	end
 	if type(HttpLoaderService) == "table" and type(HttpLoaderService.loadWithTimeout) == "function" then
 		return HttpLoaderService.loadWithTimeout(url, timeout)
 	end
@@ -14003,7 +14398,44 @@ if debugX then
 end
 
 local sendReport = function(ev_n, sc_n) warn("Failed to load report function") end
-if type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
+if RuntimeBootstrap and type(RuntimeBootstrap.createAnalyticsSender) == "function" then
+	sendReport = RuntimeBootstrap.createAnalyticsSender({
+		requestsDisabled = requestsDisabled,
+		useStudio = useStudio,
+		debug = debugX == true,
+		release = Release,
+		interfaceBuild = InterfaceBuild,
+		scriptName = "Rayfield",
+		warn = warn,
+		print = print
+	})
+elseif type(AnalyticsProviderServiceLib) == "table" and type(AnalyticsProviderServiceLib.create) == "function" then
+	local analyticsProvider = AnalyticsProviderServiceLib.create({
+		reporterModule = AnalyticsReporterServiceLib,
+		requestsDisabled = requestsDisabled,
+		useStudio = useStudio,
+		debug = debugX == true,
+		release = Release,
+		interfaceBuild = InterfaceBuild,
+		loadWithTimeout = loadWithTimeout,
+		scriptName = "Rayfield",
+		warn = warn,
+		print = print
+	})
+	if type(analyticsProvider) == "table" then
+		if type(analyticsProvider.init) == "function" then
+			pcall(analyticsProvider.init)
+		end
+		if type(analyticsProvider.sendReport) == "function" then
+			sendReport = function(ev_n, sc_n)
+				local okReport, reportErr = pcall(analyticsProvider.sendReport, ev_n, sc_n)
+				if not okReport then
+					warn("Analytics report error: " .. tostring(reportErr))
+				end
+			end
+		end
+	end
+elseif type(AnalyticsReporterServiceLib) == "table" and type(AnalyticsReporterServiceLib.create) == "function" then
 	local analyticsReporter = AnalyticsReporterServiceLib.create({
 		requestsDisabled = requestsDisabled,
 		useStudio = useStudio,
@@ -14440,6 +14872,7 @@ local FallbackViewportVirtualizationModule = {
 
 local ThemeModule = requireModule("theme")
 local ThemePresetsModuleLib = requireModule("themePresets")
+local ThemeDefaultThemesModuleLib = requireModule("themeDefaultThemes")
 -- Load utilities early so shared helpers are registered globally before other services initialize.
 local UtilitiesModuleLib = requireModule("utilities")
 local SettingsModuleLib = requireModule("settings")
@@ -14457,6 +14890,7 @@ local UIStateSearchEngineLib = requireModule("uiStateSearchEngine")
 local UIStateWindowManagerLib = requireModule("uiStateWindowManager")
 local ElementsModuleLib = requireModule("elements")
 local ConfigModuleLib = requireModule("config")
+local ConfigStorageAdapterModuleLib = requireModule("configStorageAdapter")
 local LayoutPersistenceModuleLib = optionalModule("layoutPersistence", FallbackLayoutPersistenceModule, "Layout persistence is disabled for this session.")
 local ViewportVirtualizationModuleLib = optionalModule("viewportVirtualization", FallbackViewportVirtualizationModule, "Viewport virtualization is disabled for this session.")
 local VirtualizationEngineModuleLib = requireModule("virtualizationEngine")
@@ -14468,6 +14902,9 @@ local AnimationSequenceLib = requireModule("animationSequence")
 local AnimationUILib = requireModule("animationUI")
 local AnimationTextLib = requireModule("animationText")
 local AnimationCleanupLib = requireModule("animationCleanup")
+local AnimationConstantsLib = requireModule("animationConstants")
+local AnimationSchedulerLib = requireModule("animationScheduler")
+local MainShellModuleLib = requireModule("uiShellMainShell")
 local VisibilityControllerLib = requireModule("runtimeVisibilityController")
 local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
 local RuntimeBindingsUXLib = requireModule("runtimeBindingsUX")
@@ -14506,6 +14943,14 @@ local DropdownFactoryModuleLib = nil
 local KeybindFactoryModuleLib = nil
 local ToggleFactoryModuleLib = nil
 local SliderFactoryModuleLib = nil
+local TabManagerModuleLib = nil
+local HoverProviderModuleLib = nil
+local TooltipEngineModuleLib = nil
+local WidgetAPIInjectorModuleLib = nil
+local MathUtilsModuleLib = nil
+local ResourceGuardModuleLib = nil
+local GridBuilderModuleLib = nil
+local ChartBuilderModuleLib = nil
 local function resolveDataGridFactoryModule()
 	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
 		return DataGridFactoryModuleLib
@@ -14610,6 +15055,110 @@ local function resolveSliderFactoryModule()
 	)
 	return SliderFactoryModuleLib
 end
+local function resolveTabManagerModule()
+	if type(TabManagerModuleLib) == "table" and type(TabManagerModuleLib.create) == "function" then
+		return TabManagerModuleLib
+	end
+	TabManagerModuleLib = optionalModuleWithContract(
+		"elementsTabManager",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tab manager will use built-in fallback."
+	)
+	return TabManagerModuleLib
+end
+local function resolveHoverProviderModule()
+	if type(HoverProviderModuleLib) == "table" and type(HoverProviderModuleLib.create) == "function" then
+		return HoverProviderModuleLib
+	end
+	HoverProviderModuleLib = optionalModuleWithContract(
+		"elementsHoverProvider",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Hover provider will use built-in fallback."
+	)
+	return HoverProviderModuleLib
+end
+local function resolveTooltipEngineModule()
+	if type(TooltipEngineModuleLib) == "table" and type(TooltipEngineModuleLib.create) == "function" then
+		return TooltipEngineModuleLib
+	end
+	TooltipEngineModuleLib = optionalModuleWithContract(
+		"elementsTooltipEngine",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Tooltip engine will use built-in fallback."
+	)
+	return TooltipEngineModuleLib
+end
+local function resolveWidgetAPIInjectorModule()
+	if type(WidgetAPIInjectorModuleLib) == "table" and type(WidgetAPIInjectorModuleLib.inject) == "function" then
+		return WidgetAPIInjectorModuleLib
+	end
+	WidgetAPIInjectorModuleLib = optionalModuleWithContract(
+		"elementsWidgetAPIInjector",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.inject) == "function"
+		end,
+		"Widget injector will use built-in fallback."
+	)
+	return WidgetAPIInjectorModuleLib
+end
+local function resolveMathUtilsModule()
+	if type(MathUtilsModuleLib) == "table" then
+		return MathUtilsModuleLib
+	end
+	MathUtilsModuleLib = optionalModuleWithContract(
+		"elementsMathUtils",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.clampNumber) == "function"
+		end,
+		"Math utility helpers will use built-in fallback."
+	)
+	return MathUtilsModuleLib
+end
+local function resolveResourceGuardModule()
+	if type(ResourceGuardModuleLib) == "table" and type(ResourceGuardModuleLib.create) == "function" then
+		return ResourceGuardModuleLib
+	end
+	ResourceGuardModuleLib = optionalModuleWithContract(
+		"elementsResourceGuard",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Resource guard will use built-in fallback."
+	)
+	return ResourceGuardModuleLib
+end
+local function resolveGridBuilderModule()
+	if type(GridBuilderModuleLib) == "table" and type(GridBuilderModuleLib.create) == "function" then
+		return GridBuilderModuleLib
+	end
+	GridBuilderModuleLib = optionalModuleWithContract(
+		"elementsGridBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Grid builder will use direct factory fallback."
+	)
+	return GridBuilderModuleLib
+end
+local function resolveChartBuilderModule()
+	if type(ChartBuilderModuleLib) == "table" and type(ChartBuilderModuleLib.create) == "function" then
+		return ChartBuilderModuleLib
+	end
+	ChartBuilderModuleLib = optionalModuleWithContract(
+		"elementsChartBuilder",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Chart builder will use direct factory fallback."
+	)
+	return ChartBuilderModuleLib
+end
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -14620,7 +15169,8 @@ local CoreGui = getService("CoreGui")
 local AnimationEngine = AnimationEngineLib.new({
 	TweenService = TweenService,
 	RunService = RunService,
-	Cleanup = AnimationCleanupLib,
+	Cleanup = AnimationSchedulerLib or AnimationCleanupLib,
+	Constants = AnimationConstantsLib,
 	mode = "raw"
 })
 local Animation = AnimationEngine
@@ -14941,58 +15491,22 @@ local ThemeSystem = ThemeModule.init({
 	Elements = Elements,
 	Notifications = Notifications,
 	Icons = Icons,
-	ThemePresetsModule = ThemePresetsModuleLib
+	ThemePresetsModule = ThemePresetsModuleLib,
+	ThemeDefaultThemesModule = ThemeDefaultThemesModuleLib
 })
 
 local bindTheme = ThemeSystem.bindTheme
 
 -- Apply Reactive Theme to Main UI (with nil guards for UI structure resilience)
-bindTheme(Main, "BackgroundColor3", "Background")
-bindTheme(Topbar, "BackgroundColor3", "Topbar")
-
-local cornerRepair = Topbar:FindFirstChild("CornerRepair")
-if cornerRepair then
-	bindTheme(cornerRepair, "BackgroundColor3", "Topbar")
-end
-
-local shadow = Main:FindFirstChild("Shadow")
-if shadow and shadow:FindFirstChild("Image") then
-	bindTheme(shadow.Image, "ImageColor3", "Shadow")
-end
-
-if Topbar:FindFirstChild("ChangeSize") then
-	bindTheme(Topbar.ChangeSize, "ImageColor3", "TextColor")
-end
-if Topbar:FindFirstChild("Hide") then
-	bindTheme(Topbar.Hide, "ImageColor3", "TextColor")
-end
-if Topbar:FindFirstChild("Search") then
-	bindTheme(Topbar.Search, "ImageColor3", "TextColor")
-end
-
-if Topbar:FindFirstChild('Settings') then
-	bindTheme(Topbar.Settings, "ImageColor3", "TextColor")
-	if Topbar:FindFirstChild('Divider') then
-		bindTheme(Topbar.Divider, "BackgroundColor3", "ElementStroke")
-	end
-end
-
--- Search UI Reactive (guarded)
-local searchFrame = Main:FindFirstChild("Search")
-if searchFrame then
-	bindTheme(searchFrame, "BackgroundColor3", "TextColor")
-	if searchFrame:FindFirstChild("Shadow") then
-		bindTheme(searchFrame.Shadow, "ImageColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("Search") then
-		bindTheme(searchFrame.Search, "ImageColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("Input") then
-		bindTheme(searchFrame.Input, "PlaceholderColor3", "TextColor")
-	end
-	if searchFrame:FindFirstChild("UIStroke") then
-		bindTheme(searchFrame.UIStroke, "Color", "SecondaryElementStroke")
-	end
+if type(MainShellModuleLib) == "table" and type(MainShellModuleLib.applyReactiveTheme) == "function" then
+	MainShellModuleLib.applyReactiveTheme({
+		Main = Main,
+		Topbar = Topbar,
+		bindTheme = bindTheme
+	})
+else
+	bindTheme(Main, "BackgroundColor3", "Background")
+	bindTheme(Topbar, "BackgroundColor3", "Topbar")
 end
 
 -- Initialize Settings Module
@@ -15012,12 +15526,23 @@ local SettingsSystem = SettingsModuleLib.init({
 })
 
 -- Initialize Configuration Module
+local ConfigStorageAdapter = nil
+if type(ConfigStorageAdapterModuleLib) == "table" and type(ConfigStorageAdapterModuleLib.create) == "function" then
+	local okStorageAdapter, adapterOrErr = pcall(ConfigStorageAdapterModuleLib.create, {
+		callSafely = callSafely
+	})
+	if okStorageAdapter and type(adapterOrErr) == "table" then
+		ConfigStorageAdapter = adapterOrErr
+	end
+end
 local ConfigSystem = ConfigModuleLib.init({
 	HttpService = HttpService,
 	TweenService = TweenService,
 	Animation = Animation,
 	RayfieldLibrary = RayfieldLibrary,
 	callSafely = callSafely,
+	StorageAdapter = ConfigStorageAdapter,
+	StorageAdapterModule = ConfigStorageAdapterModuleLib,
 	ConfigurationFolder = ConfigurationFolder,
 	ConfigurationExtension = ConfigurationExtension,
 	getCFileName = function() return CFileName end,
@@ -19380,6 +19905,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveDataGridFactory = resolveDataGridFactoryModule,
 		ChartFactoryModule = ChartFactoryModuleLib,
 		ResolveChartFactory = resolveChartFactoryModule,
+		GridBuilderModule = GridBuilderModuleLib,
+		ResolveGridBuilderModule = resolveGridBuilderModule,
+		ChartBuilderModule = ChartBuilderModuleLib,
+		ResolveChartBuilderModule = resolveChartBuilderModule,
 		ButtonFactoryModule = ButtonFactoryModuleLib,
 		ResolveButtonFactory = resolveButtonFactoryModule,
 		InputFactoryModule = InputFactoryModuleLib,
@@ -19392,6 +19921,18 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveToggleFactory = resolveToggleFactoryModule,
 		SliderFactoryModule = SliderFactoryModuleLib,
 		ResolveSliderFactory = resolveSliderFactoryModule,
+		TabManagerModule = TabManagerModuleLib,
+		ResolveTabManagerModule = resolveTabManagerModule,
+		HoverProviderModule = HoverProviderModuleLib,
+		ResolveHoverProviderModule = resolveHoverProviderModule,
+		TooltipEngineModule = TooltipEngineModuleLib,
+		ResolveTooltipEngineModule = resolveTooltipEngineModule,
+		WidgetAPIInjectorModule = WidgetAPIInjectorModuleLib,
+		ResolveWidgetAPIInjectorModule = resolveWidgetAPIInjectorModule,
+		MathUtilsModule = MathUtilsModuleLib,
+		ResolveMathUtilsModule = resolveMathUtilsModule,
+		ResourceGuardModule = ResourceGuardModuleLib,
+		ResolveResourceGuardModule = resolveResourceGuardModule,
 		showContextMenu = function(items, anchor)
 			if UIStateSystem and type(UIStateSystem.ShowContextMenu) == "function" then
 				return UIStateSystem.ShowContextMenu(items, anchor)
@@ -20510,6 +21051,6 @@ return Logger
 
 return {
 	name = BUNDLE_NAME,
-	count = 65,
+	count = 68,
 	bundle = bundle
 }

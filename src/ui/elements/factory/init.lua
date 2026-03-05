@@ -69,6 +69,14 @@ function ElementsModule.init(ctx)
 	self.ResolveTooltipEngineModule = type(ctx.ResolveTooltipEngineModule) == "function" and ctx.ResolveTooltipEngineModule or nil
 	self.WidgetAPIInjectorModule = ctx.WidgetAPIInjectorModule
 	self.ResolveWidgetAPIInjectorModule = type(ctx.ResolveWidgetAPIInjectorModule) == "function" and ctx.ResolveWidgetAPIInjectorModule or nil
+	self.MathUtilsModule = ctx.MathUtilsModule
+	self.ResolveMathUtilsModule = type(ctx.ResolveMathUtilsModule) == "function" and ctx.ResolveMathUtilsModule or nil
+	self.ResourceGuardModule = ctx.ResourceGuardModule
+	self.ResolveResourceGuardModule = type(ctx.ResolveResourceGuardModule) == "function" and ctx.ResolveResourceGuardModule or nil
+	self.GridBuilderModule = ctx.GridBuilderModule
+	self.ResolveGridBuilderModule = type(ctx.ResolveGridBuilderModule) == "function" and ctx.ResolveGridBuilderModule or nil
+	self.ChartBuilderModule = ctx.ChartBuilderModule
+	self.ResolveChartBuilderModule = type(ctx.ResolveChartBuilderModule) == "function" and ctx.ResolveChartBuilderModule or nil
 	-- Improvement 4: Add safe fallbacks for critical dependencies
 	self.keybindConnections = ctx.keybindConnections or {} -- Fallback to empty table
 	self.getDebounce = ctx.getDebounce or function() return false end
@@ -195,6 +203,10 @@ function ElementsModule.init(ctx)
 	}
 	local tooltipEngine = nil
 	local widgetApiInjector = nil
+	local resourceGuard = nil
+	local mathUtils = nil
+	local gridBuilder = nil
+	local chartBuilder = nil
 
 	local function cloneArray(values)
 		local out = {}
@@ -215,7 +227,45 @@ function ElementsModule.init(ctx)
 		return okCall
 	end
 
+	local function resolveMathUtils()
+		if type(mathUtils) == "table" then
+			return mathUtils
+		end
+		local moduleValue = self.MathUtilsModule
+		if type(moduleValue) ~= "table" and type(self.ResolveMathUtilsModule) == "function" then
+			moduleValue = self.ResolveMathUtilsModule()
+		end
+		if type(moduleValue) ~= "table" then
+			moduleValue = {}
+		end
+		mathUtils = moduleValue
+		return mathUtils
+	end
+
+	local function resolveResourceGuard()
+		if resourceGuard then
+			return resourceGuard
+		end
+		local moduleValue = self.ResourceGuardModule
+		if type(moduleValue) ~= "table" and type(self.ResolveResourceGuardModule) == "function" then
+			moduleValue = self.ResolveResourceGuardModule()
+		end
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			local okCreate, guardOrErr = pcall(moduleValue.create, {
+				resourceOwnership = self.ResourceOwnership
+			})
+			if okCreate and type(guardOrErr) == "table" then
+				resourceGuard = guardOrErr
+			end
+		end
+		return resourceGuard
+	end
+
 	local function ownershipCreateScope(scopeId, metadata)
+		local guard = resolveResourceGuard()
+		if guard and type(guard.createScope) == "function" then
+			return guard.createScope(scopeId, metadata)
+		end
 		if not (self.ResourceOwnership and type(self.ResourceOwnership.createScope) == "function") then
 			return nil
 		end
@@ -230,6 +280,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function ownershipClaimInstance(instance, scopeId, metadata)
+		local guard = resolveResourceGuard()
+		if guard and type(guard.claimInstance) == "function" then
+			return guard.claimInstance(instance, scopeId, metadata)
+		end
 		if not (self.ResourceOwnership and type(self.ResourceOwnership.claimInstance) == "function") then
 			return false
 		end
@@ -238,6 +292,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function ownershipTrackConnection(connection, scopeId)
+		local guard = resolveResourceGuard()
+		if guard and type(guard.trackConnection) == "function" then
+			return guard.trackConnection(connection, scopeId)
+		end
 		if not connection or type(scopeId) ~= "string" or scopeId == "" then
 			return false
 		end
@@ -249,6 +307,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function ownershipTrackCleanup(cleanupFn, scopeId)
+		local guard = resolveResourceGuard()
+		if guard and type(guard.trackCleanup) == "function" then
+			return guard.trackCleanup(cleanupFn, scopeId)
+		end
 		if type(cleanupFn) ~= "function" or type(scopeId) ~= "string" or scopeId == "" then
 			return false
 		end
@@ -260,6 +322,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function ownershipCleanupScope(scopeId, options)
+		local guard = resolveResourceGuard()
+		if guard and type(guard.cleanupScope) == "function" then
+			return guard.cleanupScope(scopeId, options)
+		end
 		if type(scopeId) ~= "string" or scopeId == "" then
 			return false
 		end
@@ -300,6 +366,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function clampNumber(value, minimum, maximum, fallback)
+		local utilsModule = resolveMathUtils()
+		if type(utilsModule.clampNumber) == "function" then
+			return utilsModule.clampNumber(value, minimum, maximum, fallback)
+		end
 		local numberValue = tonumber(value)
 		if not numberValue then
 			numberValue = tonumber(fallback) or 0
@@ -314,6 +384,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function packColor3(colorValue)
+		local utilsModule = resolveMathUtils()
+		if type(utilsModule.packColor3) == "function" then
+			return utilsModule.packColor3(colorValue)
+		end
 		if typeof(colorValue) ~= "Color3" then
 			return nil
 		end
@@ -325,6 +399,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function unpackColor3(colorValue)
+		local utilsModule = resolveMathUtils()
+		if type(utilsModule.unpackColor3) == "function" then
+			return utilsModule.unpackColor3(colorValue)
+		end
 		if type(colorValue) ~= "table" then
 			return nil
 		end
@@ -342,6 +420,10 @@ function ElementsModule.init(ctx)
 	end
 
 	local function roundToPrecision(value, precision)
+		local utilsModule = resolveMathUtils()
+		if type(utilsModule.roundToPrecision) == "function" then
+			return utilsModule.roundToPrecision(value, precision)
+		end
 		local digits = math.max(0, math.floor(tonumber(precision) or 0))
 		local scale = 10 ^ digits
 		return math.floor((tonumber(value) or 0) * scale + 0.5) / scale
@@ -750,6 +832,34 @@ function ElementsModule.init(ctx)
 			widgetApiInjector = moduleValue
 		end
 		return widgetApiInjector
+	end
+
+	local function resolveGridBuilder()
+		if gridBuilder then
+			return gridBuilder
+		end
+		local moduleValue = self.GridBuilderModule
+		if type(moduleValue) ~= "table" and type(self.ResolveGridBuilderModule) == "function" then
+			moduleValue = self.ResolveGridBuilderModule()
+		end
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			gridBuilder = moduleValue
+		end
+		return gridBuilder
+	end
+
+	local function resolveChartBuilder()
+		if chartBuilder then
+			return chartBuilder
+		end
+		local moduleValue = self.ChartBuilderModule
+		if type(moduleValue) ~= "table" and type(self.ResolveChartBuilderModule) == "function" then
+			moduleValue = self.ResolveChartBuilderModule()
+		end
+		if type(moduleValue) == "table" and type(moduleValue.create) == "function" then
+			chartBuilder = moduleValue
+		end
+		return chartBuilder
 	end
 
 	-- Extract code starts here
@@ -3395,21 +3505,28 @@ function ElementsModule.init(ctx)
 			end
 
 			function Tab:CreateDataGrid(dataGridSettings)
-				if (type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function")
-					and type(self.ResolveDataGridFactory) == "function" then
-					local okResolve, resolvedModule = pcall(self.ResolveDataGridFactory)
-					if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
-						self.DataGridFactoryModule = resolvedModule
-					else
-						warn("Rayfield | DataGrid module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
+				local gridBuilderModule = resolveGridBuilder()
+				local createFn = gridBuilderModule and gridBuilderModule.create or nil
+				if type(createFn) ~= "function" then
+					createFn = function(builderContext)
+						if (type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function")
+							and type(self.ResolveDataGridFactory) == "function" then
+							local okResolve, resolvedModule = pcall(self.ResolveDataGridFactory)
+							if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
+								self.DataGridFactoryModule = resolvedModule
+							else
+								warn("Rayfield | DataGrid module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
+							end
+						end
+						if type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function" then
+							warn("Rayfield | DataGrid factory module unavailable")
+							return nil
+						end
+						return self.DataGridFactoryModule.create(builderContext)
 					end
 				end
-				if type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function" then
-					warn("Rayfield | DataGrid factory module unavailable")
-					return nil
-				end
 
-				return self.DataGridFactoryModule.create({
+				return createFn({
 					self = self,
 					TabPage = TabPage,
 					Settings = Settings,
@@ -3424,21 +3541,28 @@ function ElementsModule.init(ctx)
 			end
 
 			function Tab:CreateChart(chartSettings)
-				if (type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function")
-					and type(self.ResolveChartFactory) == "function" then
-					local okResolve, resolvedModule = pcall(self.ResolveChartFactory)
-					if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
-						self.ChartFactoryModule = resolvedModule
-					else
-						warn("Rayfield | Chart module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
+				local chartBuilderModule = resolveChartBuilder()
+				local createFn = chartBuilderModule and chartBuilderModule.create or nil
+				if type(createFn) ~= "function" then
+					createFn = function(builderContext)
+						if (type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function")
+							and type(self.ResolveChartFactory) == "function" then
+							local okResolve, resolvedModule = pcall(self.ResolveChartFactory)
+							if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
+								self.ChartFactoryModule = resolvedModule
+							else
+								warn("Rayfield | Chart module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
+							end
+						end
+						if type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function" then
+							warn("Rayfield | Chart factory module unavailable")
+							return nil
+						end
+						return self.ChartFactoryModule.create(builderContext)
 					end
 				end
-				if type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function" then
-					warn("Rayfield | Chart factory module unavailable")
-					return nil
-				end
 
-				return self.ChartFactoryModule.create({
+				return createFn({
 					self = self,
 					TabPage = TabPage,
 					Settings = Settings,
