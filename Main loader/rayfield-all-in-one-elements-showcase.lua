@@ -207,6 +207,8 @@ local function createShowcaseLogger()
 		activeFolder = nil,
 		path = nil,
 		latestPath = nil,
+		diagnosticPath = nil,
+		latestDiagnosticPath = nil,
 		reason = "init"
 	}
 
@@ -230,14 +232,20 @@ local function createShowcaseLogger()
 	local function setTargets(folderPath)
 		local fileName = "elements-showcase-" .. runId .. ".log"
 		local latestName = "elements-showcase-latest.log"
+		local diagnosticName = "elements-showcase-diagnostic-" .. runId .. ".log"
+		local diagnosticLatestName = "elements-showcase-diagnostic-latest.log"
 		if type(folderPath) == "string" and folderPath ~= "" then
 			logger.activeFolder = folderPath
 			logger.path = folderPath .. "/" .. fileName
 			logger.latestPath = folderPath .. "/" .. latestName
+			logger.diagnosticPath = folderPath .. "/" .. diagnosticName
+			logger.latestDiagnosticPath = folderPath .. "/" .. diagnosticLatestName
 		else
 			logger.activeFolder = nil
 			logger.path = fileName
 			logger.latestPath = latestName
+			logger.diagnosticPath = diagnosticName
+			logger.latestDiagnosticPath = diagnosticLatestName
 		end
 	end
 
@@ -328,6 +336,8 @@ local function createShowcaseLogger()
 				activeFolder = logger.activeFolder,
 				path = logger.path,
 				latestPath = logger.latestPath,
+				diagnosticPath = logger.diagnosticPath,
+				latestDiagnosticPath = logger.latestDiagnosticPath,
 				reason = logger.reason
 			}
 		end
@@ -353,6 +363,54 @@ local function createShowcaseLogger()
 		if writeFn and logger.latestPath then
 			flushWholeFile(logger.latestPath)
 		end
+	end
+
+	function logger.getBuffer()
+		return ring
+	end
+
+	function logger.writeDiagnosticReport(reportText, tag)
+		local stampTag = tostring(tag or "diag")
+		stampTag = string.gsub(stampTag, "[^%w%-_]", "_")
+		local reportBody = tostring(reportText or "")
+		if reportBody == "" then
+			reportBody = "No diagnostic payload."
+		end
+
+		local targetPath = logger.diagnosticPath
+		if type(logger.activeFolder) == "string" and logger.activeFolder ~= "" then
+			targetPath = logger.activeFolder .. "/elements-showcase-diagnostic-" .. stampTag .. "-" .. runId .. ".log"
+		else
+			targetPath = "elements-showcase-diagnostic-" .. stampTag .. "-" .. runId .. ".log"
+		end
+
+		local wrote = false
+		if writeFn then
+			wrote = pcall(writeFn, targetPath, reportBody .. "\n")
+			if logger.latestDiagnosticPath then
+				pcall(writeFn, logger.latestDiagnosticPath, reportBody .. "\n")
+			end
+		elseif appendFn then
+			wrote = pcall(appendFn, targetPath, reportBody .. "\n")
+		end
+		if wrote and type(_G) == "table" then
+			_G.__RAYFIELD_SHOWCASE_DIAGNOSTIC_FILE = targetPath
+		end
+		return wrote, targetPath
+	end
+
+	function logger.getInfo()
+		return {
+			enabled = logger.enabled,
+			fileEnabled = logger.fileEnabled,
+			requestedFolder = logger.folder,
+			activeFolder = logger.activeFolder,
+			path = logger.path,
+			latestPath = logger.latestPath,
+			diagnosticPath = logger.diagnosticPath,
+			latestDiagnosticPath = logger.latestDiagnosticPath,
+			reason = logger.reason
+		}
 	end
 
 	return logger
@@ -584,6 +642,30 @@ end
 local runtimeRoots = resolveRuntimeRoots()
 local root = runtimeRoots[1] or "https://cdn.jsdelivr.net/gh/Ahlstarr-Mayjishan/Rayfield-mod@main/"
 
+local diagnosticState = {
+	startedAt = os.clock(),
+	fetchAttempts = {},
+	bootstrap = {
+		order = nil,
+		reasons = {},
+		mode = nil,
+		selectedRoot = nil
+	},
+	issues = {},
+	lastReport = nil
+}
+
+local function copyArray(source)
+	local output = {}
+	if type(source) ~= "table" then
+		return output
+	end
+	for index, value in ipairs(source) do
+		output[index] = value
+	end
+	return output
+end
+
 if type(_G) == "table" then
 	_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 end
@@ -604,6 +686,14 @@ local function tryFetchAndRunPath(path, label)
 	for _, candidateRoot in ipairs(runtimeRoots) do
 		local fullUrl = candidateRoot .. path
 		local ok, resultOrErr = tryFetchAndRun(fullUrl, label)
+		table.insert(diagnosticState.fetchAttempts, {
+			path = path,
+			label = label,
+			root = candidateRoot,
+			ok = ok == true,
+			error = ok and nil or tostring(resultOrErr),
+			at = os.clock()
+		})
 		if ok then
 			bootLog("Loaded " .. tostring(path) .. " from " .. tostring(candidateRoot))
 			return true, resultOrErr, candidateRoot
@@ -633,6 +723,8 @@ local function tryBootstrapFromBase(reasons)
 	)
 	if okBase and isReadyRayfield(baseOrErr) then
 		root = selectedRoot or root
+		diagnosticState.bootstrap.selectedRoot = root
+		diagnosticState.bootstrap.mode = "base"
 		if type(_G) == "table" then
 			_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 		end
@@ -654,15 +746,18 @@ local function tryBootstrapFromAllInOne(reasons)
 	end
 	
 	root = selectedRoot or root
+	diagnosticState.bootstrap.selectedRoot = root
 	if type(_G) == "table" then
 		_G.__RAYFIELD_RUNTIME_ROOT_URL = root
 	end
 
 	if isReadyUI(loadedOrErr) then
+		diagnosticState.bootstrap.mode = tostring(loadedOrErr.mode or "all-in-one")
 		return loadedOrErr
 	end
 
 	if isReadyUI(_G and _G.RayfieldUI) then
+		diagnosticState.bootstrap.mode = tostring((_G.RayfieldUI and _G.RayfieldUI.mode) or "global-ui")
 		return _G.RayfieldUI
 	end
 
@@ -727,6 +822,7 @@ local function tryBootstrapFromAllInOne(reasons)
 		if quickStatus ~= "timeout" then
 			okQuick, uiOrReason, quickStatus = runQuickSetup(true)
 			if okQuick then
+				diagnosticState.bootstrap.mode = tostring(uiOrReason and uiOrReason.mode or "quickSetup")
 				return uiOrReason
 			end
 			table.insert(reasons, tostring(uiOrReason))
@@ -744,11 +840,13 @@ local function bootstrapUI()
 
 	if isReadyUI(_G and _G.RayfieldUI) then
 		bootLog("Using existing _G.RayfieldUI")
+		diagnosticState.bootstrap.mode = tostring((_G.RayfieldUI and _G.RayfieldUI.mode) or "global-ui")
 		return _G.RayfieldUI
 	end
 
 	if isReadyRayfield(_G and _G.Rayfield) then
 		bootLog("Using existing _G.Rayfield")
+		diagnosticState.bootstrap.mode = "global-rayfield"
 		return wrapRayfieldAsUI(_G.Rayfield, "global")
 	end
 
@@ -769,29 +867,94 @@ local function bootstrapUI()
 
 	if preferAllInOne then
 		bootLog("Bootstrap order: all-in-one -> base")
+		diagnosticState.bootstrap.order = "all-in-one->base"
 		ui = tryBootstrapFromAllInOne(reasons)
-		if isReadyUI(ui) then return ui end
+		if isReadyUI(ui) then
+			diagnosticState.bootstrap.reasons = copyArray(reasons)
+			return ui
+		end
 		
 		local allowBaseAfterAioTimeout = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT == true
 		if not hasTimeoutReason() or allowBaseAfterAioTimeout then
 			ui = tryBootstrapFromBase(reasons)
-			if isReadyUI(ui) then return ui end
+			if isReadyUI(ui) then
+				diagnosticState.bootstrap.reasons = copyArray(reasons)
+				return ui
+			end
 		end
 	else
 		bootLog("Bootstrap order: base -> all-in-one")
+		diagnosticState.bootstrap.order = "base->all-in-one"
 		ui = tryBootstrapFromBase(reasons)
-		if isReadyUI(ui) then return ui end
+		if isReadyUI(ui) then
+			diagnosticState.bootstrap.reasons = copyArray(reasons)
+			return ui
+		end
 		ui = tryBootstrapFromAllInOne(reasons)
-		if isReadyUI(ui) then return ui end
+		if isReadyUI(ui) then
+			diagnosticState.bootstrap.reasons = copyArray(reasons)
+			return ui
+		end
 	end
+
+	diagnosticState.bootstrap.reasons = copyArray(reasons)
 
 	local message = "UI bootstrap failed | " .. table.concat(reasons, " | ")
 	logLine("ERROR", message)
 	error(message)
 end
 
+local function writeCrashSnapshot(stage, detail)
+	local lines = {
+		"=== Rayfield Showcase Crash Snapshot ===",
+		"stage: " .. tostring(stage),
+		"detail: " .. tostring(detail),
+		"time: " .. tostring(type(os.date) == "function" and os.date("%Y-%m-%d %H:%M:%S") or os.clock()),
+		"runtimeRoot: " .. tostring(root),
+		"bootstrapOrder: " .. tostring(diagnosticState.bootstrap.order),
+		"bootstrapMode: " .. tostring(diagnosticState.bootstrap.mode),
+		"selectedRoot: " .. tostring(diagnosticState.bootstrap.selectedRoot),
+		"loggerReason: " .. tostring(ShowcaseLogger.reason),
+		"loggerFileEnabled: " .. tostring(ShowcaseLogger.fileEnabled)
+	}
+	if type(diagnosticState.bootstrap.reasons) == "table" and #diagnosticState.bootstrap.reasons > 0 then
+		table.insert(lines, "bootstrapReasons:")
+		for _, reason in ipairs(diagnosticState.bootstrap.reasons) do
+			table.insert(lines, " - " .. tostring(reason))
+		end
+	end
+	if type(ShowcaseLogger.getBuffer) == "function" then
+		local buffer = ShowcaseLogger.getBuffer()
+		table.insert(lines, "recentLogTail:")
+		local startIndex = math.max(1, #buffer - 20)
+		for index = startIndex, #buffer do
+			table.insert(lines, " > " .. tostring(buffer[index]))
+		end
+	end
+	local reportText = table.concat(lines, "\n")
+	logLine("DIAG", "Crash snapshot generated | stage=" .. tostring(stage))
+	if type(ShowcaseLogger.writeDiagnosticReport) == "function" then
+		local okWrite, path = ShowcaseLogger.writeDiagnosticReport(reportText, "fatal-" .. tostring(stage))
+		if okWrite then
+			logLine("DIAG", "Crash report written: " .. tostring(path))
+		end
+	end
+	if type(_G) == "table" then
+		_G.__RAYFIELD_SHOWCASE_LAST_CRASH = {
+			stage = stage,
+			detail = tostring(detail),
+			report = reportText
+		}
+	end
+end
+
 -- [[ MAIN EXECUTION ]] --
-local UI = bootstrapUI()
+local okBootstrapUI, UIOrErr = pcall(bootstrapUI)
+if not okBootstrapUI then
+	writeCrashSnapshot("bootstrap", UIOrErr)
+	error(UIOrErr)
+end
+local UI = UIOrErr
 logLine("BOOT", "bootstrapUI success | mode=" .. tostring(UI and UI.mode or "unknown"))
 
 local Rayfield = UI.Rayfield
@@ -877,6 +1040,7 @@ local okWindow, windowOrErr = pcall(Rayfield.CreateWindow, Rayfield, {
 if not okWindow then
 	local message = "CreateWindow failed: " .. tostring(windowOrErr)
 	logLine("ERROR", message)
+	writeCrashSnapshot("create-window", message)
 	error(message)
 end
 
@@ -1449,6 +1613,183 @@ tabSystem:CreateButton({
 	end
 })
 
+local function collectAutoDiagnostics(trigger)
+	local report = {
+		trigger = tostring(trigger or "unknown"),
+		generatedAt = type(os.date) == "function" and os.date("%Y-%m-%d %H:%M:%S") or tostring(os.clock()),
+		issueCount = 0,
+		issues = {},
+		hints = {}
+	}
+
+	local function addIssue(code, severity, message)
+		report.issueCount = report.issueCount + 1
+		table.insert(report.issues, {
+			code = tostring(code or "unknown"),
+			severity = tostring(severity or "warn"),
+			message = tostring(message or "")
+		})
+	end
+
+	local function addHint(message)
+		table.insert(report.hints, tostring(message or ""))
+	end
+
+	local bootstrapReasons = diagnosticState.bootstrap.reasons or {}
+	if #bootstrapReasons > 0 then
+		addIssue("bootstrap_warnings", "warn", "Bootstrap had fallback/errors before success.")
+		for _, reason in ipairs(bootstrapReasons) do
+			addHint("Bootstrap reason: " .. tostring(reason))
+		end
+	end
+
+	local fetchAttempts = diagnosticState.fetchAttempts or {}
+	local failedAttempts = 0
+	for _, attempt in ipairs(fetchAttempts) do
+		if attempt.ok ~= true then
+			failedAttempts = failedAttempts + 1
+		end
+	end
+	if failedAttempts > 0 then
+		addIssue("fetch_failures", "warn", "Detected failed remote fetch attempts: " .. tostring(failedAttempts))
+		addHint("Check CDN/raw GitHub reachability and executor HttpGet permissions.")
+	end
+
+	if checkState.fail > 0 then
+		addIssue("check_fail", "error", "Runtime checks failed: " .. tostring(checkState.fail))
+	end
+
+	local loggerInfo = type(ShowcaseLogger.getInfo) == "function" and ShowcaseLogger.getInfo() or nil
+	if type(loggerInfo) == "table" then
+		if loggerInfo.fileEnabled ~= true then
+			addIssue("file_log_disabled", "warn", "File log is unavailable: " .. tostring(loggerInfo.reason))
+			addHint("Enable writefile/appendfile APIs or set a writable log folder.")
+		end
+	end
+
+	local policyState = type(ExecPolicy) == "table" and type(ExecPolicy.getState) == "function" and ExecPolicy.getState() or nil
+	if type(policyState) == "table" and type(policyState.ops) == "table" then
+		for opKey, opState in pairs(policyState.ops) do
+			local streak = tonumber(opState and opState.consecutiveTimeouts) or 0
+			if streak > 0 then
+				addIssue("timeout_streak", "warn", "Timeout streak on op '" .. tostring(opKey) .. "': " .. tostring(streak))
+				addHint("Operation '" .. tostring(opKey) .. "' is timing out; increase timeout or inspect upstream loader.")
+			end
+		end
+	end
+
+	local logBuffer = type(ShowcaseLogger.getBuffer) == "function" and ShowcaseLogger.getBuffer() or {}
+	local function scanPattern(pattern, plain)
+		for _, line in ipairs(logBuffer) do
+			if string.find(string.lower(tostring(line)), pattern, 1, plain == true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	if scanPattern("httpget failed", true) then
+		addIssue("network_httpget_failed", "error", "HttpGet failed while loading remote modules.")
+		addHint("If running in executor, ensure HTTP requests are enabled and not blocked.")
+	end
+	if scanPattern("timeout after", true) then
+		addIssue("operation_timeout", "warn", "At least one operation timed out during bootstrap/load.")
+	end
+	if scanPattern("ui bootstrap failed", true) then
+		addIssue("ui_bootstrap_failed", "error", "UI bootstrap reported failure.")
+	end
+	if scanPattern("createwindow failed", true) then
+		addIssue("create_window_failed", "error", "Rayfield.CreateWindow failed.")
+		addHint("Inspect runtime compatibility and module contracts for CreateWindow dependencies.")
+	end
+
+	if report.issueCount == 0 then
+		addHint("No critical issue pattern detected from current run.")
+	end
+
+	return report
+end
+
+local function renderDiagnosticReport(report)
+	local lines = {
+		"=== Rayfield Showcase Auto Diagnostics ===",
+		"trigger: " .. tostring(report.trigger),
+		"generatedAt: " .. tostring(report.generatedAt),
+		"runtimeRoot: " .. tostring(root),
+		"bootstrapOrder: " .. tostring(diagnosticState.bootstrap.order),
+		"bootstrapMode: " .. tostring(diagnosticState.bootstrap.mode),
+		"selectedRoot: " .. tostring(diagnosticState.bootstrap.selectedRoot),
+		"checkPass: " .. tostring(checkState.pass),
+		"checkFail: " .. tostring(checkState.fail),
+		"issues: " .. tostring(report.issueCount)
+	}
+
+	table.insert(lines, "--- issue-list ---")
+	if #report.issues == 0 then
+		table.insert(lines, "none")
+	else
+		for _, issue in ipairs(report.issues) do
+			table.insert(lines, string.format("[%s][%s] %s", tostring(issue.severity), tostring(issue.code), tostring(issue.message)))
+		end
+	end
+
+	table.insert(lines, "--- hints ---")
+	if #report.hints == 0 then
+		table.insert(lines, "none")
+	else
+		for _, hint in ipairs(report.hints) do
+			table.insert(lines, "- " .. tostring(hint))
+		end
+	end
+
+	return table.concat(lines, "\n")
+end
+
+local function runAutoDiagnostics(trigger)
+	local report = collectAutoDiagnostics(trigger)
+	local payload = renderDiagnosticReport(report)
+	local okWrite, path = false, nil
+	if type(ShowcaseLogger.writeDiagnosticReport) == "function" then
+		okWrite, path = ShowcaseLogger.writeDiagnosticReport(payload, "auto")
+	end
+	report.path = path
+	diagnosticState.lastReport = report
+
+	if report.issueCount > 0 then
+		logLine("DIAG", "Auto diagnostics detected issues=" .. tostring(report.issueCount) .. " | path=" .. tostring(path))
+		pcall(Rayfield.Notify, Rayfield, {
+			Title = "Showcase Diagnostics",
+			Content = "Detected " .. tostring(report.issueCount) .. " issue(s). Report: " .. tostring(path or "memory"),
+			Duration = 7
+		})
+	else
+		logLine("DIAG", "Auto diagnostics clean | path=" .. tostring(path))
+	end
+
+	if type(_G) == "table" then
+		_G.__RAYFIELD_SHOWCASE_DIAGNOSTICS = report
+	end
+	return report, payload, okWrite == true
+end
+
+tabSystem:CreateButton({
+	Name = "Run Auto Diagnostics",
+	Callback = function()
+		local report = runAutoDiagnostics("manual")
+		local summary = "Diagnostics issues=" .. tostring(report and report.issueCount or 0)
+		sampleLog((report and report.issueCount or 0) > 0 and "warn" or "info", summary)
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Show Log Paths",
+	Callback = function()
+		local info = type(ShowcaseLogger.getInfo) == "function" and ShowcaseLogger.getInfo() or {}
+		sampleLog("info", "Log file => " .. tostring(info.path))
+		sampleLog("info", "Diagnostic latest => " .. tostring(info.latestDiagnosticPath))
+	end
+})
+
 -- [[ CHECKS ]] --
 local function runShowcaseChecks()
 	logLine("BOOT", "runShowcaseChecks begin")
@@ -1529,7 +1870,13 @@ end
 
 task.spawn(function()
 	local ok, err = pcall(runShowcaseChecks)
-	if not ok then logLine("ERROR", "Checks Failed: " .. tostring(err)) end
+	if not ok then
+		logLine("ERROR", "Checks Failed: " .. tostring(err))
+		writeCrashSnapshot("checks", err)
+		runAutoDiagnostics("checks-crash")
+		return
+	end
+	runAutoDiagnostics("post-checks")
 end)
 
 logLine("BOOT", "Final payload return")
@@ -1541,5 +1888,7 @@ return {
 			DataGrid = settingsDataGrid
 		}
 	},
-	CheckState = checkState, RuntimeState = runtimeState
+	CheckState = checkState,
+	RuntimeState = runtimeState,
+	Diagnostics = diagnosticState
 }
