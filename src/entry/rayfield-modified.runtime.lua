@@ -819,6 +819,8 @@ local MathUtilsModuleLib = nil
 local ResourceGuardModuleLib = nil
 local GridBuilderModuleLib = nil
 local ChartBuilderModuleLib = nil
+local RangeBarsFactoryModuleLib = nil
+local FeedbackWidgetsFactoryModuleLib = nil
 local function resolveDataGridFactoryModule()
 	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
 		return DataGridFactoryModuleLib
@@ -1026,6 +1028,42 @@ local function resolveChartBuilderModule()
 		"Chart builder will use direct factory fallback."
 	)
 	return ChartBuilderModuleLib
+end
+local function resolveRangeBarsFactoryModule()
+	if type(RangeBarsFactoryModuleLib) == "table"
+		and type(RangeBarsFactoryModuleLib.createTrackBar) == "function"
+		and type(RangeBarsFactoryModuleLib.createStatusBar) == "function" then
+		return RangeBarsFactoryModuleLib
+	end
+	RangeBarsFactoryModuleLib = optionalModuleWithContract(
+		"elementsRangeBarsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createTrackBar) == "function"
+				and type(moduleValue.createStatusBar) == "function"
+		end,
+		"Range bar widgets will be unavailable."
+	)
+	return RangeBarsFactoryModuleLib
+end
+local function resolveFeedbackWidgetsFactoryModule()
+	if type(FeedbackWidgetsFactoryModuleLib) == "table"
+		and type(FeedbackWidgetsFactoryModuleLib.createLogConsole) == "function"
+		and type(FeedbackWidgetsFactoryModuleLib.createLoadingSpinner) == "function"
+		and type(FeedbackWidgetsFactoryModuleLib.createLoadingBar) == "function" then
+		return FeedbackWidgetsFactoryModuleLib
+	end
+	FeedbackWidgetsFactoryModuleLib = optionalModuleWithContract(
+		"elementsFeedbackWidgetsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createLogConsole) == "function"
+				and type(moduleValue.createLoadingSpinner) == "function"
+				and type(moduleValue.createLoadingBar) == "function"
+		end,
+		"Feedback widgets will be unavailable."
+	)
+	return FeedbackWidgetsFactoryModuleLib
 end
 
 -- Services
@@ -5777,6 +5815,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveGridBuilderModule = resolveGridBuilderModule,
 		ChartBuilderModule = ChartBuilderModuleLib,
 		ResolveChartBuilderModule = resolveChartBuilderModule,
+		RangeBarsFactoryModule = RangeBarsFactoryModuleLib,
+		ResolveRangeBarsFactoryModule = resolveRangeBarsFactoryModule,
+		FeedbackWidgetsFactoryModule = FeedbackWidgetsFactoryModuleLib,
+		ResolveFeedbackWidgetsFactoryModule = resolveFeedbackWidgetsFactoryModule,
 		ButtonFactoryModule = ButtonFactoryModuleLib,
 		ResolveButtonFactory = resolveButtonFactoryModule,
 		InputFactoryModule = InputFactoryModuleLib,

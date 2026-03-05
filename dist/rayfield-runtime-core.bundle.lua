@@ -942,6 +942,8 @@ return {
 	elementsWidgetAPIInjector = entry("src/ui/elements/factory/widget-api-injector.lua", nil, "elements-widget-api-injector"),
 	elementsMathUtils = entry("src/ui/elements/factory/math-utils.lua", nil, "elements-math-utils"),
 	elementsResourceGuard = entry("src/ui/elements/factory/resource-guard.lua", nil, "elements-resource-guard"),
+	elementsRangeBarsFactory = entry("src/ui/elements/factory/range-bars-factory.lua", nil, "elements-range-bars-factory"),
+	elementsFeedbackWidgetsFactory = entry("src/ui/elements/factory/feedback-widgets-factory.lua", nil, "elements-feedback-widgets-factory"),
 	elementsGridBuilder = entry("src/ui/elements/factory/widget-builders/grid-builder.lua", nil, "elements-grid-builder"),
 	elementsChartBuilder = entry("src/ui/elements/factory/widget-builders/chart-builder.lua", nil, "elements-chart-builder"),
 	allInOne = entry("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "rayfield-all-in-one"),
@@ -13227,6 +13229,8 @@ return {
 	elementsWidgetAPIInjector = row("src/ui/elements/factory/widget-api-injector.lua"),
 	elementsMathUtils = row("src/ui/elements/factory/math-utils.lua"),
 	elementsResourceGuard = row("src/ui/elements/factory/resource-guard.lua"),
+	elementsRangeBarsFactory = row("src/ui/elements/factory/range-bars-factory.lua"),
+	elementsFeedbackWidgetsFactory = row("src/ui/elements/factory/feedback-widgets-factory.lua"),
 	elementsGridBuilder = row("src/ui/elements/factory/widget-builders/grid-builder.lua"),
 	elementsChartBuilder = row("src/ui/elements/factory/widget-builders/chart-builder.lua"),
 	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
@@ -14951,6 +14955,8 @@ local MathUtilsModuleLib = nil
 local ResourceGuardModuleLib = nil
 local GridBuilderModuleLib = nil
 local ChartBuilderModuleLib = nil
+local RangeBarsFactoryModuleLib = nil
+local FeedbackWidgetsFactoryModuleLib = nil
 local function resolveDataGridFactoryModule()
 	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
 		return DataGridFactoryModuleLib
@@ -15158,6 +15164,42 @@ local function resolveChartBuilderModule()
 		"Chart builder will use direct factory fallback."
 	)
 	return ChartBuilderModuleLib
+end
+local function resolveRangeBarsFactoryModule()
+	if type(RangeBarsFactoryModuleLib) == "table"
+		and type(RangeBarsFactoryModuleLib.createTrackBar) == "function"
+		and type(RangeBarsFactoryModuleLib.createStatusBar) == "function" then
+		return RangeBarsFactoryModuleLib
+	end
+	RangeBarsFactoryModuleLib = optionalModuleWithContract(
+		"elementsRangeBarsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createTrackBar) == "function"
+				and type(moduleValue.createStatusBar) == "function"
+		end,
+		"Range bar widgets will be unavailable."
+	)
+	return RangeBarsFactoryModuleLib
+end
+local function resolveFeedbackWidgetsFactoryModule()
+	if type(FeedbackWidgetsFactoryModuleLib) == "table"
+		and type(FeedbackWidgetsFactoryModuleLib.createLogConsole) == "function"
+		and type(FeedbackWidgetsFactoryModuleLib.createLoadingSpinner) == "function"
+		and type(FeedbackWidgetsFactoryModuleLib.createLoadingBar) == "function" then
+		return FeedbackWidgetsFactoryModuleLib
+	end
+	FeedbackWidgetsFactoryModuleLib = optionalModuleWithContract(
+		"elementsFeedbackWidgetsFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table"
+				and type(moduleValue.createLogConsole) == "function"
+				and type(moduleValue.createLoadingSpinner) == "function"
+				and type(moduleValue.createLoadingBar) == "function"
+		end,
+		"Feedback widgets will be unavailable."
+	)
+	return FeedbackWidgetsFactoryModuleLib
 end
 
 -- Services
@@ -19909,6 +19951,10 @@ function RayfieldLibrary:CreateWindow(Settings)
 		ResolveGridBuilderModule = resolveGridBuilderModule,
 		ChartBuilderModule = ChartBuilderModuleLib,
 		ResolveChartBuilderModule = resolveChartBuilderModule,
+		RangeBarsFactoryModule = RangeBarsFactoryModuleLib,
+		ResolveRangeBarsFactoryModule = resolveRangeBarsFactoryModule,
+		FeedbackWidgetsFactoryModule = FeedbackWidgetsFactoryModuleLib,
+		ResolveFeedbackWidgetsFactoryModule = resolveFeedbackWidgetsFactoryModule,
 		ButtonFactoryModule = ButtonFactoryModuleLib,
 		ResolveButtonFactory = resolveButtonFactoryModule,
 		InputFactoryModule = InputFactoryModuleLib,

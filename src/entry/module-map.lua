@@ -101,6 +101,8 @@ return {
 	elementsWidgetAPIInjector = row("src/ui/elements/factory/widget-api-injector.lua"),
 	elementsMathUtils = row("src/ui/elements/factory/math-utils.lua"),
 	elementsResourceGuard = row("src/ui/elements/factory/resource-guard.lua"),
+	elementsRangeBarsFactory = row("src/ui/elements/factory/range-bars-factory.lua"),
+	elementsFeedbackWidgetsFactory = row("src/ui/elements/factory/feedback-widgets-factory.lua"),
 	elementsGridBuilder = row("src/ui/elements/factory/widget-builders/grid-builder.lua"),
 	elementsChartBuilder = row("src/ui/elements/factory/widget-builders/chart-builder.lua"),
 	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),

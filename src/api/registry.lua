@@ -98,6 +98,8 @@ return {
 	elementsWidgetAPIInjector = entry("src/ui/elements/factory/widget-api-injector.lua", nil, "elements-widget-api-injector"),
 	elementsMathUtils = entry("src/ui/elements/factory/math-utils.lua", nil, "elements-math-utils"),
 	elementsResourceGuard = entry("src/ui/elements/factory/resource-guard.lua", nil, "elements-resource-guard"),
+	elementsRangeBarsFactory = entry("src/ui/elements/factory/range-bars-factory.lua", nil, "elements-range-bars-factory"),
+	elementsFeedbackWidgetsFactory = entry("src/ui/elements/factory/feedback-widgets-factory.lua", nil, "elements-feedback-widgets-factory"),
 	elementsGridBuilder = entry("src/ui/elements/factory/widget-builders/grid-builder.lua", nil, "elements-grid-builder"),
 	elementsChartBuilder = entry("src/ui/elements/factory/widget-builders/chart-builder.lua", nil, "elements-chart-builder"),
 	allInOne = entry("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "rayfield-all-in-one"),
