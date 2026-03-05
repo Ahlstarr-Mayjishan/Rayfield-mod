@@ -4694,6 +4694,23 @@ function normalizeProfileMode(mode)
 	return "auto"
 end
 
+-- Startup mode normalization functions
+local DEFAULT_STARTUP_TARGET_MS = 2000
+
+local function normalizeStartupMode(mode)
+	local normalized = string.lower(tostring(mode or "auto"))
+	if normalized ~= "auto" and normalized ~= "full" and normalized ~= "fast" then
+		normalized = "auto"
+	end
+	return normalized
+end
+
+local function normalizeStartupTargetMs(value)
+	local target = tonumber(value) or DEFAULT_STARTUP_TARGET_MS
+	target = math.floor(target + 0.5)
+	return math.max(250, target)
+end
+
 function mergeTable(target, source)
 	if type(source) ~= "table" then
 		return
