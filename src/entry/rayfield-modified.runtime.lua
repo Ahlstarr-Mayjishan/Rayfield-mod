@@ -1044,6 +1044,16 @@ if type(MainShellModuleLib) == "table" and type(MainShellModuleLib.applyReactive
 else
 	bindTheme(Main, "BackgroundColor3", "Background")
 	bindTheme(Topbar, "BackgroundColor3", "Topbar")
+	-- Ensure Main container has rounded corners (UICorner) as fallback
+	if Main and Main:IsA("GuiObject") then
+		local mainCorner = Main:FindFirstChildOfClass("UICorner")
+		if not mainCorner then
+			local newCorner = Instance.new("UICorner")
+			newCorner.Name = "MainCorner"
+			newCorner.CornerRadius = UDim.new(0, 12)
+			newCorner.Parent = Main
+		end
+	end
 end
 
 -- Initialize Settings Module
@@ -4921,7 +4931,91 @@ function RayfieldLibrary:CreateWindow(Settings)
 	local runtimeCtx = {
 		touchEnabled = UserInputService and UserInputService.TouchEnabled == true
 	}
+	local requestedStartupMode = normalizeStartupMode(Settings.StartupMode)
+	local startupTargetMs = normalizeStartupTargetMs(Settings.StartupTargetMs)
 	local resolvedPerformanceProfile = resolvePerformanceProfile(Settings, runtimeCtx)
+	local previousStartupSummary = readStartupSummarySnapshot(false)
+	local startupModeResolved = requestedStartupMode
+	if requestedStartupMode == "auto" then
+		local previousTotalMs = type(previousStartupSummary) == "table" and tonumber(previousStartupSummary.totalMs) or nil
+		local previousWasSlow = type(previousTotalMs) == "number" and previousTotalMs > startupTargetMs
+		if resolvedPerformanceProfile.disableAnimations == true
+			or runtimeCtx.touchEnabled == true
+			or previousWasSlow then
+			startupModeResolved = "fast"
+		else
+			startupModeResolved = "full"
+		end
+	end
+	Settings.StartupMode = requestedStartupMode
+	Settings.StartupTargetMs = startupTargetMs
+
+	local startupSessionBegan = false
+	if type(StartupTraceApi) == "table" and type(StartupTraceApi.beginSession) == "function" then
+		local okBegin = pcall(StartupTraceApi.beginSession, {
+			mode = requestedStartupMode,
+			resolvedMode = startupModeResolved,
+			targetMs = startupTargetMs,
+			source = "CreateWindow",
+			windowName = tostring(Settings.Name or "Unnamed")
+		})
+		startupSessionBegan = okBegin == true
+	end
+	local startupCreateWindowStage = nil
+	if type(StartupTraceApi) == "table" and type(StartupTraceApi.startStage) == "function" then
+		local okStage, stage = pcall(StartupTraceApi.startStage, "create_window", "runtime", {
+			windowName = tostring(Settings.Name or "Unnamed")
+		})
+		if okStage and type(stage) == "table" then
+			startupCreateWindowStage = stage
+		end
+	end
+	local startupFallbackStartedAt = os.clock()
+	local startupFinalized = false
+
+	local function finalizeStartupTracing(status, extraMeta)
+		if startupFinalized then
+			return readStartupSummarySnapshot(false)
+		end
+		startupFinalized = true
+		if type(startupCreateWindowStage) == "table"
+			and type(StartupTraceApi) == "table"
+			and type(StartupTraceApi.finishStage) == "function" then
+			pcall(StartupTraceApi.finishStage, startupCreateWindowStage, status or "ok", extraMeta)
+		end
+		local summary = nil
+		if startupSessionBegan
+			and type(StartupTraceApi) == "table"
+			and type(StartupTraceApi.finalizeSession) == "function" then
+			local okFinalize, resultSummary = pcall(StartupTraceApi.finalizeSession, {
+				mode = requestedStartupMode,
+				resolvedMode = startupModeResolved,
+				targetMs = startupTargetMs,
+				status = status or "ok"
+			})
+			if okFinalize and type(resultSummary) == "table" then
+				summary = resultSummary
+			end
+		end
+		if type(summary) ~= "table" then
+			summary = {
+				mode = requestedStartupMode,
+				resolvedMode = startupModeResolved,
+				targetMs = startupTargetMs,
+				totalMs = math.max(0, math.floor(((os.clock() - startupFallbackStartedAt) * 1000) + 0.5)),
+				stages = {},
+				hotspots = {},
+				bundle = {
+					attempted = false,
+					used = false,
+					hitRate = 0
+				}
+			}
+		end
+		applyStartupSummaryToLoaderDiagnostics(summary)
+		return summary
+	end
+
 	activePerformanceProfile = resolvedPerformanceProfile
 	detachPathEnabled = resolvedPerformanceProfile.disableDetach ~= true
 	applySystemOverridesForProfile(resolvedPerformanceProfile)
@@ -4934,10 +5028,16 @@ function RayfieldLibrary:CreateWindow(Settings)
 	if resolvedPerformanceProfile.disableAnimations == true then
 		startupTimeScale = 0.08
 	end
+	if startupModeResolved == "fast" then
+		startupTimeScale = math.min(startupTimeScale, 0.04)
+	end
 
 	local function waitForStartup(seconds)
 		local duration = tonumber(seconds) or 0
 		if duration <= 0 then
+			return
+		end
+		if startupModeResolved == "fast" then
 			return
 		end
 		local scaled = duration * startupTimeScale
@@ -4967,6 +5067,19 @@ function RayfieldLibrary:CreateWindow(Settings)
 			disableTabSplit = resolvedPerformanceProfile.disableTabSplit == true,
 			disableAnimations = resolvedPerformanceProfile.disableAnimations == true,
 			appliedFields = shallowArrayCopy(resolvedPerformanceProfile.appliedFields)
+		}
+		loaderDiagnostics.startup = {
+			mode = requestedStartupMode,
+			resolvedMode = startupModeResolved,
+			targetMs = startupTargetMs,
+			totalMs = 0,
+			stages = {},
+			hotspots = {},
+			bundle = {
+				attempted = false,
+				used = false,
+				hitRate = 0
+			}
 		}
 	end
 
@@ -5411,6 +5524,9 @@ function RayfieldLibrary:CreateWindow(Settings)
 			warn("Rayfield Mod: [W_KEY_SYSTEM_RUNTIME] " .. tostring(keyRuntimeOrErr))
 			Passthrough = true
 		elseif type(keyRuntimeOrErr) == "table" and keyRuntimeOrErr.abortWindowCreation == true then
+			finalizeStartupTracing("aborted", {
+				reason = "key_system_abort"
+			})
 			return
 		end
 	end
@@ -5922,9 +6038,27 @@ function RayfieldLibrary:CreateWindow(Settings)
 	restoreExperienceStateSafely()
 	task.delay(0.9, restoreExperienceStateSafely)
 
+	local startupAnimationStage = nil
+	if type(StartupTraceApi) == "table" and type(StartupTraceApi.startStage) == "function" then
+		local okStage, stage = pcall(StartupTraceApi.startStage, "startup_animation", "runtime", {
+			mode = startupModeResolved
+		})
+		if okStage and type(stage) == "table" then
+			startupAnimationStage = stage
+		end
+	end
+
 	local startupSuccess, startupResult = pcall(function()
 		playStartupAnimation()
 	end)
+	if type(startupAnimationStage) == "table"
+		and type(StartupTraceApi) == "table"
+		and type(StartupTraceApi.finishStage) == "function" then
+		pcall(StartupTraceApi.finishStage, startupAnimationStage, startupSuccess and "ok" or "error", {
+			mode = startupModeResolved,
+			error = startupSuccess and nil or tostring(startupResult)
+		})
+	end
 	if not startupSuccess then
 		warn("Rayfield had an issue during startup animation: " .. tostring(startupResult))
 		LoadingFrame.Visible = false
@@ -5933,13 +6067,22 @@ function RayfieldLibrary:CreateWindow(Settings)
 		Elements.Visible = true
 	end
 
-	maybeNotifyLoaderFallback()
+	if startupModeResolved == "fast" then
+		task.defer(maybeNotifyLoaderFallback)
+	else
+		maybeNotifyLoaderFallback()
+	end
 
 	task.delay(1.1, function()
 		if not ExperienceState.onboardingRendered and not ExperienceState.onboardingSuppressed then
 			RayfieldLibrary:ShowOnboarding(false)
 		end
 	end)
+
+	finalizeStartupTracing(startupSuccess and "ok" or "degraded", {
+		mode = startupModeResolved,
+		animationError = startupSuccess and nil or tostring(startupResult)
+	})
 
 	return Window
 end

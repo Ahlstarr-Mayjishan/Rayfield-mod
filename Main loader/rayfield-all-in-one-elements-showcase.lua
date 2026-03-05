@@ -1584,6 +1584,134 @@ tabSystem:CreateButton({
 	end
 })
 
+local startupTimelineGrid = nil
+if type(tabSystem.CreateDataGrid) == "function" then
+	startupTimelineGrid = tabSystem:CreateDataGrid({
+		Name = "Startup Timeline Grid",
+		Columns = {
+			{ Key = "index", Title = "#", Sortable = true },
+			{ Key = "name", Title = "Stage", Sortable = true },
+			{ Key = "durationMs", Title = "Duration (ms)", Sortable = true },
+			{ Key = "percent", Title = "Percent", Sortable = true },
+			{ Key = "source", Title = "Source", Sortable = true },
+			{ Key = "status", Title = "Status", Sortable = true }
+		},
+		Rows = {}
+	})
+end
+
+local startupTimelineLabel = tabSystem:CreateLabel("Startup timeline: press refresh to load diagnostics.")
+
+local function getStartupSummarySnapshot()
+	local startupSummary = nil
+	if type(Rayfield.GetRuntimeDiagnostics) == "function" then
+		local okDiag, diagnostics = pcall(Rayfield.GetRuntimeDiagnostics, Rayfield)
+		if okDiag and type(diagnostics) == "table" and type(diagnostics.startup) == "table" then
+			startupSummary = diagnostics.startup
+		end
+	end
+	if type(startupSummary) ~= "table"
+		and type(_G) == "table"
+		and type(_G.__RAYFIELD_LOADER_DIAGNOSTICS) == "table"
+		and type(_G.__RAYFIELD_LOADER_DIAGNOSTICS.startup) == "table" then
+		startupSummary = _G.__RAYFIELD_LOADER_DIAGNOSTICS.startup
+	end
+	return startupSummary
+end
+
+local function formatStartupSummary(summary)
+	if type(summary) ~= "table" then
+		return "Startup timeline unavailable."
+	end
+	local totalMs = math.max(0, math.floor(tonumber(summary.totalMs) or 0))
+	local targetMs = math.max(1, math.floor(tonumber(summary.targetMs) or 2000))
+	local mode = tostring(summary.resolvedMode or summary.mode or "auto")
+	local bundleHit = tonumber(summary.bundle and summary.bundle.hitRate) or 0
+	local topHotspot = "none"
+	if type(summary.hotspots) == "table" and type(summary.hotspots[1]) == "table" then
+		topHotspot = tostring(summary.hotspots[1].name or "none")
+	end
+	return string.format(
+		"Startup total: %dms / %dms (%s) | Bundle hit: %.1f%% | Hotspot: %s",
+		totalMs,
+		targetMs,
+		mode,
+		bundleHit,
+		topHotspot
+	)
+end
+
+local function buildStartupRows(summary)
+	local rows = {}
+	if type(summary) ~= "table" or type(summary.stages) ~= "table" then
+		return rows
+	end
+	local totalMs = math.max(1, tonumber(summary.totalMs) or 0)
+	for index, stage in ipairs(summary.stages) do
+		if type(stage) == "table" then
+			local durationMs = tonumber(stage.durationMs) or 0
+			local percent = math.floor(((durationMs / totalMs) * 1000) + 0.5) / 10
+			table.insert(rows, {
+				index = index,
+				name = tostring(stage.name or "unknown"),
+				durationMs = durationMs,
+				percent = tostring(percent) .. "%",
+				source = tostring(stage.source or "runtime"),
+				status = tostring(stage.status or "ok")
+			})
+		end
+	end
+	return rows
+end
+
+local function refreshStartupTimeline()
+	local summary = getStartupSummarySnapshot()
+	local summaryText = formatStartupSummary(summary)
+	if startupTimelineLabel and type(startupTimelineLabel.Set) == "function" then
+		startupTimelineLabel:Set(summaryText)
+	end
+	if type(startupTimelineGrid) == "table" and type(startupTimelineGrid.SetRows) == "function" then
+		local rows = buildStartupRows(summary)
+		startupTimelineGrid:SetRows(rows)
+	end
+	return summary, summaryText
+end
+
+tabSystem:CreateButton({
+	Name = "Refresh Startup Timeline",
+	Callback = function()
+		local summary = refreshStartupTimeline()
+		sampleLog(type(summary) == "table" and "info" or "warn", "Startup timeline refreshed.")
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Open Performance HUD",
+	Callback = function()
+		if type(Rayfield.OpenPerformanceHUD) ~= "function" then
+			sampleLog("warn", "OpenPerformanceHUD unavailable.")
+			return
+		end
+		local okOpen, status = Rayfield:OpenPerformanceHUD()
+		sampleLog(okOpen and "info" or "error", "OpenPerformanceHUD => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Copy Startup Summary",
+	Callback = function()
+		local _, summaryText = refreshStartupTimeline()
+		if type(setclipboard) ~= "function" then
+			sampleLog("warn", "setclipboard unavailable.")
+			return
+		end
+		pcall(setclipboard, summaryText)
+		sampleLog("info", "Startup summary copied.")
+	end
+})
+
+refreshStartupTimeline()
+
 local importCodeInput = tabSystem:CreateInput({
 	Name = "Settings Code Buffer",
 	PlaceholderText = "RFSC1:....",
@@ -2072,6 +2200,23 @@ local function runShowcaseChecks()
 			and type(Rayfield.OpenLiveThemeEditor) == "function"
 			and type(Rayfield.ExportLiveThemeDraftLua) == "function"
 			and type(Rayfield.Notify) == "function"
+	end)
+
+	runCheck("Startup diagnostics available", function()
+		local summary = getStartupSummarySnapshot()
+		if type(summary) ~= "table" then
+			return false
+		end
+		if type(summary.totalMs) ~= "number" then
+			return false
+		end
+		if type(summary.stages) ~= "table" then
+			return false
+		end
+		if type(summary.bundle) ~= "table" then
+			return false
+		end
+		return true
 	end)
 
 	runCheck("Dynamic API auto-coverage is active", function()

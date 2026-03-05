@@ -39,6 +39,10 @@ end
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 local legacyRuntimeConfig = buildLegacyRuntimeConfig(_G)
 
+if type(_G) == "table" then
+	_G.__RAYFIELD_BUNDLE_MODE = _G.__RAYFIELD_BUNDLE_MODE or "bundle_auto"
+end
+
 local function configureApiRuntime()
 	local clientSource = nil
 	if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
@@ -92,7 +96,11 @@ local function preloadBundlesIfEnabled()
 	if type(_G) ~= "table" then
 		return
 	end
-	if _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES ~= true then
+	local shouldPreload = _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES
+	if shouldPreload == nil then
+		shouldPreload = true
+	end
+	if shouldPreload ~= true then
 		return
 	end
 	if _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then

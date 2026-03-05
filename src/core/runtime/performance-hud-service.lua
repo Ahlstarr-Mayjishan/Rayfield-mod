@@ -640,6 +640,15 @@ function PerformanceHUDService.create(ctx)
 		local visibility = getVisibilityState() or {}
 		local macroState = getMacroState() or {}
 		local automation = getAutomationSummary() or {}
+		local startup = type(diagnostics.startup) == "table" and diagnostics.startup or {}
+		local startupHotspot = "none"
+		if type(startup.hotspots) == "table" and type(startup.hotspots[1]) == "table" then
+			startupHotspot = tostring(startup.hotspots[1].name or "none")
+		end
+		local startupMode = tostring(startup.resolvedMode or startup.mode or "auto")
+		local startupTotalMs = math.max(0, math.floor(tonumber(startup.totalMs) or 0))
+		local startupTargetMs = math.max(1, math.floor(tonumber(startup.targetMs) or 2000))
+		local startupBundleHitRate = tonumber(startup.bundle and startup.bundle.hitRate) or 0
 		if fpsState.smoothed <= 0 then
 			local nowClock = os.clock()
 			local delta = math.max(0.0001, nowClock - (fpsState.lastClock or nowClock))
@@ -658,7 +667,12 @@ function PerformanceHUDService.create(ctx)
 			macroRecording = macroState.recording == true,
 			macroExecuting = macroState.executing == true,
 			scheduledActions = tonumber(automation.scheduled) or 0,
-			automationRules = tonumber(automation.rules) or 0
+			automationRules = tonumber(automation.rules) or 0,
+			startupMode = startupMode,
+			startupTotalMs = startupTotalMs,
+			startupTargetMs = startupTargetMs,
+			startupHotspot = startupHotspot,
+			startupBundleHitRate = startupBundleHitRate
 		}
 	end
 
@@ -686,7 +700,13 @@ function PerformanceHUDService.create(ctx)
 			string.format(L("hud.metric.ownership", "Ownership scopes/tasks: %s/%s"), tostring(metrics.ownershipScopes), tostring(metrics.ownershipTasks)),
 			string.format(L("hud.metric.ui_state", "UI visible: %s | minimized: %s"), tostring(metrics.visible), tostring(metrics.minimized)),
 			string.format(L("hud.metric.macro", "Macro rec/exec: %s/%s"), tostring(metrics.macroRecording), tostring(metrics.macroExecuting)),
-			string.format(L("hud.metric.automation", "Automation scheduled/rules: %s/%s"), tostring(metrics.scheduledActions), tostring(metrics.automationRules))
+			string.format(L("hud.metric.automation", "Automation scheduled/rules: %s/%s"), tostring(metrics.scheduledActions), tostring(metrics.automationRules)),
+			string.format(L("hud.metric.startup_total", "Startup: %sms / %sms (%s)"), tostring(metrics.startupTotalMs), tostring(metrics.startupTargetMs), tostring(metrics.startupMode)),
+			string.format(
+				L("hud.metric.startup_hotspot", "Startup hotspot: %s | Bundle hit: %s%%"),
+				tostring(metrics.startupHotspot),
+				tostring(math.floor(((tonumber(metrics.startupBundleHitRate) or 0) * 10) + 0.5) / 10)
+			)
 		}
 		refs.Body.Text = table.concat(lines, "\n")
 	end

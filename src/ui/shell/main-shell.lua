@@ -10,6 +10,18 @@ function MainShell.applyReactiveTheme(options)
 	end
 
 	bindTheme(main, "BackgroundColor3", "Background")
+
+	-- Ensure Main container has rounded corners (UICorner)
+	if main and main:IsA("GuiObject") then
+		local mainCorner = main:FindFirstChildOfClass("UICorner")
+		if not mainCorner then
+			local newCorner = Instance.new("UICorner")
+			newCorner.Name = "MainCorner"
+			newCorner.CornerRadius = UDim.new(0, 12)
+			newCorner.Parent = main
+		end
+	end
+
 	bindTheme(topbar, "BackgroundColor3", "Topbar")
 
 	local cornerRepair = topbar:FindFirstChild("CornerRepair")

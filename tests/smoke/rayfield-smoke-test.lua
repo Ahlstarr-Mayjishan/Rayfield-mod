@@ -298,6 +298,34 @@ test("PerformanceProfile Opt-in", function()
 	assertNotNil(resetWindow, "Failed to reset profile state")
 end)
 
+test("Startup Diagnostics Surface", function()
+	local window = Rayfield:CreateWindow({
+		Name = "Startup Diagnostics Test",
+		DisableRayfieldPrompts = true,
+		DisableBuildWarnings = true,
+		ConfigurationSaving = { Enabled = false },
+		StartupMode = "auto",
+		StartupTargetMs = 2000
+	})
+	assertNotNil(window, "Window is nil with Startup diagnostics")
+
+	local loaderDiagnostics = _G and _G.__RAYFIELD_LOADER_DIAGNOSTICS
+	assertNotNil(loaderDiagnostics, "Loader diagnostics missing")
+	assertNotNil(loaderDiagnostics.startup, "Loader startup diagnostics missing")
+	assertTrue(type(loaderDiagnostics.startup.totalMs) == "number", "Loader startup totalMs must be number")
+	assertTrue(type(loaderDiagnostics.startup.stages) == "table", "Loader startup stages must be table")
+	assertTrue(type(loaderDiagnostics.startup.bundle) == "table", "Loader startup bundle must be table")
+
+	local runtimeDiagnostics = Rayfield:GetRuntimeDiagnostics()
+	assertNotNil(runtimeDiagnostics, "Runtime diagnostics missing")
+	assertNotNil(runtimeDiagnostics.startup, "Runtime startup diagnostics missing")
+	assertTrue(type(runtimeDiagnostics.startup.mode) == "string", "Runtime startup mode must be string")
+	assertTrue(type(runtimeDiagnostics.startup.totalMs) == "number", "Runtime startup totalMs must be number")
+	assertTrue(type(runtimeDiagnostics.startup.stages) == "table", "Runtime startup stages must be table")
+	assertTrue(type(runtimeDiagnostics.startup.hotspots) == "table", "Runtime startup hotspots must be table")
+	assertTrue(type(runtimeDiagnostics.startup.bundle) == "table", "Runtime startup bundle must be table")
+end)
+
 -- Test 3: Button Element
 test("Button Element Creation", function()
 	local button = testTab:CreateButton({

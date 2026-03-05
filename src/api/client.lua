@@ -28,6 +28,337 @@ local RuntimeConfig = {
 	bundleBrokenPaths = {}
 }
 
+local DEFAULT_STARTUP_TARGET_MS = 2000
+local MAX_STARTUP_TRACE_HISTORY = 5
+
+local StartupTraceState = {
+	current = nil,
+	history = {}
+}
+
+local function getGlobalEnv()
+	return type(_G) == "table" and _G or nil
+end
+
+local function normalizeStartupMode(mode)
+	local normalized = string.lower(tostring(mode or "auto"))
+	if normalized ~= "auto" and normalized ~= "full" and normalized ~= "fast" then
+		normalized = "auto"
+	end
+	return normalized
+end
+
+local function normalizeStartupTargetMs(value)
+	local target = tonumber(value) or DEFAULT_STARTUP_TARGET_MS
+	target = math.floor(target + 0.5)
+	return math.max(250, target)
+end
+
+local function mergeMeta(baseMeta, extraMeta)
+	local merged = {}
+	if type(baseMeta) == "table" then
+		for key, value in pairs(baseMeta) do
+			merged[key] = cloneValue(value)
+		end
+	end
+	if type(extraMeta) == "table" then
+		for key, value in pairs(extraMeta) do
+			merged[key] = cloneValue(value)
+		end
+	end
+	return merged
+end
+
+local function resolveSessionTotalMs(session, nowClock)
+	if type(session) ~= "table" then
+		return 0
+	end
+	local startClock = tonumber(session.sessionStartClock) or tonumber(nowClock) or os.clock()
+	local endClock = tonumber(session.sessionEndClock) or tonumber(nowClock) or os.clock()
+	return math.max(0, math.floor(((endClock - startClock) * 1000) + 0.5))
+end
+
+local function buildStartupHotspots(stages, totalMs)
+	local sorted = {}
+	if type(stages) == "table" then
+		for _, stage in ipairs(stages) do
+			if type(stage) == "table" then
+				table.insert(sorted, {
+					name = tostring(stage.name or "unknown"),
+					durationMs = tonumber(stage.durationMs) or 0
+				})
+			end
+		end
+	end
+	table.sort(sorted, function(a, b)
+		return (a.durationMs or 0) > (b.durationMs or 0)
+	end)
+	local hotspots = {}
+	local safeTotal = math.max(1, tonumber(totalMs) or 0)
+	for index = 1, math.min(5, #sorted) do
+		local item = sorted[index]
+		local percent = math.floor((((tonumber(item.durationMs) or 0) / safeTotal) * 1000) + 0.5) / 10
+		table.insert(hotspots, {
+			name = tostring(item.name),
+			durationMs = tonumber(item.durationMs) or 0,
+			percent = percent
+		})
+	end
+	return hotspots
+end
+
+local function buildStartupSummary(session, nowClock)
+	if type(session) ~= "table" then
+		return nil
+	end
+	local summary = {
+		mode = normalizeStartupMode(session.mode),
+		resolvedMode = normalizeStartupMode(session.resolvedMode or session.mode),
+		targetMs = normalizeStartupTargetMs(session.targetMs),
+		sessionStart = tonumber(session.sessionStartClock) or tonumber(nowClock) or os.clock(),
+		sessionStartedAt = session.sessionStartedAt,
+		totalMs = resolveSessionTotalMs(session, nowClock),
+		stages = {},
+		hotspots = {},
+		bundle = {
+			attempted = false,
+			used = false,
+			hitRate = 0
+		}
+	}
+
+	local stages = type(session.stages) == "table" and session.stages or {}
+	for _, stage in ipairs(stages) do
+		if type(stage) == "table" then
+			table.insert(summary.stages, {
+				name = tostring(stage.name or "unknown"),
+				durationMs = tonumber(stage.durationMs) or 0,
+				status = tostring(stage.status or "ok"),
+				source = tostring(stage.source or "runtime")
+			})
+		end
+	end
+
+	summary.hotspots = buildStartupHotspots(summary.stages, summary.totalMs)
+
+	local bundleStats = type(session.bundleStats) == "table" and session.bundleStats or {}
+	local attemptedCount = math.max(0, math.floor(tonumber(bundleStats.attemptedCount) or 0))
+	local usedCount = math.max(0, math.floor(tonumber(bundleStats.usedCount) or 0))
+	summary.bundle.attempted = attemptedCount > 0
+	summary.bundle.used = usedCount > 0
+	if attemptedCount > 0 then
+		summary.bundle.hitRate = math.floor(((usedCount / attemptedCount) * 1000) + 0.5) / 10
+	end
+	return summary
+end
+
+local function syncStartupGlobals(summary)
+	local globalEnv = getGlobalEnv()
+	if not globalEnv then
+		return
+	end
+	globalEnv.__RAYFIELD_STARTUP_TRACE_CURRENT = StartupTraceState.current
+	globalEnv.__RAYFIELD_STARTUP_TRACE_HISTORY = StartupTraceState.history
+	if type(summary) == "table" then
+		globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY = summary
+		if type(globalEnv.__RAYFIELD_LOADER_DIAGNOSTICS) == "table" then
+			globalEnv.__RAYFIELD_LOADER_DIAGNOSTICS.startup = cloneValue(summary)
+		end
+	end
+end
+
+local function publishCurrentStartupSummary()
+	local session = StartupTraceState.current
+	if type(session) ~= "table" then
+		return nil
+	end
+	local summary = buildStartupSummary(session, os.clock())
+	syncStartupGlobals(summary)
+	return summary
+end
+
+local function ensureStartupSession(options)
+	if type(StartupTraceState.current) == "table" then
+		return StartupTraceState.current
+	end
+	options = type(options) == "table" and options or {}
+	local nowClock = os.clock()
+	local session = {
+		id = tostring(math.floor(nowClock * 1000000)) .. "-" .. tostring(math.random(1000, 9999)),
+		mode = normalizeStartupMode(options.mode),
+		resolvedMode = normalizeStartupMode(options.resolvedMode or options.mode),
+		targetMs = normalizeStartupTargetMs(options.targetMs),
+		sessionStartClock = nowClock,
+		sessionStartedAt = type(os.date) == "function" and os.date("%Y-%m-%d %H:%M:%S") or tostring(nowClock),
+		source = tostring(options.source or "runtime"),
+		windowName = options.windowName and tostring(options.windowName) or nil,
+		stages = {},
+		bundleStats = {
+			attemptedCount = 0,
+			usedCount = 0,
+			fallbackCount = 0
+		}
+	}
+	StartupTraceState.current = session
+	syncStartupGlobals()
+	return session
+end
+
+local function beginStartupSession(options)
+	options = type(options) == "table" and options or {}
+	StartupTraceState.current = nil
+	return ensureStartupSession(options)
+end
+
+local function startStartupStage(name, source, meta)
+	local session = ensureStartupSession({
+		mode = "auto",
+		targetMs = DEFAULT_STARTUP_TARGET_MS,
+		source = "implicit"
+	})
+	return {
+		session = session,
+		name = tostring(name or "unknown"),
+		source = tostring(source or "runtime"),
+		meta = type(meta) == "table" and cloneValue(meta) or nil,
+		startClock = os.clock()
+	}
+end
+
+local function finishStartupStage(handle, status, extraMeta)
+	if type(handle) ~= "table" or type(handle.session) ~= "table" then
+		return nil
+	end
+	local endClock = os.clock()
+	local startClock = tonumber(handle.startClock) or endClock
+	local stage = {
+		name = tostring(handle.name or "unknown"),
+		source = tostring(handle.source or "runtime"),
+		status = tostring(status or "ok"),
+		startClock = startClock,
+		endClock = endClock,
+		durationMs = math.max(0, math.floor(((endClock - startClock) * 1000) + 0.5)),
+		meta = mergeMeta(handle.meta, extraMeta)
+	}
+	table.insert(handle.session.stages, stage)
+	publishCurrentStartupSummary()
+	return stage
+end
+
+local function markBundleAttempt()
+	local session = ensureStartupSession({
+		mode = "auto",
+		targetMs = DEFAULT_STARTUP_TARGET_MS,
+		source = "bundle"
+	})
+	session.bundleStats = type(session.bundleStats) == "table" and session.bundleStats or {
+		attemptedCount = 0,
+		usedCount = 0,
+		fallbackCount = 0
+	}
+	session.bundleStats.attemptedCount = math.max(0, math.floor(tonumber(session.bundleStats.attemptedCount) or 0)) + 1
+	publishCurrentStartupSummary()
+end
+
+local function markBundleUsed()
+	local session = ensureStartupSession({
+		mode = "auto",
+		targetMs = DEFAULT_STARTUP_TARGET_MS,
+		source = "bundle"
+	})
+	session.bundleStats = type(session.bundleStats) == "table" and session.bundleStats or {
+		attemptedCount = 0,
+		usedCount = 0,
+		fallbackCount = 0
+	}
+	session.bundleStats.usedCount = math.max(0, math.floor(tonumber(session.bundleStats.usedCount) or 0)) + 1
+	publishCurrentStartupSummary()
+end
+
+local function markBundleFallback()
+	local session = ensureStartupSession({
+		mode = "auto",
+		targetMs = DEFAULT_STARTUP_TARGET_MS,
+		source = "bundle"
+	})
+	session.bundleStats = type(session.bundleStats) == "table" and session.bundleStats or {
+		attemptedCount = 0,
+		usedCount = 0,
+		fallbackCount = 0
+	}
+	session.bundleStats.fallbackCount = math.max(0, math.floor(tonumber(session.bundleStats.fallbackCount) or 0)) + 1
+	publishCurrentStartupSummary()
+end
+
+local function finalizeStartupSession(options)
+	options = type(options) == "table" and options or {}
+	local session = StartupTraceState.current
+	if type(session) ~= "table" then
+		return nil
+	end
+	if options.mode ~= nil then
+		session.mode = normalizeStartupMode(options.mode)
+	end
+	if options.resolvedMode ~= nil then
+		session.resolvedMode = normalizeStartupMode(options.resolvedMode)
+	end
+	if options.targetMs ~= nil then
+		session.targetMs = normalizeStartupTargetMs(options.targetMs)
+	end
+	session.sessionEndClock = os.clock()
+	session.status = tostring(options.status or "ok")
+
+	local summary = buildStartupSummary(session, session.sessionEndClock)
+	StartupTraceState.current = nil
+	table.insert(StartupTraceState.history, cloneValue(summary))
+	while #StartupTraceState.history > MAX_STARTUP_TRACE_HISTORY do
+		table.remove(StartupTraceState.history, 1)
+	end
+	syncStartupGlobals(summary)
+	return summary
+end
+
+local function getCurrentStartupSummary()
+	return publishCurrentStartupSummary()
+end
+
+local function getLastStartupSummary()
+	if #StartupTraceState.history > 0 then
+		return cloneValue(StartupTraceState.history[#StartupTraceState.history])
+	end
+	local globalEnv = getGlobalEnv()
+	if globalEnv and type(globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY) == "table" then
+		return cloneValue(globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY)
+	end
+	return nil
+end
+
+local StartupTraceApi = {
+	beginSession = beginStartupSession,
+	startStage = startStartupStage,
+	finishStage = finishStartupStage,
+	finalizeSession = finalizeStartupSession,
+	getCurrentSummary = getCurrentStartupSummary,
+	getLastSummary = getLastStartupSummary,
+	markBundleAttempt = markBundleAttempt,
+	markBundleUsed = markBundleUsed,
+	markBundleFallback = markBundleFallback
+}
+
+do
+	local globalEnv = getGlobalEnv()
+	if globalEnv and type(globalEnv.__RAYFIELD_STARTUP_TRACE_HISTORY) == "table" then
+		StartupTraceState.history = globalEnv.__RAYFIELD_STARTUP_TRACE_HISTORY
+	end
+	if globalEnv and type(globalEnv.__RAYFIELD_STARTUP_TRACE_CURRENT) == "table" then
+		StartupTraceState.current = globalEnv.__RAYFIELD_STARTUP_TRACE_CURRENT
+	end
+	if globalEnv then
+		globalEnv.__RAYFIELD_STARTUP_TRACE_API = StartupTraceApi
+	end
+	syncStartupGlobals(globalEnv and globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY or nil)
+end
+
 local function normalizeRuntimeConfigPatch(options)
 	local patch = {}
 	if type(options) ~= "table" then
@@ -415,6 +746,12 @@ function Client.request(url, opts)
 	local completed = false
 	local okResult = false
 	local payload = nil
+	local requestStage = startStartupStage("http_get", "http", {
+		url = url,
+		timeoutSec = timeout,
+		policy = policyMode,
+		reason = policyReason
+	})
 
 	local worker = task.spawn(function()
 		local ok, result = pcall(game.HttpGet, game, url)
@@ -460,6 +797,15 @@ function Client.request(url, opts)
 			isBlocking = false
 		})
 	end
+	local requestStatus = "error"
+	if okResult == true then
+		requestStatus = "ok"
+	elseif type(payload) == "string" and string.find(payload, "timed out", 1, true) then
+		requestStatus = "timeout"
+	end
+	finishStartupStage(requestStage, requestStatus, {
+		cancelOnTimeout = cancelOnTimeout
+	})
 	return okResult, payload
 end
 
@@ -491,12 +837,46 @@ end
 function Client.fetchAndExecute(url, opts)
 	opts = opts or {}
 	local code, fromBundle, bundlePath = resolveSource(url, opts)
-	local okExecute, result = pcall(Client.execute, code)
+	local sourceType = fromBundle and "bundle" or "http"
+
+	local function compileAndExecute(codeToRun, executeSource, executeMeta)
+		local compileStage = startStartupStage("compile", executeSource, executeMeta)
+		local okCompile, chunkOrErr = pcall(Client.compile, codeToRun)
+		finishStartupStage(compileStage, okCompile and "ok" or "error", {
+			error = okCompile and nil or tostring(chunkOrErr)
+		})
+		if not okCompile then
+			return false, chunkOrErr
+		end
+
+		local executeStage = startStartupStage("execute", executeSource, executeMeta)
+		local okExecute, executeResult = pcall(chunkOrErr)
+		finishStartupStage(executeStage, okExecute and "ok" or "error", {
+			error = okExecute and nil or tostring(executeResult)
+		})
+		if not okExecute then
+			return false, executeResult
+		end
+		return true, executeResult
+	end
+
+	if fromBundle then
+		markBundleAttempt()
+	end
+
+	local okExecute, result = compileAndExecute(code, sourceType, {
+		url = url,
+		bundlePath = bundlePath
+	})
 	if okExecute then
+		if fromBundle then
+			markBundleUsed()
+		end
 		return result
 	end
 
 	if fromBundle then
+		markBundleFallback()
 		local broken = getBrokenBundleMap()
 		if broken then
 			if bundlePath then
@@ -510,7 +890,15 @@ function Client.fetchAndExecute(url, opts)
 		end
 		retryOpts.noBundle = true
 		local retryCode = Client.fetch(url, retryOpts)
-		return Client.execute(retryCode)
+		local okRetry, retryResult = compileAndExecute(retryCode, "http", {
+			url = url,
+			retry = true,
+			bundlePath = bundlePath
+		})
+		if okRetry then
+			return retryResult
+		end
+		error(retryResult)
 	end
 
 	error(result)
@@ -518,6 +906,7 @@ end
 
 if _G then
 	_G.__RayfieldApiClient = Client
+	_G.__RAYFIELD_STARTUP_TRACE_API = StartupTraceApi
 end
 
 return Client

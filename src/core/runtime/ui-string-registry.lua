@@ -105,6 +105,8 @@ local DEFAULT_STRINGS = {
 	["hud.metric.ui_state"] = "UI visible: %s | minimized: %s",
 	["hud.metric.macro"] = "Macro rec/exec: %s/%s",
 	["hud.metric.automation"] = "Automation scheduled/rules: %s/%s",
+	["hud.metric.startup_total"] = "Startup: %sms / %sms (%s)",
+	["hud.metric.startup_hotspot"] = "Startup hotspot: %s | Bundle hit: %s%%",
 
 	["workspace.saved"] = "%s saved: %s",
 	["workspace.loaded"] = "%s loaded: %s (%s settings).",

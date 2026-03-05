@@ -15,11 +15,14 @@ function RuntimeLoaderHelpersService.create(options)
 	local warnFn = type(options.warn) == "function" and options.warn or warn
 	local globalEnv = type(options.globalEnv) == "table" and options.globalEnv or nil
 	local apiLoader = options.apiLoader
+	local clockFn = type(options.clock) == "function" and options.clock or os.clock
+	local startupTraceApi = globalEnv and globalEnv.__RAYFIELD_STARTUP_TRACE_API or nil
 
 	local diagnostics = {
 		optionalFailed = {},
 		notified = false,
-		performanceProfile = nil
+		performanceProfile = nil,
+		startup = nil
 	}
 
 	if globalEnv then
@@ -27,6 +30,76 @@ function RuntimeLoaderHelpersService.create(options)
 	end
 
 	local service = {}
+
+	local function syncStartupDiagnostics()
+		if type(startupTraceApi) == "table" and type(startupTraceApi.getCurrentSummary) == "function" then
+			local okCurrent, summary = pcall(startupTraceApi.getCurrentSummary)
+			if okCurrent and type(summary) == "table" then
+				diagnostics.startup = summary
+				return
+			end
+		end
+		if type(startupTraceApi) == "table" and type(startupTraceApi.getLastSummary) == "function" then
+			local okLast, summary = pcall(startupTraceApi.getLastSummary)
+			if okLast and type(summary) == "table" then
+				diagnostics.startup = summary
+				return
+			end
+		end
+		if globalEnv and type(globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY) == "table" then
+			diagnostics.startup = globalEnv.__RAYFIELD_STARTUP_LAST_SUMMARY
+		end
+	end
+
+	local function startModuleStage(moduleName, meta)
+		if type(startupTraceApi) == "table" and type(startupTraceApi.startStage) == "function" then
+			local okStage, stage = pcall(startupTraceApi.startStage, "module_load:" .. tostring(moduleName), "module", meta)
+			if okStage and type(stage) == "table" then
+				return stage
+			end
+		end
+		return {
+			__fallback = true,
+			startClock = clockFn(),
+			name = "module_load:" .. tostring(moduleName),
+			source = "module",
+			meta = meta
+		}
+	end
+
+	local function finishModuleStage(stageHandle, status, meta)
+		if type(stageHandle) ~= "table" then
+			return
+		end
+		if stageHandle.__fallback ~= true
+			and type(startupTraceApi) == "table"
+			and type(startupTraceApi.finishStage) == "function" then
+			pcall(startupTraceApi.finishStage, stageHandle, status, meta)
+			syncStartupDiagnostics()
+			return
+		end
+		local endClock = clockFn()
+		local durationMs = math.max(0, math.floor(((endClock - (tonumber(stageHandle.startClock) or endClock)) * 1000) + 0.5))
+		diagnostics.startup = diagnostics.startup or {
+			mode = "auto",
+			targetMs = 2000,
+			totalMs = 0,
+			bundle = { attempted = false, used = false, hitRate = 0 },
+			stages = {},
+			hotspots = {}
+		}
+		local startupStages = diagnostics.startup.stages
+		if type(startupStages) ~= "table" then
+			startupStages = {}
+			diagnostics.startup.stages = startupStages
+		end
+		table.insert(startupStages, {
+			name = tostring(stageHandle.name or "module_load"),
+			durationMs = durationMs,
+			status = tostring(status or "ok"),
+			source = tostring(stageHandle.source or "module")
+		})
+	end
 
 	function service.fetchExecuteSafely(path)
 		if type(apiClient) ~= "table" or type(apiClient.fetchAndExecute) ~= "function" then
@@ -45,7 +118,11 @@ function RuntimeLoaderHelpersService.create(options)
 	end
 
 	function service.loadModule(moduleName)
+		local stageHandle = startModuleStage(moduleName, {
+			tryStudioRequire = useStudio
+		})
 		if type(apiLoader) ~= "table" or type(apiLoader.load) ~= "function" then
+			finishModuleStage(stageHandle, "error", { error = "API loader unavailable" })
 			return false, "API loader unavailable"
 		end
 		local opts = {
@@ -54,12 +131,18 @@ function RuntimeLoaderHelpersService.create(options)
 			allowLegacyFallback = true
 		}
 		if type(apiLoader.tryLoad) == "function" then
-			return apiLoader.tryLoad(moduleName, opts)
+			local okTryLoad, loadedOrErr = apiLoader.tryLoad(moduleName, opts)
+			finishModuleStage(stageHandle, okTryLoad and "ok" or "error", {
+				error = okTryLoad and nil or tostring(loadedOrErr)
+			})
+			return okTryLoad, loadedOrErr
 		end
 		local ok, result = pcall(apiLoader.load, moduleName, opts)
 		if ok then
+			finishModuleStage(stageHandle, "ok")
 			return true, result
 		end
+		finishModuleStage(stageHandle, "error", { error = tostring(result) })
 		return false, tostring(result)
 	end
 

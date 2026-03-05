@@ -6,6 +6,10 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+if type(_G) == "table" then
+	_G.__RAYFIELD_BUNDLE_MODE = _G.__RAYFIELD_BUNDLE_MODE or "bundle_auto"
+end
+
 local function compileChunk(source, label)
 	if type(source) ~= "string" then
 		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
@@ -34,11 +38,17 @@ local function tryLoadBundle(path)
 	return type(bundleOrErr) == "table"
 end
 
-if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
-	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
-	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
-	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
-	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+if type(_G) == "table" and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	local shouldPreload = _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES
+	if shouldPreload == nil then
+		shouldPreload = true
+	end
+	if shouldPreload == true then
+		_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+		local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+		local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+		_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+	end
 end
 
 local function fetchSource(path)
