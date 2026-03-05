@@ -1,13 +1,13 @@
 --[[
-	Rayfield Advanced Features - Complete Module
+    Rayfield Advanced Features - Complete Module
 
-	Tính năng:
-	✅ Animation API - Animate bất kỳ property nào
-	✅ Drag & Drop - Kéo thả elements (giữ 3 giây)
-	✅ Detachable Windows - Tách element thành cửa sổ riêng
-	✅ State Persistence - Lưu trạng thái elements
-	✅ Performance Monitor - Theo dõi hiệu suất
-	✅ Default Templates - Main & Settings tabs mặc định
+    Features:
+    - Animation API for arbitrary property animation
+    - Drag and Drop elements (hold to drag)
+    - Detachable element windows
+    - Element state persistence
+    - Performance monitor
+    - Default templates for Main and Settings tabs
 
 ]]
 
@@ -210,16 +210,16 @@ end
 
 function PerformanceMonitor:PrintStats()
 	local stats = self:GetStats()
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📊 Rayfield Performance Stats")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	print("--------------------------------")
+	print("Rayfield Performance Stats")
+	print("--------------------------------")
 	print(string.format("Elements: %d", stats.elementCount))
 	print(string.format("Detached Windows: %d", stats.detachedWindows))
 	print(string.format("Active Animations: %d", stats.activeAnimations))
 	print(string.format("Memory: %.2f MB", stats.memoryUsage))
 	print(string.format("FPS: %d", stats.fps))
 	print(string.format("Uptime: %.1f seconds", stats.uptime))
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	print("--------------------------------")
 end
 
 -- ============================================
@@ -367,7 +367,7 @@ function DragDropManager:StartDragging(element, guiObject)
 	guiObject.BackgroundTransparency = 0.5
 	guiObject.ZIndex = 1000
 
-	print("🎯 Drag mode! Kéo ra ngoài để tách cửa sổ")
+	print("Drag mode: move outside to detach as a window")
 	self:TrackDragMovement(guiObject)
 end
 

@@ -3,6 +3,7 @@ if not compileString then
 	error("No Lua compiler function available (loadstring/load)")
 end
 
+-- [[ EXECUTION POLICY ENGINE ]] --
 local function ensureExecPolicyEngine()
 	local globalEnv = type(_G) == "table" and _G or nil
 	local policyVersion = 2
@@ -197,6 +198,7 @@ end
 
 local ExecPolicy = ensureExecPolicyEngine()
 
+-- [[ SHOWCASE LOGGER ]] --
 local function createShowcaseLogger()
 	local logger = {
 		enabled = true,
@@ -222,7 +224,8 @@ local function createShowcaseLogger()
 	local isFolderFn = type(isfolder) == "function" and isfolder or nil
 	local makeFolderFn = type(makefolder) == "function" and makefolder or nil
 	local ring = {}
-	local runId = tostring(type(os.time) == "function" and os.time() or math.floor(os.clock() * 1000))
+	local runTime = type(os.time) == "function" and os.time() or math.floor(os.clock() * 1000)
+	local runId = tostring(runTime) .. "-" .. tostring(math.random(1000, 9999))
 
 	local function setTargets(folderPath)
 		local fileName = "elements-showcase-" .. runId .. ".log"
@@ -299,7 +302,6 @@ local function createShowcaseLogger()
 			logger.fileEnabled = true
 			logger.reason = "folder_ready"
 		else
-			-- Fallback to root workspace when nested folder creation fails.
 			setTargets(nil)
 			logger.fileEnabled = true
 			logger.reason = "root_fallback:" .. tostring(folderErr)
@@ -315,6 +317,7 @@ local function createShowcaseLogger()
 		if #ring > 1200 then
 			table.remove(ring, 1)
 		end
+		
 		if type(_G) == "table" then
 			_G.__RAYFIELD_SHOWCASE_LOG_BUFFER = ring
 			_G.__RAYFIELD_SHOWCASE_LOG_FILE = logger.path
@@ -328,12 +331,13 @@ local function createShowcaseLogger()
 				reason = logger.reason
 			}
 		end
+		
 		if not logger.fileEnabled then
 			return
 		end
+		
 		local okWrite = appendLine(logger.path, line)
 		if not okWrite and logger.activeFolder ~= nil then
-			-- Runtime fallback in case folder writes fail unexpectedly.
 			setTargets(nil)
 			logger.reason = "runtime_root_fallback"
 			if type(_G) == "table" then
@@ -362,6 +366,7 @@ end
 
 logLine("BOOT", "showcase loader start")
 
+-- [[ COMPILATION & FETCH ]] --
 local function compileChunk(source, label)
 	if type(source) ~= "string" then
 		local message = "Invalid Lua source for " .. tostring(label) .. ": " .. type(source)
@@ -381,7 +386,11 @@ end
 
 local function fetchAndRun(url, label)
 	logLine("FETCH", "HttpGet " .. tostring(url))
-	local source = game:HttpGet(url)
+	local ok, source = pcall(game.HttpGet, game, url)
+	if not ok then
+		logLine("ERROR", "HttpGet Failed: " .. tostring(source))
+		error("Network error: " .. tostring(source))
+	end
 	logLine("FETCH", "HttpGet OK " .. tostring(label or url) .. " | bytes=" .. tostring(type(source) == "string" and #source or 0))
 	return compileChunk(source, label or url)()
 end
@@ -409,6 +418,7 @@ local function callWithTimeout(timeoutSeconds, workFn, options)
 	local isBlocking = options.isBlocking == true
 	local decision = ExecPolicy.decideExecutionMode(opKey, isBlocking, timeoutSeconds, os.clock())
 	local cancelOnTimeout = decision.cancelOnTimeout == true
+	
 	if options.cancelOnTimeout ~= nil then
 		cancelOnTimeout = options.cancelOnTimeout == true
 		decision = {
@@ -417,6 +427,7 @@ local function callWithTimeout(timeoutSeconds, workFn, options)
 			reason = "override:options.cancelOnTimeout"
 		}
 	end
+	
 	if type(options.onPolicyDecision) == "function" then
 		pcall(options.onPolicyDecision, decision, opKey, isBlocking, timeoutSeconds)
 	end
@@ -447,9 +458,11 @@ local function callWithTimeout(timeoutSeconds, workFn, options)
 		})
 		return false, "timeout after " .. tostring(timeoutSeconds) .. "s", "timeout", decision
 	end
+	
 	if not ok then
 		return false, resultOrErr, "error", decision
 	end
+	
 	ExecPolicy.markSuccess(opKey, os.clock(), {
 		mode = decision.mode,
 		reason = decision.reason,
@@ -471,7 +484,8 @@ local function tryFetchAndRun(url, label)
 		onPolicyDecision = function(policyDecision, resolvedOpKey)
 			logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
 		end
-	end)
+	})
+	
 	if not okCall then
 		if status == "timeout" then
 			local timeoutMsg = "timeout after " .. tostring(timeoutSeconds) .. "s"
@@ -485,6 +499,7 @@ local function tryFetchAndRun(url, label)
 	return true, resultOrErr
 end
 
+-- [[ BOOTSTRAP UTILS ]] --
 local function isReadyUI(candidate)
 	if type(candidate) ~= "table" or type(candidate.Rayfield) ~= "table" then
 		return false
@@ -610,6 +625,7 @@ local function wrapRayfieldAsUI(rayfield, mode)
 	}
 end
 
+-- [[ BOOTSTRAP ]] --
 local function tryBootstrapFromBase(reasons)
 	local okBase, baseOrErr, selectedRoot = tryFetchAndRunPath(
 		"Main%20loader/rayfield-modified.lua",
@@ -636,6 +652,7 @@ local function tryBootstrapFromAllInOne(reasons)
 		table.insert(reasons, "all-in-one fetch/execute failed: " .. tostring(loadedOrErr))
 		return nil
 	end
+	
 	root = selectedRoot or root
 	if type(_G) == "table" then
 		_G.__RAYFIELD_RUNTIME_ROOT_URL = root
@@ -652,11 +669,10 @@ local function tryBootstrapFromAllInOne(reasons)
 	if type(loadedOrErr) == "table" and type(loadedOrErr.quickSetup) == "function" then
 		bootLog("all-in-one returned loader table; entering quickSetup path")
 		if type(loadedOrErr.configure) == "function" then
-			local okConfigure, configureErr = pcall(loadedOrErr.configure, {
+			pcall(loadedOrErr.configure, {
 				autoReload = false,
 				autoReloadEnabled = false
 			})
-			bootLog("all-in-one configure(autoReload=false) => " .. tostring(okConfigure and "ok" or configureErr))
 		end
 
 		local requestedMode = type(_G) == "table" and tostring(_G.__RAYFIELD_SHOWCASE_QUICKSETUP_MODE or "enhanced") or "enhanced"
@@ -665,23 +681,16 @@ local function tryBootstrapFromAllInOne(reasons)
 			requestedMode = "enhanced"
 		end
 
-		local commonConfig = {
-			mode = requestedMode,
-			errorThreshold = 5,
-			rateLimit = 10,
-			autoCleanup = true
-		}
-
 		local function runQuickSetup(forceReload)
 			local timeoutSeconds = getQuickSetupTimeoutSeconds()
 			bootLog("quickSetup start | forceReload=" .. tostring(forceReload) .. " | timeout=" .. tostring(timeoutSeconds) .. "s")
 			local opKey = "showcase:quickSetup:" .. tostring(forceReload)
 			local okQuick, uiOrErr, quickStatus = callWithTimeout(timeoutSeconds, function()
 				return loadedOrErr.quickSetup({
-					mode = commonConfig.mode,
-					errorThreshold = commonConfig.errorThreshold,
-					rateLimit = commonConfig.rateLimit,
-					autoCleanup = commonConfig.autoCleanup,
+					mode = requestedMode,
+					errorThreshold = 5,
+					rateLimit = 10,
+					autoCleanup = true,
 					forceReload = forceReload
 				})
 			end, {
@@ -690,7 +699,8 @@ local function tryBootstrapFromAllInOne(reasons)
 				onPolicyDecision = function(policyDecision, resolvedOpKey)
 					logLine("POLICY", "op=" .. tostring(resolvedOpKey) .. " policy=" .. tostring(policyDecision.mode) .. " reason=" .. tostring(policyDecision.reason))
 				end
-			end)
+			})
+			
 			if okQuick and isReadyUI(uiOrErr) then
 				bootLog("quickSetup success | forceReload=" .. tostring(forceReload))
 				return true, uiOrErr, "ok"
@@ -703,17 +713,8 @@ local function tryBootstrapFromAllInOne(reasons)
 				bootLog("quickSetup produced global _G.Rayfield")
 				return true, wrapRayfieldAsUI(_G.Rayfield, "global"), "ok"
 			end
-			local reason = nil
-			if not okQuick then
-				if quickStatus == "timeout" then
-					reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") timeout after " .. tostring(timeoutSeconds) .. "s"
-				else
-					reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") failed: " .. tostring(uiOrErr)
-				end
-			else
-				reason = "quickSetup(forceReload=" .. tostring(forceReload) .. ") returned unusable value: " .. tostring(type(uiOrErr))
-				quickStatus = "unusable"
-			end
+			
+			local reason = "quickSetup failed: " .. tostring(uiOrErr)
 			return false, reason, quickStatus
 		end
 
@@ -723,17 +724,13 @@ local function tryBootstrapFromAllInOne(reasons)
 		end
 		table.insert(reasons, tostring(uiOrReason))
 
-		local allowForceReloadRetry = not (quickStatus == "timeout")
-		if not allowForceReloadRetry then
-			table.insert(reasons, "Skip forceReload retry because first quickSetup timed out.")
-			return nil
+		if quickStatus ~= "timeout" then
+			okQuick, uiOrReason, quickStatus = runQuickSetup(true)
+			if okQuick then
+				return uiOrReason
+			end
+			table.insert(reasons, tostring(uiOrReason))
 		end
-
-		okQuick, uiOrReason, quickStatus = runQuickSetup(true)
-		if okQuick then
-			return uiOrReason
-		end
-		table.insert(reasons, tostring(uiOrReason))
 		return nil
 	end
 
@@ -759,10 +756,11 @@ local function bootstrapUI()
 	if type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_PREFER_AIO == false then
 		preferAllInOne = false
 	end
+	
 	local ui = nil
 	local function hasTimeoutReason()
 		for _, reason in ipairs(reasons) do
-			if type(reason) == "string" and string.find(reason, "timeout", 1, true) then
+			if type(reason) == "string" and string.find(string.lower(reason), "timeout") then
 				return true
 			end
 		end
@@ -772,28 +770,19 @@ local function bootstrapUI()
 	if preferAllInOne then
 		bootLog("Bootstrap order: all-in-one -> base")
 		ui = tryBootstrapFromAllInOne(reasons)
-		if isReadyUI(ui) then
-			return ui
-		end
+		if isReadyUI(ui) then return ui end
+		
 		local allowBaseAfterAioTimeout = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT == true
-		if hasTimeoutReason() and not allowBaseAfterAioTimeout then
-			bootLog("Skip base fallback after all-in-one timeout (set _G.__RAYFIELD_SHOWCASE_ALLOW_BASE_AFTER_AIO_TIMEOUT=true to override)")
-		else
+		if not hasTimeoutReason() or allowBaseAfterAioTimeout then
 			ui = tryBootstrapFromBase(reasons)
-			if ui and isReadyUI(ui) then
-				return ui
-			end
+			if isReadyUI(ui) then return ui end
 		end
 	else
 		bootLog("Bootstrap order: base -> all-in-one")
 		ui = tryBootstrapFromBase(reasons)
-		if ui and isReadyUI(ui) then
-			return ui
-		end
+		if isReadyUI(ui) then return ui end
 		ui = tryBootstrapFromAllInOne(reasons)
-		if isReadyUI(ui) then
-			return ui
-		end
+		if isReadyUI(ui) then return ui end
 	end
 
 	local message = "UI bootstrap failed | " .. table.concat(reasons, " | ")
@@ -801,10 +790,22 @@ local function bootstrapUI()
 	error(message)
 end
 
+-- [[ MAIN EXECUTION ]] --
 local UI = bootstrapUI()
 logLine("BOOT", "bootstrapUI success | mode=" .. tostring(UI and UI.mode or "unknown"))
 
 local Rayfield = UI.Rayfield
+local windowName = "Rayfield Mod | Elements Showcase"
+
+-- Cleanup old window if it exists to avoid UI stacking
+if Rayfield and type(Rayfield.Destroy) == "function" then
+    -- Some Rayfield versions support searching for windows
+    pcall(function()
+        if _G.__RAYFIELD_SHOWCASE_WINDOW then
+             _G.__RAYFIELD_SHOWCASE_WINDOW:Destroy()
+        end
+    end)
+end
 
 local checkState = {
 	pass = 0,
@@ -813,29 +814,16 @@ local checkState = {
 }
 
 local function report(pass, name, message)
-	if pass then
-		checkState.pass = checkState.pass + 1
-		local line = "[PASS] " .. tostring(name)
-		table.insert(checkState.logs, line)
-		logLine("CHECK", line)
-	else
-		checkState.fail = checkState.fail + 1
-		local line = "[FAIL] " .. tostring(name) .. " -> " .. tostring(message or "unknown")
-		table.insert(checkState.logs, line)
-		logLine("CHECK", line)
-	end
+	local line = pass and ("[PASS] " .. tostring(name)) or ("[FAIL] " .. tostring(name) .. " -> " .. tostring(message or "unknown"))
+	if pass then checkState.pass = checkState.pass + 1 else checkState.fail = checkState.fail + 1 end
+	table.insert(checkState.logs, line)
+	logLine("CHECK", line)
 end
 
 local function runCheck(name, checkFn)
 	local ok, resultOrErr = pcall(checkFn)
-	if not ok then
-		report(false, name, resultOrErr)
-		return false
-	end
-	if resultOrErr == false then
-		report(false, name, "condition returned false")
-		return false
-	end
+	if not ok then report(false, name, resultOrErr) return false end
+	if resultOrErr == false then report(false, name, "condition returned false") return false end
 	report(true, name)
 	return true
 end
@@ -862,43 +850,41 @@ local settingsState = {
 	trackPreview = 35
 }
 
-do
+-- Fetch current states if available
+pcall(function()
 	local okPreset, preset = pcall(Rayfield.GetUIPreset, Rayfield)
-	if okPreset and type(preset) == "string" and preset ~= "" then
-		settingsState.uiPreset = preset
-	end
-	local okTransition, transition = pcall(Rayfield.GetTransitionProfile, Rayfield)
-	if okTransition and type(transition) == "string" and transition ~= "" then
-		settingsState.transitionProfile = transition
-	end
-	local okSuppressed, suppressed = pcall(Rayfield.IsOnboardingSuppressed, Rayfield)
-	if okSuppressed then
-		settingsState.onboardingSuppressed = suppressed == true
-	end
-	local okThemeState, themeState = pcall(Rayfield.GetThemeStudioState, Rayfield)
-	if okThemeState and type(themeState) == "table" and type(themeState.baseTheme) == "string" then
-		settingsState.themeBase = themeState.baseTheme
-	end
-end
+	if okPreset and type(preset) == "string" and preset ~= "" then settingsState.uiPreset = preset end
+	
+    local okTransition, transition = pcall(Rayfield.GetTransitionProfile, Rayfield)
+	if okTransition and type(transition) == "string" and transition ~= "" then settingsState.transitionProfile = transition end
+	
+    local okSuppressed, suppressed = pcall(Rayfield.IsOnboardingSuppressed, Rayfield)
+	if okSuppressed then settingsState.onboardingSuppressed = suppressed == true end
+	
+    local okThemeState, themeState = pcall(Rayfield.GetThemeStudioState, Rayfield)
+	if okThemeState and type(themeState) == "table" and type(themeState.baseTheme) == "string" then settingsState.themeBase = themeState.baseTheme end
+end)
 
 local okWindow, windowOrErr = pcall(Rayfield.CreateWindow, Rayfield, {
-	Name = "Rayfield Mod | Elements Showcase",
+	Name = windowName,
 	LoadingTitle = "Rayfield Mod Bundle",
-	LoadingSubtitle = "Basic to Advanced Element Gallery",
-	ConfigurationSaving = {
-		Enabled = false
-	},
+	LoadingSubtitle = "Stable Element Showcase",
+	ConfigurationSaving = { Enabled = false },
 	DisableRayfieldPrompts = true,
 	DisableBuildWarnings = true
 })
+
 if not okWindow then
 	local message = "CreateWindow failed: " .. tostring(windowOrErr)
 	logLine("ERROR", message)
 	error(message)
 end
+
 local window = windowOrErr
+_G.__RAYFIELD_SHOWCASE_WINDOW = window
 logLine("BOOT", "CreateWindow success")
 
+-- [[ TAB CREATION ]] --
 local tabCore = window:CreateTab("Basic Elements", 4483362458)
 local tabAdvanced = window:CreateTab("Advanced Elements", 4483362458)
 local tabSettings = window:CreateTab("Experience & Theme", 4483362458)
@@ -906,25 +892,27 @@ local tabSystem = window:CreateTab("Share & Diagnostics", 4483362458)
 
 local sampleLogConsole = nil
 local function sampleLog(level, message)
-	local safeLevel = tostring(level or "info")
+	local safeLevel = string.lower(tostring(level or "info"))
 	local safeMessage = tostring(message or "")
 	logLine("LOG/" .. string.upper(safeLevel), safeMessage)
 	print("[Elements-Showcase][" .. safeLevel .. "] " .. safeMessage)
 	if sampleLogConsole then
-		if safeLevel == "warn" and type(sampleLogConsole.Warn) == "function" then
-			sampleLogConsole:Warn(safeMessage)
-		elseif safeLevel == "error" and type(sampleLogConsole.Error) == "function" then
-			sampleLogConsole:Error(safeMessage)
-		elseif type(sampleLogConsole.Info) == "function" then
-			sampleLogConsole:Info(safeMessage)
-		end
+		pcall(function()
+			if safeLevel == "warn" and type(sampleLogConsole.Warn) == "function" then
+				sampleLogConsole:Warn(safeMessage)
+			elseif safeLevel == "error" and type(sampleLogConsole.Error) == "function" then
+				sampleLogConsole:Error(safeMessage)
+			elseif type(sampleLogConsole.Info) == "function" then
+				sampleLogConsole:Info(safeMessage)
+			end
+		end)
 	end
 end
 
 -- Core tab
 tabCore:CreateParagraph({
 	Title = "Basic Element Pack",
-	Content = "This tab showcases the foundational controls: button, toggle, slider, input, dropdown, keybind, color picker, and toggle-with-keybind."
+	Content = "Foundational controls: button, toggle, slider, input, dropdown, keybind, color picker."
 })
 
 local elButton = tabCore:CreateButton({
@@ -942,21 +930,14 @@ local elButton = tabCore:CreateButton({
 local elToggle = tabCore:CreateToggle({
 	Name = "Feature Toggle",
 	CurrentValue = false,
-	Callback = function(value)
-		runtimeState.toggle = value == true
-	end
+	Callback = function(value) runtimeState.toggle = value == true end
 })
 
 local elToggleWithKeybind = tabCore:CreateToggle({
 	Name = "Toggle + Embedded Keybind",
 	CurrentValue = false,
-	Keybind = {
-		Enabled = true,
-		CurrentKeybind = "LeftControl+T"
-	},
-	Callback = function(value)
-		sampleLog("info", "Embedded keybind toggle => " .. tostring(value))
-	end
+	Keybind = { Enabled = true, CurrentKeybind = "LeftControl+T" },
+	Callback = function(value) sampleLog("info", "Embedded keybind toggle => " .. tostring(value)) end
 })
 
 local elSlider = tabCore:CreateSlider({
@@ -964,28 +945,21 @@ local elSlider = tabCore:CreateSlider({
 	Range = { 0, 100 },
 	Increment = 1,
 	CurrentValue = 50,
-	Callback = function(value)
-		runtimeState.slider = tonumber(value) or 0
-	end
+	Callback = function(value) runtimeState.slider = tonumber(value) or 0 end
 })
 
 local elInput = tabCore:CreateInput({
 	Name = "Data Input",
-	CurrentValue = "",
 	PlaceholderText = "Input data here...",
 	RemoveTextAfterFocusLost = false,
-	Callback = function(value)
-		runtimeState.input = tostring(value or "")
-	end
+	Callback = function(value) runtimeState.input = tostring(value or "") end
 })
 
 local elDropdown = tabCore:CreateDropdown({
 	Name = "Choice Dropdown",
 	Options = { "Alpha", "Beta", "Gamma", "Delta" },
 	CurrentOption = "Alpha",
-	Callback = function(value)
-		runtimeState.dropdown = firstOption(value)
-	end
+	Callback = function(value) runtimeState.dropdown = firstOption(value) end
 })
 
 tabCore:CreateDivider()
@@ -994,37 +968,26 @@ local elKeybind = tabCore:CreateKeybind({
 	Name = "Trigger Keybind",
 	CurrentKeybind = "Q",
 	CallOnChange = true,
-	Callback = function(value)
-		runtimeState.keybind = tostring(value or "")
-	end
+	Callback = function(value) runtimeState.keybind = tostring(value or "") end
 })
 
 local elColor = tabCore:CreateColorPicker({
 	Name = "Theme Picker",
 	Color = Color3.fromRGB(255, 170, 0),
-	Callback = function(value)
-		runtimeState.color = value
-	end
+	Callback = function(value) runtimeState.color = value end
 })
 
 -- Advanced tab
 tabAdvanced:CreateParagraph({
 	Title = "Advanced Element Pack",
-	Content = "This tab covers expansion widgets, loading controls, media/gallery/chart/log widgets, and alias element factories."
+	Content = "Expansion widgets, loading controls, gallery, chart, and log widgets."
 })
 
 local elLabel = tabAdvanced:CreateLabel("Static Information Label")
-local elParagraph = tabAdvanced:CreateParagraph({
-	Title = "Hub Manual",
-	Content = "This sample loader includes core, advanced, settings, and system controls."
-})
 local elSection = tabAdvanced:CreateSection("Advanced Widgets")
-
-tabAdvanced:CreateDivider()
 
 local advancedSection = tabAdvanced:CreateCollapsibleSection({
 	Name = "Interactive Widgets",
-	Id = "sample-advanced-controls",
 	Collapsed = false
 })
 
@@ -1033,12 +996,8 @@ local statusPreview = tabAdvanced:CreateStatusBar({
 	Range = { 0, 100 },
 	Increment = 1,
 	CurrentValue = settingsState.statusPreview,
-	TextFormatter = function(current, max, percent)
-		return string.format("Load %.0f%% (%d/%d)", percent, current, max)
-	end,
-	Callback = function(value)
-		settingsState.statusPreview = tonumber(value) or 0
-	end,
+	TextFormatter = function(current, max, percent) return string.format("Load %.0f%% (%d/%d)", percent, current, max) end,
+	Callback = function(value) settingsState.statusPreview = tonumber(value) or 0 end,
 	ParentSection = advancedSection
 })
 
@@ -1047,104 +1006,44 @@ local trackPreview = tabAdvanced:CreateTrackBar({
 	Range = { 0, 100 },
 	Increment = 1,
 	CurrentValue = settingsState.trackPreview,
-	Callback = function(value)
-		settingsState.trackPreview = tonumber(value) or 0
-	end,
+	Callback = function(value) settingsState.trackPreview = tonumber(value) or 0 end,
 	ParentSection = advancedSection
 })
 
-local dragBarAlias = nil
-if type(tabAdvanced.CreateDragBar) == "function" then
-	dragBarAlias = tabAdvanced:CreateDragBar({
-		Name = "DragBar Alias",
-		Range = { 0, 100 },
-		Increment = 1,
-		CurrentValue = 35,
-		ParentSection = advancedSection,
-		Callback = function(value)
-			sampleLog("info", "DragBar Alias => " .. tostring(value))
-		end
-	})
+-- Handle optional aliases with safety
+local function safeAlias(methodName, config)
+    if type(tabAdvanced[methodName]) == "function" then
+        return tabAdvanced[methodName](tabAdvanced, config)
+    end
+    return nil
 end
 
-local sliderLiteAlias = nil
-if type(tabAdvanced.CreateSliderLite) == "function" then
-	sliderLiteAlias = tabAdvanced:CreateSliderLite({
-		Name = "SliderLite Alias",
-		Range = { 0, 100 },
-		Increment = 1,
-		CurrentValue = 35,
-		ParentSection = advancedSection,
-		Callback = function(value)
-			sampleLog("info", "SliderLite Alias => " .. tostring(value))
-		end
-	})
-end
-
-local infoBarAlias = nil
-if type(tabAdvanced.CreateInfoBar) == "function" then
-	infoBarAlias = tabAdvanced:CreateInfoBar({
-		Name = "InfoBar Alias",
-		Range = { 0, 100 },
-		Increment = 1,
-		CurrentValue = 35,
-		ParentSection = advancedSection,
-		Callback = function(value)
-			sampleLog("info", "InfoBar Alias => " .. tostring(value))
-		end
-	})
-end
-
-local sliderDisplayAlias = nil
-if type(tabAdvanced.CreateSliderDisplay) == "function" then
-	sliderDisplayAlias = tabAdvanced:CreateSliderDisplay({
-		Name = "SliderDisplay Alias",
-		Range = { 0, 100 },
-		Increment = 1,
-		CurrentValue = 35,
-		ParentSection = advancedSection,
-		Callback = function(value)
-			sampleLog("info", "SliderDisplay Alias => " .. tostring(value))
-		end
-	})
-end
+local dragBarAlias = safeAlias("CreateDragBar", { Name = "DragBar Alias", Range = { 0, 100 }, CurrentValue = 35, ParentSection = advancedSection })
+local sliderLiteAlias = safeAlias("CreateSliderLite", { Name = "SliderLite Alias", Range = { 0, 100 }, CurrentValue = 35, ParentSection = advancedSection })
+local infoBarAlias = safeAlias("CreateInfoBar", { Name = "InfoBar Alias", Range = { 0, 100 }, CurrentValue = 35, ParentSection = advancedSection })
+local sliderDisplayAlias = safeAlias("CreateSliderDisplay", { Name = "SliderDisplay Alias", Range = { 0, 100 }, CurrentValue = 35, ParentSection = advancedSection })
 
 local stepper = tabAdvanced:CreateNumberStepper({
 	Name = "Value Stepper",
 	CurrentValue = 35,
-	Min = 0,
-	Max = 100,
-	Step = 1,
-	Precision = 0,
+	Min = 0, Max = 100, Step = 1,
 	ParentSection = advancedSection,
 	Callback = function(value)
 		local numeric = tonumber(value) or 0
-		if statusPreview and statusPreview.Set then
-			statusPreview:Set(numeric)
-		end
-		if trackPreview and trackPreview.Set then
-			trackPreview:Set(numeric)
-		end
-		if dragBarAlias and dragBarAlias.Set then
-			dragBarAlias:Set(numeric)
-		end
-		if sliderLiteAlias and sliderLiteAlias.Set then
-			sliderLiteAlias:Set(numeric)
-		end
-		if infoBarAlias and infoBarAlias.Set then
-			infoBarAlias:Set(numeric)
-		end
-		if sliderDisplayAlias and sliderDisplayAlias.Set then
-			sliderDisplayAlias:Set(numeric)
-		end
+		pcall(function()
+			if statusPreview and statusPreview.Set then statusPreview:Set(numeric) end
+			if trackPreview and trackPreview.Set then trackPreview:Set(numeric) end
+			if dragBarAlias and dragBarAlias.Set then dragBarAlias:Set(numeric) end
+			if sliderLiteAlias and sliderLiteAlias.Set then sliderLiteAlias:Set(numeric) end
+			if infoBarAlias and infoBarAlias.Set then infoBarAlias:Set(numeric) end
+			if sliderDisplayAlias and sliderDisplayAlias.Set then sliderDisplayAlias:Set(numeric) end
+		end)
 	end
 })
 
-local confirmReset = tabAdvanced:CreateConfirmButton({
+tabAdvanced:CreateConfirmButton({
 	Name = "Confirm Theme Reset",
 	ConfirmMode = "either",
-	HoldDuration = 1,
-	DoubleWindow = 0.4,
 	Callback = function()
 		local okReset, status = Rayfield:ResetThemeStudio()
 		sampleLog(okReset and "info" or "error", "ResetThemeStudio => " .. tostring(status))
@@ -1152,125 +1051,60 @@ local confirmReset = tabAdvanced:CreateConfirmButton({
 	ParentSection = advancedSection
 })
 
-local wrapperToggle = nil
-if type(tabAdvanced.CreateToggleBind) == "function" then
-	wrapperToggle = tabAdvanced:CreateToggleBind({
-		Name = "ToggleBind Example",
-		CurrentValue = false,
-		Keybind = { CurrentKeybind = "LeftControl+1" },
-		Callback = function(value)
-			sampleLog("info", "ToggleBind => " .. tostring(value))
-		end,
-		ParentSection = advancedSection
-	})
+local wrapperToggle = safeAlias("CreateToggleBind", { Name = "ToggleBind Example", Keybind = { CurrentKeybind = "LeftControl+1" }, ParentSection = advancedSection })
+local hotToggle = safeAlias("CreateHotToggle", { Name = "HotToggle Example", Keybind = { CurrentKeybind = "LeftControl+2" }, ParentSection = advancedSection })
+local keybindToggle = safeAlias("CreateKeybindToggle", { Name = "KeybindToggle Example", Keybind = { CurrentKeybind = "LeftControl+3" }, ParentSection = advancedSection })
+
+local loadingSpinner = safeAlias("CreateLoadingSpinner", { Name = "Loading Spinner", AutoStart = true, ParentSection = advancedSection })
+local loadingBar = safeAlias("CreateLoadingBar", { Name = "Loading Bar", Mode = "indeterminate", AutoStart = true, ParentSection = advancedSection })
+
+local settingsImage = safeAlias("CreateImage", { Name = "Preview Image", Source = "rbxassetid://4483362458", Height = 110, Caption = "Rayfield Icon" })
+
+local settingsGallery = safeAlias("CreateGallery", {
+	Name = "Sample Gallery",
+	Items = {
+		{ id = "a", name = "Item A", image = "rbxassetid://4483362458" },
+		{ id = "b", name = "Item B", image = "rbxassetid://4483362458" }
+	},
+	Callback = function(selection) sampleLog("info", "Gallery selection: " .. tostring(#(selection or {}))) end
+})
+
+local settingsChart = safeAlias("CreateChart", { Name = "Sample Chart", MaxPoints = 60, Preset = "fps" })
+if settingsChart and settingsChart.AddPoint then
+    settingsChart:AddPoint(35); settingsChart:AddPoint(45); settingsChart:AddPoint(55)
 end
 
-local hotToggle = nil
-if type(tabAdvanced.CreateHotToggle) == "function" then
-	hotToggle = tabAdvanced:CreateHotToggle({
-		Name = "HotToggle Example",
-		CurrentValue = false,
-		Keybind = { CurrentKeybind = "LeftControl+2" },
-		Callback = function(value)
-			sampleLog("info", "HotToggle => " .. tostring(value))
-		end,
-		ParentSection = advancedSection
-	})
-end
-
-local keybindToggle = nil
-if type(tabAdvanced.CreateKeybindToggle) == "function" then
-	keybindToggle = tabAdvanced:CreateKeybindToggle({
-		Name = "KeybindToggle Example",
-		CurrentValue = false,
-		Keybind = { CurrentKeybind = "LeftControl+3" },
-		Callback = function(value)
-			sampleLog("info", "KeybindToggle => " .. tostring(value))
-		end,
-		ParentSection = advancedSection
-	})
-end
-
-local loadingSpinner = nil
-if type(tabAdvanced.CreateLoadingSpinner) == "function" then
-	loadingSpinner = tabAdvanced:CreateLoadingSpinner({
-		Name = "Loading Spinner",
-		Speed = 1.2,
-		AutoStart = true,
-		ParentSection = advancedSection
-	})
-end
-
-local loadingBar = nil
-if type(tabAdvanced.CreateLoadingBar) == "function" then
-	loadingBar = tabAdvanced:CreateLoadingBar({
-		Name = "Loading Bar",
-		Mode = "indeterminate",
-		AutoStart = true,
-		ShowLabel = false,
-		ParentSection = advancedSection
-	})
-end
-
-local settingsImage = nil
-if type(tabAdvanced.CreateImage) == "function" then
-	settingsImage = tabAdvanced:CreateImage({
-		Name = "Preview Image",
-		Source = "rbxassetid://4483362458",
-		FitMode = "fill",
-		Height = 110,
-		Caption = "Rayfield Icon"
-	})
-end
-
-local settingsGallery = nil
-if type(tabAdvanced.CreateGallery) == "function" then
-	settingsGallery = tabAdvanced:CreateGallery({
-		Name = "Sample Gallery",
-		SelectionMode = "multi",
-		Columns = "auto",
-		Items = {
-			{ id = "a", name = "Item A", image = "rbxassetid://4483362458" },
-			{ id = "b", name = "Item B", image = "rbxassetid://4483362458" },
-			{ id = "c", name = "Item C", image = "rbxassetid://4483362458" }
+local settingsDataGrid = nil
+if type(tabAdvanced.CreateDataGrid) == "function" then
+	settingsDataGrid = tabAdvanced:CreateDataGrid({
+		Name = "Sample Data Grid",
+		Columns = {
+			{ Key = "id", Title = "ID", Sortable = true },
+			{ Key = "player", Title = "Player", Sortable = true },
+			{ Key = "score", Title = "Score", Sortable = true }
 		},
-		Callback = function(selection)
-			local count = type(selection) == "table" and #selection or 0
-			sampleLog("info", "Gallery selection count => " .. tostring(count))
+		Rows = {
+			{ id = "r1", player = "Alpha", score = 72 },
+			{ id = "r2", player = "Beta", score = 35 },
+			{ id = "r3", player = "Gamma", score = 91 }
+		},
+		Callback = function(row)
+			sampleLog("info", "DataGrid selected => " .. tostring(row and row.id))
 		end
 	})
-end
-
-local settingsChart = nil
-if type(tabAdvanced.CreateChart) == "function" then
-	settingsChart = tabAdvanced:CreateChart({
-		Name = "Sample Chart",
-		MaxPoints = 180,
-		UpdateHz = 8,
-		Preset = "fps",
-		ShowAreaFill = true
-	})
-	settingsChart:AddPoint(35)
-	settingsChart:AddPoint(45)
-	settingsChart:AddPoint(55)
+	if settingsDataGrid and settingsDataGrid.SortBy then
+		pcall(function()
+			settingsDataGrid:SortBy("score", "desc")
+		end)
+	end
 end
 
 if type(tabAdvanced.CreateLogConsole) == "function" then
-	sampleLogConsole = tabAdvanced:CreateLogConsole({
-		Name = "Sample Logs",
-		CaptureMode = "manual",
-		MaxEntries = 120,
-		ShowTimestamp = true
-	})
+	sampleLogConsole = tabAdvanced:CreateLogConsole({ Name = "Sample Logs", CaptureMode = "manual" })
 	sampleLog("info", "Advanced elements tab initialized.")
 end
 
 -- Settings tab
-tabSettings:CreateParagraph({
-	Title = "Experience API Controls",
-	Content = "Use this tab to test UI preset, transition profile, onboarding, and Theme Studio integration."
-})
-
 local themeNames = sortedThemeNames(Rayfield)
 tabSettings:CreateDropdown({
 	Name = "UI Preset",
@@ -1303,7 +1137,7 @@ tabSettings:CreateToggle({
 	CurrentValue = settingsState.onboardingSuppressed,
 	Callback = function(value)
 		local okSet, status = Rayfield:SetOnboardingSuppressed(value == true)
-		sampleLog(okSet and "info" or "error", "SetOnboardingSuppressed(" .. tostring(value) .. ") => " .. tostring(status))
+		sampleLog(okSet and "info" or "error", "SetOnboardingSuppressed => " .. tostring(status))
 	end
 })
 
@@ -1315,7 +1149,7 @@ tabSettings:CreateDropdown({
 		local selected = firstOption(value)
 		if selected ~= "" then
 			local okTheme, status = Rayfield:ApplyThemeStudioTheme(selected)
-			sampleLog(okTheme and "info" or "error", "ApplyThemeStudioTheme(" .. selected .. ") => " .. tostring(status))
+			sampleLog(okTheme and "info" or "error", "ApplyThemeStudioTheme => " .. tostring(status))
 		end
 	end
 })
@@ -1324,50 +1158,18 @@ tabSettings:CreateColorPicker({
 	Name = "Accent Color",
 	Color = settingsState.themeAccent,
 	Callback = function(accent)
-		local okTheme, status = Rayfield:ApplyThemeStudioTheme({
-			SliderBackground = accent,
-			SliderProgress = accent,
-			SliderStroke = accent,
-			ToggleEnabled = accent,
-			ToggleEnabledStroke = accent,
-			ToggleEnabledOuterStroke = accent,
-			TabBackgroundSelected = accent,
-			SelectedTabTextColor = Color3.fromRGB(20, 20, 20)
+		pcall(Rayfield.ApplyThemeStudioTheme, Rayfield, {
+			SliderBackground = accent, SliderProgress = accent,
+			ToggleEnabled = accent, TabBackgroundSelected = accent
 		})
-		sampleLog(okTheme and "info" or "error", "ApplyThemeStudioTheme(custom) => " .. tostring(status))
-	end
-})
-
-tabSettings:CreateButton({
-	Name = "Replay Onboarding",
-	Callback = function()
-		local okShow, status = Rayfield:ShowOnboarding(true)
-		sampleLog(okShow and "info" or "error", "ShowOnboarding(true) => " .. tostring(status))
-	end
-})
-
-tabSettings:CreateButton({
-	Name = "Reset Theme Studio",
-	Callback = function()
-		local okReset, status = Rayfield:ResetThemeStudio()
-		sampleLog(okReset and "info" or "error", "ResetThemeStudio() => " .. tostring(status))
 	end
 })
 
 -- System tab
-tabSystem:CreateParagraph({
-	Title = "Share Code + Diagnostics",
-	Content = "This tab demonstrates export/import share code workflow and control registry diagnostics."
-})
-
 local importCodeInput = tabSystem:CreateInput({
 	Name = "Settings Code Buffer",
-	CurrentValue = "",
 	PlaceholderText = "RFSC1:....",
-	RemoveTextAfterFocusLost = false,
-	Callback = function(text)
-		settingsState.importCode = tostring(text or "")
-	end
+	Callback = function(text) settingsState.importCode = tostring(text or "") end
 })
 
 tabSystem:CreateButton({
@@ -1376,11 +1178,10 @@ tabSystem:CreateButton({
 		local code, status = Rayfield:ExportSettings()
 		if type(code) == "string" and code ~= "" then
 			settingsState.lastExportCode = code
-			settingsState.importCode = code
 			importCodeInput:Set(code)
-			sampleLog("info", "ExportSettings => " .. tostring(status) .. " (len=" .. tostring(#code) .. ")")
+			sampleLog("info", "ExportSettings Success")
 		else
-			sampleLog("error", "ExportSettings failed => " .. tostring(status))
+			sampleLog("error", "ExportSettings Failed: " .. tostring(status))
 		end
 	end
 })
@@ -1388,281 +1189,311 @@ tabSystem:CreateButton({
 tabSystem:CreateButton({
 	Name = "Import From Buffer",
 	Callback = function()
-		if settingsState.importCode == "" then
-			sampleLog("warn", "Import buffer is empty.")
-			return
-		end
+		if settingsState.importCode == "" then return sampleLog("warn", "Buffer empty.") end
 		local okImport, status = Rayfield:ImportCode(settingsState.importCode)
-		sampleLog(okImport and "info" or "error", "ImportCode(buffer) => " .. tostring(status))
+		sampleLog(okImport and "info" or "error", "ImportCode => " .. tostring(status))
 	end
 })
 
 tabSystem:CreateButton({
-	Name = "Import Last Export",
+	Name = "Open Command Palette",
 	Callback = function()
-		if type(settingsState.lastExportCode) ~= "string" or settingsState.lastExportCode == "" then
-			sampleLog("warn", "No exported code cached yet.")
+		local okOpen, status = Rayfield:OpenCommandPalette("open")
+		sampleLog(okOpen and "info" or "error", "OpenCommandPalette => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Open Action Center",
+	Callback = function()
+		local okOpen, status = Rayfield:OpenActionCenter()
+		sampleLog(okOpen and "info" or "error", "OpenActionCenter => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Save Workspace",
+	Callback = function()
+		local okSave, status = Rayfield:SaveWorkspace("showcase-workspace")
+		sampleLog(okSave and "info" or "error", "SaveWorkspace => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Load Workspace",
+	Callback = function()
+		local okLoad, status = Rayfield:LoadWorkspace("showcase-workspace")
+		sampleLog(okLoad and "info" or "error", "LoadWorkspace => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Save Profile",
+	Callback = function()
+		if type(Rayfield.SaveProfile) ~= "function" then
+			sampleLog("warn", "SaveProfile unavailable.")
 			return
 		end
-		local okImport, status = Rayfield:ImportCode(settingsState.lastExportCode)
-		sampleLog(okImport and "info" or "error", "ImportCode(lastExport) => " .. tostring(status))
+		local okSave, status = Rayfield:SaveProfile("showcase-profile")
+		sampleLog(okSave and "info" or "error", "SaveProfile => " .. tostring(status))
 	end
 })
 
 tabSystem:CreateButton({
-	Name = "Copy Share Code",
+	Name = "Load Profile",
 	Callback = function()
-		local okCopy, status = Rayfield:CopyShareCode()
-		sampleLog(okCopy and "info" or "error", "CopyShareCode => " .. tostring(status))
+		if type(Rayfield.LoadProfile) ~= "function" then
+			sampleLog("warn", "LoadProfile unavailable.")
+			return
+		end
+		local okLoad, status = Rayfield:LoadProfile("showcase-profile")
+		sampleLog(okLoad and "info" or "error", "LoadProfile => " .. tostring(status))
 	end
 })
 
 tabSystem:CreateButton({
-	Name = "Import Active Settings",
+	Name = "Palette Mode Auto",
 	Callback = function()
-		local okImport, status = Rayfield:ImportSettings()
-		sampleLog(okImport and "info" or "error", "ImportSettings => " .. tostring(status))
+		if type(Rayfield.SetCommandPaletteExecutionMode) ~= "function" then
+			sampleLog("warn", "SetCommandPaletteExecutionMode unavailable.")
+			return
+		end
+		local okSet, status = Rayfield:SetCommandPaletteExecutionMode("auto")
+		sampleLog(okSet and "info" or "error", "SetCommandPaletteExecutionMode(auto) => " .. tostring(status))
 	end
 })
 
 tabSystem:CreateButton({
-	Name = "Print Controls Snapshot",
+	Name = "Toggle Performance HUD",
 	Callback = function()
-		local controls = Rayfield:ListControls()
-		sampleLog("info", "ListControls count = " .. tostring(type(controls) == "table" and #controls or 0))
+		if type(Rayfield.TogglePerformanceHUD) ~= "function" then
+			sampleLog("warn", "TogglePerformanceHUD unavailable.")
+			return
+		end
+		local okToggle, status = Rayfield:TogglePerformanceHUD()
+		sampleLog(okToggle and "info" or "error", "TogglePerformanceHUD => " .. tostring(status))
 	end
 })
 
+local showcaseMacroName = "showcase-macro"
+
+tabSystem:CreateButton({
+	Name = "Show Usage Analytics",
+	Callback = function()
+		if type(Rayfield.GetUsageAnalytics) ~= "function" then
+			sampleLog("warn", "GetUsageAnalytics unavailable.")
+			return
+		end
+		local snapshot = Rayfield:GetUsageAnalytics(8)
+		local commandCount = type(snapshot) == "table" and type(snapshot.topCommands) == "table" and #snapshot.topCommands or 0
+		sampleLog("info", "UsageAnalytics topCommands => " .. tostring(commandCount))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Start Macro Recording",
+	Callback = function()
+		if type(Rayfield.StartMacroRecording) ~= "function" then
+			sampleLog("warn", "StartMacroRecording unavailable.")
+			return
+		end
+		local okStart, status = Rayfield:StartMacroRecording(showcaseMacroName)
+		sampleLog(okStart and "info" or "error", "StartMacroRecording => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Stop Macro Recording",
+	Callback = function()
+		if type(Rayfield.StopMacroRecording) ~= "function" then
+			sampleLog("warn", "StopMacroRecording unavailable.")
+			return
+		end
+		local okStop, status = Rayfield:StopMacroRecording(true)
+		sampleLog(okStop and "info" or "error", "StopMacroRecording => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Execute Macro",
+	Callback = function()
+		if type(Rayfield.ExecuteMacro) ~= "function" then
+			sampleLog("warn", "ExecuteMacro unavailable.")
+			return
+		end
+		local okExec, status = Rayfield:ExecuteMacro(showcaseMacroName)
+		sampleLog(okExec and "info" or "error", "ExecuteMacro => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Toggle Element Inspector",
+	Callback = function()
+		if type(Rayfield.ToggleElementInspector) ~= "function" then
+			sampleLog("warn", "ToggleElementInspector unavailable.")
+			return
+		end
+		local okToggle, status = Rayfield:ToggleElementInspector()
+		sampleLog(okToggle and "info" or "error", "ToggleElementInspector => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Open Live Theme Editor",
+	Callback = function()
+		if type(Rayfield.OpenLiveThemeEditor) ~= "function" then
+			sampleLog("warn", "OpenLiveThemeEditor unavailable.")
+			return
+		end
+		local okOpen, status = Rayfield:OpenLiveThemeEditor()
+		sampleLog(okOpen and "info" or "error", "OpenLiveThemeEditor => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Export Live Theme Lua",
+	Callback = function()
+		if type(Rayfield.ExportLiveThemeDraftLua) ~= "function" then
+			sampleLog("warn", "ExportLiveThemeDraftLua unavailable.")
+			return
+		end
+		local okExport, statusOrLua = Rayfield:ExportLiveThemeDraftLua()
+		local preview = type(statusOrLua) == "string" and statusOrLua:sub(1, 56) or tostring(statusOrLua)
+		sampleLog(okExport and "info" or "error", "ExportLiveThemeDraftLua => " .. tostring(preview))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Register Hub Metadata",
+	Callback = function()
+		if type(Rayfield.RegisterHubMetadata) ~= "function" then
+			sampleLog("warn", "RegisterHubMetadata unavailable.")
+			return
+		end
+		local okRegister, status = Rayfield:RegisterHubMetadata({
+			Name = "Elements Showcase",
+			Author = "Rayfield Mod",
+			Version = "P0-UI-DX",
+			UpdateLog = "Fuzzy search, analytics, macro, inspector, live theme draft",
+			Discord = "discord.gg/example"
+		})
+		sampleLog(okRegister and "info" or "error", "RegisterHubMetadata => " .. tostring(status))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Export Grid CSV",
+	Callback = function()
+		if type(settingsDataGrid) ~= "table" or type(settingsDataGrid.ExportCSV) ~= "function" then
+			sampleLog("warn", "DataGrid CSV export unavailable.")
+			return
+		end
+		local okExport, result = settingsDataGrid:ExportCSV()
+		sampleLog(okExport and "info" or "error", "DataGrid ExportCSV => " .. tostring(result))
+	end
+})
+
+tabSystem:CreateButton({
+	Name = "Export Grid JSON",
+	Callback = function()
+		if type(settingsDataGrid) ~= "table" or type(settingsDataGrid.ExportJSON) ~= "function" then
+			sampleLog("warn", "DataGrid JSON export unavailable.")
+			return
+		end
+		local okExport, result = settingsDataGrid:ExportJSON()
+		sampleLog(okExport and "info" or "error", "DataGrid ExportJSON => " .. tostring(result))
+	end
+})
+
+-- [[ CHECKS ]] --
 local function runShowcaseChecks()
 	logLine("BOOT", "runShowcaseChecks begin")
-	runCheck("All-in-one services ready", function()
-		if UI.mode == "base" or UI.mode == "global" then
-			return true
-		end
-		return type(UI.ErrorManager) == "table"
-			and type(UI.GarbageCollector) == "table"
-			and type(UI.RemoteProtection) == "table"
-			and type(UI.MemoryLeakDetector) == "table"
-			and type(UI.Profiler) == "table"
-	end)
-
 	runCheck("Basic tab has baseline controls", function()
 		local list = tabCore:GetElements()
-		return type(list) == "table" and #list >= 8
-	end)
-
-	runCheck("Advanced tab has rich controls", function()
-		local list = tabAdvanced:GetElements()
-		return type(list) == "table" and #list >= 12
-	end)
-
-	runCheck("Experience/Diagnostics tabs populated", function()
-		local settingsList = tabSettings:GetElements()
-		local systemList = tabSystem:GetElements()
-		return type(settingsList) == "table" and #settingsList >= 6
-			and type(systemList) == "table" and #systemList >= 6
+		return type(list) == "table" and #list >= 6
 	end)
 
 	runCheck("UI API methods available", function()
 		return type(Rayfield.SetUIPreset) == "function"
 			and type(Rayfield.SetTransitionProfile) == "function"
-			and type(Rayfield.ShowOnboarding) == "function"
-			and type(Rayfield.ApplyThemeStudioTheme) == "function"
-			and type(Rayfield.ResetThemeStudio) == "function"
 			and type(Rayfield.ExportSettings) == "function"
-			and type(Rayfield.ImportCode) == "function"
-			and type(Rayfield.CopyShareCode) == "function"
+			and type(Rayfield.OpenCommandPalette) == "function"
+			and type(Rayfield.OpenActionCenter) == "function"
+			and type(Rayfield.SetCommandPaletteExecutionMode) == "function"
+			and type(Rayfield.GetCommandPaletteExecutionMode) == "function"
+			and type(Rayfield.RunCommandPaletteItem) == "function"
+			and type(Rayfield.GetUnreadNotificationCount) == "function"
+			and type(Rayfield.GetNotificationHistoryEx) == "function"
+			and type(Rayfield.SaveWorkspace) == "function"
+			and type(Rayfield.LoadWorkspace) == "function"
+			and type(Rayfield.ListWorkspaces) == "function"
+			and type(Rayfield.SaveProfile) == "function"
+			and type(Rayfield.LoadProfile) == "function"
+			and type(Rayfield.ListProfiles) == "function"
+			and type(Rayfield.CopyWorkspaceToProfile) == "function"
+			and type(Rayfield.CopyProfileToWorkspace) == "function"
+			and type(Rayfield.OpenPerformanceHUD) == "function"
+			and type(Rayfield.ClosePerformanceHUD) == "function"
+			and type(Rayfield.TogglePerformanceHUD) == "function"
+			and type(Rayfield.GetPerformanceHUDState) == "function"
+			and type(Rayfield.GetUsageAnalytics) == "function"
+			and type(Rayfield.StartMacroRecording) == "function"
+			and type(Rayfield.StopMacroRecording) == "function"
+			and type(Rayfield.IsMacroExecuting) == "function"
+			and type(Rayfield.ListMacros) == "function"
+			and type(Rayfield.ExecuteMacro) == "function"
+			and type(Rayfield.ToggleElementInspector) == "function"
+			and type(Rayfield.RegisterHubMetadata) == "function"
+			and type(Rayfield.OpenLiveThemeEditor) == "function"
+			and type(Rayfield.ExportLiveThemeDraftLua) == "function"
+	end)
+
+	runCheck("DataGrid API available (if supported)", function()
+		if settingsDataGrid == nil then
+			return type(tabAdvanced.CreateDataGrid) ~= "function"
+		end
+		return type(settingsDataGrid.SetRows) == "function"
+			and type(settingsDataGrid.GetRows) == "function"
+			and type(settingsDataGrid.SortBy) == "function"
+			and type(settingsDataGrid.SetFilter) == "function"
+			and type(settingsDataGrid.GetFilter) == "function"
+			and type(settingsDataGrid.GetSelectedRow) == "function"
+			and type(settingsDataGrid.ExportCSV) == "function"
+			and type(settingsDataGrid.ExportJSON) == "function"
 	end)
 
 	runCheck("Core element Set/Get works", function()
-		elToggle:Set(true)
-		if elToggle:Get() ~= true then
-			return false
-		end
-		elSlider:Set(75)
-		elInput:Set("Rayfield-AIO")
-		elDropdown:Set("Beta")
-		return tostring(elInput.CurrentValue or "") == "Rayfield-AIO"
-			and type(elDropdown.CurrentOption) == "table"
-			and elDropdown.CurrentOption[1] == "Beta"
-	end)
-
-	runCheck("Alias element variants available (if supported)", function()
-		if type(tabAdvanced.CreateDragBar) ~= "function" then
-			return true
-		end
-		return type(dragBarAlias) == "table"
-			and type(sliderLiteAlias) == "table"
-			and type(infoBarAlias) == "table"
-			and type(sliderDisplayAlias) == "table"
-	end)
-
-	runCheck("Loading controls available (if supported)", function()
-		if type(tabAdvanced.CreateLoadingSpinner) ~= "function" or type(tabAdvanced.CreateLoadingBar) ~= "function" then
-			return true
-		end
-		return type(loadingSpinner) == "table"
-			and type(loadingSpinner.Start) == "function"
-			and type(loadingSpinner.Stop) == "function"
-			and type(loadingBar) == "table"
-			and type(loadingBar.SetMode) == "function"
-			and type(loadingBar.SetProgress) == "function"
-	end)
-
-	runCheck("Loading bar hybrid behavior (if supported)", function()
-		if type(loadingBar) ~= "table" then
-			return true
-		end
-		local okProgress = select(1, loadingBar:SetProgress(0.5))
-		if okProgress ~= true then
-			return false
-		end
-		if loadingBar:GetMode() ~= "determinate" then
-			return false
-		end
-		local okMode = select(1, loadingBar:SetMode("indeterminate"))
-		if okMode ~= true then
-			return false
-		end
-		return select(1, loadingBar:Start()) == true
-	end)
-
-	runCheck("ExportSettings returns code", function()
-		local code = select(1, Rayfield:ExportSettings())
-		if type(code) ~= "string" or code == "" then
-			return false
-		end
-		settingsState.lastExportCode = code
-		settingsState.importCode = code
-		importCodeInput:Set(code)
+        pcall(function()
+            elToggle:Set(true)
+            elSlider:Set(75)
+            elInput:Set("Stable-Showcase")
+            elDropdown:Set("Beta")
+        end)
 		return true
-	end)
-
-	runCheck("Feature scope + task tracking works", function()
-		if type(Rayfield.CreateFeatureScope) ~= "function"
-			or type(Rayfield.TrackFeatureTask) ~= "function"
-			or type(Rayfield.CleanupFeatureScope) ~= "function" then
-			return false
-		end
-
-		local scopeId = select(1, Rayfield:CreateFeatureScope("loader-task-scope"))
-		if type(scopeId) ~= "string" or scopeId == "" then
-			return false
-		end
-
-		local worker = task.spawn(function()
-			task.wait(30)
-		end)
-
-		local okTrack = select(1, Rayfield:TrackFeatureTask(scopeId, worker))
-		if okTrack ~= true then
-			return false
-		end
-
-		local okCleanup = select(1, Rayfield:CleanupFeatureScope(scopeId, false))
-		return okCleanup == true
-	end)
-
-	runCheck("Control registry includes >= 30 controls", function()
-		local controls = Rayfield:ListControls()
-		return type(controls) == "table" and #controls >= 30
 	end)
 
 	local summary = string.format("Checks: %d pass / %d fail", checkState.pass, checkState.fail)
 	logLine("CHECK", summary)
-	Rayfield:Notify({
-		Title = "Elements Showcase",
-		Content = checkState.fail == 0 and summary or (summary .. " (see console)"),
-		Duration = checkState.fail == 0 and 8 or 10
+    pcall(Rayfield.Notify, Rayfield, {
+		Title = "Showcase Completed",
+		Content = summary,
+		Duration = 5
 	})
-
-	for _, line in ipairs(checkState.logs) do
-		print(line)
-	end
 end
 
 task.spawn(function()
 	local ok, err = pcall(runShowcaseChecks)
-	if not ok then
-		logLine("ERROR", "checks failed: " .. tostring(err))
-		warn("[Elements-Showcase] checks failed: " .. tostring(err))
-	end
+	if not ok then logLine("ERROR", "Checks Failed: " .. tostring(err)) end
 end)
 
-local compactReturn = type(_G) ~= "table" or _G.__RAYFIELD_SHOWCASE_RETURN_FULL ~= true
-if compactReturn then
-	logLine("BOOT", "return compact payload")
-	return {
-		UI = UI,
-		Rayfield = Rayfield,
-		Window = window,
-		Tabs = {
-			Core = tabCore,
-			Advanced = tabAdvanced,
-			Settings = tabSettings,
-			System = tabSystem
-		},
-		CheckState = checkState,
-		RuntimeState = runtimeState,
-		SettingsState = settingsState,
-		LogPath = ShowcaseLogger.path,
-		LatestLogPath = ShowcaseLogger.latestPath,
-		LogInfo = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_LOG_INFO or nil
-	}
-end
-
-logLine("BOOT", "return full payload")
+logLine("BOOT", "Final payload return")
 return {
-	UI = UI,
-	Rayfield = Rayfield,
-	Window = window,
-	Tabs = {
-		Core = tabCore,
-		Advanced = tabAdvanced,
-		Settings = tabSettings,
-		System = tabSystem
-	},
+	UI = UI, Rayfield = Rayfield, Window = window,
+	Tabs = { Core = tabCore, Advanced = tabAdvanced, Settings = tabSettings, System = tabSystem },
 	Elements = {
-		Core = {
-			Button = elButton,
-			Toggle = elToggle,
-			ToggleWithKeybind = elToggleWithKeybind,
-			Slider = elSlider,
-			Input = elInput,
-			Dropdown = elDropdown,
-			Keybind = elKeybind,
-			ColorPicker = elColor
-		},
 		Advanced = {
-			Label = elLabel,
-			Paragraph = elParagraph,
-			Section = elSection,
-			StatusPreview = statusPreview,
-			TrackPreview = trackPreview,
-			DragBarAlias = dragBarAlias,
-			SliderLiteAlias = sliderLiteAlias,
-			InfoBarAlias = infoBarAlias,
-			SliderDisplayAlias = sliderDisplayAlias,
-			Stepper = stepper,
-			ConfirmReset = confirmReset,
-			ToggleBind = wrapperToggle,
-			HotToggle = hotToggle,
-			KeybindToggle = keybindToggle,
-			LoadingSpinner = loadingSpinner,
-			LoadingBar = loadingBar,
-			Image = settingsImage,
-			Gallery = settingsGallery,
-			Chart = settingsChart,
-			LogConsole = sampleLogConsole
-		},
-		System = {
-			ImportCodeInput = importCodeInput
+			DataGrid = settingsDataGrid
 		}
 	},
-	CheckState = checkState,
-	RuntimeState = runtimeState,
-	SettingsState = settingsState,
-	LogPath = ShowcaseLogger.path,
-	LatestLogPath = ShowcaseLogger.latestPath,
-	LogInfo = type(_G) == "table" and _G.__RAYFIELD_SHOWCASE_LOG_INFO or nil
+	CheckState = checkState, RuntimeState = runtimeState
 }

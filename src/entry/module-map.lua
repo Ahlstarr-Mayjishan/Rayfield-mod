@@ -38,7 +38,18 @@ return {
 	animationCleanup = row("src/core/animation/cleanup.lua"),
 	runtimeVisibilityController = row("src/core/runtime/visibility-controller.lua"),
 	runtimeExperienceBindings = row("src/core/runtime/experience-bindings.lua"),
+	runtimeWorkspaceService = row("src/core/runtime/workspace-service.lua"),
+	runtimeCommandPaletteService = row("src/core/runtime/command-palette-service.lua"),
+	runtimeSmartSearchService = row("src/core/runtime/smart-search-service.lua"),
+	runtimeMultiInstanceBridgeService = row("src/core/runtime/multi-instance-bridge-service.lua"),
+	runtimeAutomationEngineService = row("src/core/runtime/automation-engine-service.lua"),
+	runtimeUsageAnalyticsService = row("src/core/runtime/usage-analytics-service.lua"),
+	runtimeMacroRecorderService = row("src/core/runtime/macro-recorder-service.lua"),
+	runtimeDevExperienceService = row("src/core/runtime/dev-experience-service.lua"),
+	runtimePerformanceHUDService = row("src/core/runtime/performance-hud-service.lua"),
 	runtimeApi = row("src/core/runtime/runtime-api.lua"),
+	elementsDataGridFactory = row("src/ui/elements/factory/data-grid.lua"),
+	elementsChartFactory = row("src/ui/elements/factory/chart.lua"),
 	allInOne = row("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "feature/rayfield-all-in-one.lua"),
 	modifiedEntry = row("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua")
 }

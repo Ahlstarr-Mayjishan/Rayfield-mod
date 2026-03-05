@@ -1456,7 +1456,7 @@ local function createEnhancedRayfield(originalRayfield)
 			pcall(function()
 				originalRayfield:Notify({
 					Title = "Memory Monitor",
-					Content = "RAM tăng cao nhưng chưa đủ bằng chứng do Rayfield; chưa kích hoạt emergency.",
+					Content = "RAM usage is high, but evidence is insufficient to attribute it to Rayfield; emergency mode was not activated.",
 					Duration = 8
 				})
 			end)

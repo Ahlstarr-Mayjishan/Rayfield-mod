@@ -67,6 +67,24 @@ SettingsModule.defaultSettings = {
 	},
 	Layout = {
 		collapsedSections = {Type = "hidden", Value = {}, Name = "Collapsed Sections"}
+	},
+	Workspaces = {
+		active = {Type = "hidden", Value = "", Name = "Active Workspace"},
+		snapshots = {Type = "hidden", Value = {}, Name = "Workspace Snapshots"}
+	},
+	Profiles = {
+		active = {Type = "hidden", Value = "", Name = "Active Profile"},
+		snapshots = {Type = "hidden", Value = {}, Name = "Profile Snapshots"}
+	},
+	UIExperience = {
+		commandPaletteMode = {Type = "hidden", Value = "auto", Name = "Command Palette Mode"},
+		performanceHudEnabled = {Type = "hidden", Value = true, Name = "Performance HUD Enabled"}
+	},
+	Macros = {
+		items = {Type = "hidden", Value = {}, Name = "Recorded Macros"}
+	},
+	Automation = {
+		rules = {Type = "hidden", Value = {}, Name = "Automation Rules"}
 	}
 }
 
@@ -957,6 +975,318 @@ function SettingsModule.init(ctx)
 			Callback = function()
 				local ok, message = invokeExperience("openFavoritesTab")
 				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Workspaces")
+		local workspaceCategory = self.settingsTable.Workspaces or {}
+		local selectedWorkspaceName = tostring(self.getSetting("Workspaces", "active") or "")
+		local workspaceDropdown = nil
+
+		local function listWorkspaceOptions()
+			local options = {"(None)"}
+			local okList, workspaces = invokeExperience("listWorkspaces")
+			if okList and type(workspaces) == "table" and #workspaces > 0 then
+				options = {}
+				for _, workspaceName in ipairs(workspaces) do
+					table.insert(options, tostring(workspaceName))
+				end
+			end
+			return options
+		end
+
+		local function refreshWorkspaceDropdown()
+			if not workspaceDropdown then
+				return
+			end
+			local options = listWorkspaceOptions()
+			local target = options[1]
+			for _, name in ipairs(options) do
+				if tostring(name) == selectedWorkspaceName then
+					target = name
+					break
+				end
+			end
+			if type(workspaceDropdown.Refresh) == "function" then
+				workspaceDropdown:Refresh(options)
+			end
+			if type(workspaceDropdown.Set) == "function" and target then
+				workspaceDropdown:Set(target)
+			end
+		end
+
+		workspaceDropdown = newTab:CreateDropdown({
+			Name = "Workspace",
+			Options = listWorkspaceOptions(),
+			CurrentOption = selectedWorkspaceName ~= "" and selectedWorkspaceName or nil,
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "")
+				if value == "(None)" then
+					value = ""
+				end
+				selectedWorkspaceName = value
+				self.setSettingValue("Workspaces", "active", selectedWorkspaceName, true)
+			end
+		})
+		if workspaceCategory.active then
+			workspaceCategory.active.Element = workspaceDropdown
+		end
+
+		newTab:CreateButton({
+			Name = "Save Current Workspace",
+			Ext = true,
+			Callback = function()
+				local targetName = selectedWorkspaceName
+				if targetName == "" then
+					targetName = "Workspace-" .. tostring(os.time and os.time() or math.floor(os.clock() * 1000))
+				end
+				local okSave, message = invokeExperience("saveWorkspace", targetName)
+				if okSave then
+					selectedWorkspaceName = tostring(targetName)
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okSave, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Load Selected Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local okLoad, message = invokeExperience("loadWorkspace", selectedWorkspaceName)
+				if okLoad then
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, true)
+				end
+				notifyExperienceResult(okLoad, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Delete Selected Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local okDelete, message = invokeExperience("deleteWorkspace", selectedWorkspaceName)
+				if okDelete then
+					selectedWorkspaceName = ""
+					self.setSettingValue("Workspaces", "active", "", false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okDelete, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Refresh Workspaces",
+			Ext = true,
+			Callback = function()
+				refreshWorkspaceDropdown()
+				notifyExperienceResult(true, "Workspace list refreshed.")
+			end
+		})
+
+		newTab:CreateSection("Profiles")
+		local profileCategory = self.settingsTable.Profiles or {}
+		local selectedProfileName = tostring(self.getSetting("Profiles", "active") or "")
+		local profileDropdown = nil
+
+		local function listProfileOptions()
+			local options = {"(None)"}
+			local okList, profiles = invokeExperience("listProfiles")
+			if okList and type(profiles) == "table" and #profiles > 0 then
+				options = {}
+				for _, profileName in ipairs(profiles) do
+					table.insert(options, tostring(profileName))
+				end
+			end
+			return options
+		end
+
+		local function refreshProfileDropdown()
+			if not profileDropdown then
+				return
+			end
+			local options = listProfileOptions()
+			local target = options[1]
+			for _, name in ipairs(options) do
+				if tostring(name) == selectedProfileName then
+					target = name
+					break
+				end
+			end
+			if type(profileDropdown.Refresh) == "function" then
+				profileDropdown:Refresh(options)
+			end
+			if type(profileDropdown.Set) == "function" and target then
+				profileDropdown:Set(target)
+			end
+		end
+
+		profileDropdown = newTab:CreateDropdown({
+			Name = "Profile",
+			Options = listProfileOptions(),
+			CurrentOption = selectedProfileName ~= "" and selectedProfileName or nil,
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "")
+				if value == "(None)" then
+					value = ""
+				end
+				selectedProfileName = value
+				self.setSettingValue("Profiles", "active", selectedProfileName, true)
+			end
+		})
+		if profileCategory.active then
+			profileCategory.active.Element = profileDropdown
+		end
+
+		newTab:CreateButton({
+			Name = "Save Current Profile",
+			Ext = true,
+			Callback = function()
+				local targetName = selectedProfileName
+				if targetName == "" then
+					targetName = "Profile-" .. tostring(os.time and os.time() or math.floor(os.clock() * 1000))
+				end
+				local okSave, message = invokeExperience("saveProfile", targetName)
+				if okSave then
+					selectedProfileName = tostring(targetName)
+					self.setSettingValue("Profiles", "active", selectedProfileName, false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okSave, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Load Selected Profile",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local okLoad, message = invokeExperience("loadProfile", selectedProfileName)
+				if okLoad then
+					self.setSettingValue("Profiles", "active", selectedProfileName, true)
+				end
+				notifyExperienceResult(okLoad, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Delete Selected Profile",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local okDelete, message = invokeExperience("deleteProfile", selectedProfileName)
+				if okDelete then
+					selectedProfileName = ""
+					self.setSettingValue("Profiles", "active", "", false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okDelete, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Copy Workspace -> Profile",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local targetName = selectedProfileName ~= "" and selectedProfileName or selectedWorkspaceName
+				local okCopy, message = invokeExperience("copyWorkspaceToProfile", selectedWorkspaceName, targetName)
+				if okCopy then
+					selectedProfileName = targetName
+					self.setSettingValue("Profiles", "active", selectedProfileName, false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okCopy, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Copy Profile -> Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local targetName = selectedWorkspaceName ~= "" and selectedWorkspaceName or selectedProfileName
+				local okCopy, message = invokeExperience("copyProfileToWorkspace", selectedProfileName, targetName)
+				if okCopy then
+					selectedWorkspaceName = targetName
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okCopy, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Refresh Profiles",
+			Ext = true,
+			Callback = function()
+				refreshProfileDropdown()
+				notifyExperienceResult(true, "Profile list refreshed.")
+			end
+		})
+
+		newTab:CreateSection("Palette & HUD")
+		newTab:CreateDropdown({
+			Name = "Command Palette Mode",
+			Options = {"auto", "jump", "execute", "ask"},
+			CurrentOption = tostring(self.getSetting("UIExperience", "commandPaletteMode") or "auto"),
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "auto")
+				local okSet, message = invokeExperience("setCommandPaletteExecutionMode", value)
+				if okSet then
+					self.setSettingValue("UIExperience", "commandPaletteMode", value, true)
+				end
+				notifyExperienceResult(okSet, message)
+			end
+		})
+
+		newTab:CreateToggle({
+			Name = "Performance HUD",
+			CurrentValue = self.getSetting("UIExperience", "performanceHudEnabled") ~= false,
+			Ext = true,
+			Callback = function(value)
+				local boolValue = value == true
+				local okToggle, message = invokeExperience(boolValue and "openPerformanceHUD" or "closePerformanceHUD")
+				if okToggle then
+					self.setSettingValue("UIExperience", "performanceHudEnabled", boolValue, true)
+				end
+				notifyExperienceResult(okToggle, message)
 			end
 		})
 

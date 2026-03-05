@@ -26,13 +26,61 @@ local function compileChunk(source, label)
 	end
 	return chunk
 end
-	
+
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local forwardSource = game:HttpGet(root .. "src/legacy/forward.lua")
-if type(forwardSource) == "string" then
-	forwardSource = forwardSource:gsub("^\239\187\191", "")
-	forwardSource = forwardSource:gsub("^\0+", "")
+
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile, bundleOrErr = pcall(function()
+		return compileChunk(source, path)()
+	end)
+	if not okCompile then
+		warn("Rayfield Mod: bundle preload failed (" .. tostring(path) .. "): " .. tostring(bundleOrErr))
+		return false
+	end
+	return type(bundleOrErr) == "table"
 end
+
+local function preloadBundlesIfEnabled()
+	if type(_G) ~= "table" then
+		return
+	end
+	if _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES ~= true then
+		return
+	end
+	if _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+		return
+	end
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
+
+local function fetchSource(path, label)
+	if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
+		local bundled = _G.__RAYFIELD_BUNDLE_SOURCES[path]
+		if type(bundled) == "string" and bundled ~= "" then
+			return bundled
+		end
+	end
+
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch then
+		error("Failed to fetch " .. tostring(label or path) .. ": " .. tostring(source))
+	end
+	if type(source) ~= "string" or source == "" then
+		error("Empty source for " .. tostring(label or path))
+	end
+	return source
+end
+
+preloadBundlesIfEnabled()
+
+local forwardSource = fetchSource("src/legacy/forward.lua", "src/legacy/forward.lua")
 local Forward = compileChunk(forwardSource, "src/legacy/forward.lua")()
 return Forward.module("allInOne")
 ]])
@@ -59,6 +107,16 @@ local function compileChunk(source, label)
 end
 
 local function fetchSource(url, label)
+	if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" and type(url) == "string" then
+		local path = url:match("^https?://raw%.githubusercontent%.com/[^/]+/[^/]+/[^/]+/(.+)$")
+		if not path and type(_G.__RAYFIELD_RUNTIME_ROOT_URL) == "string" and url:sub(1, #_G.__RAYFIELD_RUNTIME_ROOT_URL) == _G.__RAYFIELD_RUNTIME_ROOT_URL then
+			path = url:sub(#_G.__RAYFIELD_RUNTIME_ROOT_URL + 1)
+		end
+		if path and _G.__RAYFIELD_BUNDLE_SOURCES[path] then
+			return _G.__RAYFIELD_BUNDLE_SOURCES[path]
+		end
+	end
+
 	local ok, body = pcall(game.HttpGet, game, url)
 	if not ok then
 		error(formatBootstrapError("E_BOOTSTRAP_FETCH", "Failed to fetch " .. tostring(label) .. ": " .. tostring(body)))
@@ -70,6 +128,28 @@ local function fetchSource(url, label)
 end
 
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
+
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile, bundleOrErr = pcall(function()
+		return compileChunk(source, path)()
+	end)
+	if not okCompile then
+		warn(formatBootstrapError("W_BOOTSTRAP_BUNDLE", "Failed to preload " .. tostring(path) .. ": " .. tostring(bundleOrErr)))
+		return false
+	end
+	return type(bundleOrErr) == "table"
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
 
 local forwardOk, forwardResult = pcall(function()
 	local forwardSource = fetchSource(root .. "src/legacy/forward.lua", "src/legacy/forward.lua")
@@ -115,7 +195,46 @@ if not compileString then
 end
 
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local Forward = compileString(game:HttpGet(root .. "src/legacy/forward.lua"))()
+local function compileChunk(source, label)
+	if type(source) ~= "string" then
+		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
+	end
+	source = source:gsub("^\239\187\191", "")
+	source = source:gsub("^\0+", "")
+	local fn, err = compileString(source)
+	if not fn then
+		error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
+	end
+	return fn
+end
+
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile = pcall(function()
+		compileChunk(source, path)()
+	end)
+	return okCompile
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
+
+local forwardSource = nil
+if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
+	forwardSource = _G.__RAYFIELD_BUNDLE_SOURCES["src/legacy/forward.lua"]
+end
+if type(forwardSource) ~= "string" or forwardSource == "" then
+	forwardSource = game:HttpGet(root .. "src/legacy/forward.lua")
+end
+
+local Forward = compileChunk(forwardSource, "src/legacy/forward.lua")()
 return Forward.module("allInOne")
 ]])
 put("feature/rayfield-config.lua", [[local compileString = loadstring or load
@@ -160,7 +279,46 @@ if not compileString then
 end
 
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
-local Forward = compileString(game:HttpGet(root .. "src/legacy/forward.lua"))()
+local function compileChunk(source, label)
+	if type(source) ~= "string" then
+		error("Invalid Lua source for " .. tostring(label) .. ": " .. type(source))
+	end
+	source = source:gsub("^\239\187\191", "")
+	source = source:gsub("^\0+", "")
+	local fn, err = compileString(source)
+	if not fn then
+		error("Failed to compile " .. tostring(label) .. ": " .. tostring(err))
+	end
+	return fn
+end
+
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile = pcall(function()
+		compileChunk(source, path)()
+	end)
+	return okCompile
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
+
+local forwardSource = nil
+if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
+	forwardSource = _G.__RAYFIELD_BUNDLE_SOURCES["src/legacy/forward.lua"]
+end
+if type(forwardSource) ~= "string" or forwardSource == "" then
+	forwardSource = game:HttpGet(root .. "src/legacy/forward.lua")
+end
+
+local Forward = compileChunk(forwardSource, "src/legacy/forward.lua")()
 return Forward.module("enhanced")
 ]])
 put("feature/rayfield-settings.lua", [[local compileString = loadstring or load
@@ -3669,15 +3827,15 @@ end
 return DragWindow
 ]])
 put("src/feature/enhanced/advanced.lua", [=[--[[
-	Rayfield Advanced Features - Complete Module
+    Rayfield Advanced Features - Complete Module
 
-	Tính năng:
-	✅ Animation API - Animate bất kỳ property nào
-	✅ Drag & Drop - Kéo thả elements (giữ 3 giây)
-	✅ Detachable Windows - Tách element thành cửa sổ riêng
-	✅ State Persistence - Lưu trạng thái elements
-	✅ Performance Monitor - Theo dõi hiệu suất
-	✅ Default Templates - Main & Settings tabs mặc định
+    Features:
+    - Animation API for arbitrary property animation
+    - Drag and Drop elements (hold to drag)
+    - Detachable element windows
+    - Element state persistence
+    - Performance monitor
+    - Default templates for Main and Settings tabs
 
 ]]
 
@@ -3880,16 +4038,16 @@ end
 
 function PerformanceMonitor:PrintStats()
 	local stats = self:GetStats()
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📊 Rayfield Performance Stats")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	print("--------------------------------")
+	print("Rayfield Performance Stats")
+	print("--------------------------------")
 	print(string.format("Elements: %d", stats.elementCount))
 	print(string.format("Detached Windows: %d", stats.detachedWindows))
 	print(string.format("Active Animations: %d", stats.activeAnimations))
 	print(string.format("Memory: %.2f MB", stats.memoryUsage))
 	print(string.format("FPS: %d", stats.fps))
 	print(string.format("Uptime: %.1f seconds", stats.uptime))
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	print("--------------------------------")
 end
 
 -- ============================================
@@ -4037,7 +4195,7 @@ function DragDropManager:StartDragging(element, guiObject)
 	guiObject.BackgroundTransparency = 0.5
 	guiObject.ZIndex = 1000
 
-	print("🎯 Drag mode! Kéo ra ngoài để tách cửa sổ")
+	print("Drag mode: move outside to detach as a window")
 	self:TrackDragMovement(guiObject)
 end
 
@@ -5509,7 +5667,7 @@ local function createEnhancedRayfield(originalRayfield)
 			pcall(function()
 				originalRayfield:Notify({
 					Title = "Memory Monitor",
-					Content = "RAM tăng cao nhưng chưa đủ bằng chứng do Rayfield; chưa kích hoạt emergency.",
+					Content = "RAM usage is high, but evidence is insufficient to attribute it to Rayfield; emergency mode was not activated.",
 					Duration = 8
 				})
 			end)
@@ -8377,10 +8535,45 @@ local function compileChunk(source, label)
 	return chunk
 end
 
-local clientSource = game:HttpGet(root .. "src/api/client.lua")
+local function tryLoadBundle(path)
+	local okFetch, source = pcall(game.HttpGet, game, root .. path)
+	if not okFetch or type(source) ~= "string" or source == "" then
+		return false
+	end
+	local okCompile, bundleOrErr = pcall(function()
+		return compileChunk(source, path)()
+	end)
+	if not okCompile then
+		warn("Rayfield Mod: failed to preload bundle " .. tostring(path) .. ": " .. tostring(bundleOrErr))
+		return false
+	end
+	return type(bundleOrErr) == "table"
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_AUTO_PRELOAD_BUNDLES == true and not _G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED then
+	_G.__RAYFIELD_BUNDLE_PRELOAD_ATTEMPTED = true
+	local coreOk = tryLoadBundle("dist/rayfield-runtime-core.bundle.lua")
+	local uiOk = tryLoadBundle("dist/rayfield-runtime-ui.bundle.lua")
+	_G.__RAYFIELD_BUNDLE_PRELOADED = coreOk or uiOk
+end
+
+local function fetchSource(path)
+	if type(_G) == "table" and type(_G.__RAYFIELD_BUNDLE_SOURCES) == "table" then
+		local bundled = _G.__RAYFIELD_BUNDLE_SOURCES[path]
+		if type(bundled) == "string" and bundled ~= "" then
+			return bundled
+		end
+	end
+	return game:HttpGet(root .. path)
+end
+
+local clientSource = fetchSource("src/api/client.lua")
 local client = compileChunk(clientSource, "src/api/client.lua")()
 if type(client) ~= "table" or type(client.fetchAndExecute) ~= "function" then
 	error("Invalid API client bootstrap: missing fetchAndExecute")
+end
+if type(_G) == "table" then
+	_G.__RayfieldApiClient = client
 end
 
 if _G and _G.__RayfieldWidgetBootstrap == nil then
@@ -10628,7 +10821,7 @@ SettingsModule.defaultSettings = {
 			Type = "dropdown",
 			Value = "Comfort",
 			Name = "UI Preset",
-			Options = {"Compact", "Comfort", "Focus"}
+			Options = {"Compact", "Comfort", "Focus", "Cripware"}
 		},
 		transitionProfile = {
 			Type = "dropdown",
@@ -10649,8 +10842,46 @@ SettingsModule.defaultSettings = {
 		useCustom = {Type = "toggle", Value = false, Name = "Use Custom Theme"},
 		customThemePacked = {Type = "hidden", Value = {}, Name = "Custom Theme Colors"}
 	},
+	Audio = {
+		enabled = {Type = "toggle", Value = false, Name = "Enable Audio Feedback"},
+		pack = {
+			Type = "dropdown",
+			Value = "Mute",
+			Name = "Audio Pack",
+			Options = {"Mute", "Custom"}
+		},
+		volume = {Type = "hidden", Value = 0.45, Name = "Audio Volume"},
+		customPack = {Type = "hidden", Value = {}, Name = "Custom Audio Pack"}
+	},
+	Glass = {
+		mode = {
+			Type = "dropdown",
+			Value = "auto",
+			Name = "Glass Mode",
+			Options = {"auto", "off", "canvas", "fallback"}
+		},
+		intensity = {Type = "hidden", Value = 0.32, Name = "Glass Intensity"}
+	},
 	Layout = {
 		collapsedSections = {Type = "hidden", Value = {}, Name = "Collapsed Sections"}
+	},
+	Workspaces = {
+		active = {Type = "hidden", Value = "", Name = "Active Workspace"},
+		snapshots = {Type = "hidden", Value = {}, Name = "Workspace Snapshots"}
+	},
+	Profiles = {
+		active = {Type = "hidden", Value = "", Name = "Active Profile"},
+		snapshots = {Type = "hidden", Value = {}, Name = "Profile Snapshots"}
+	},
+	UIExperience = {
+		commandPaletteMode = {Type = "hidden", Value = "auto", Name = "Command Palette Mode"},
+		performanceHudEnabled = {Type = "hidden", Value = true, Name = "Performance HUD Enabled"}
+	},
+	Macros = {
+		items = {Type = "hidden", Value = {}, Name = "Recorded Macros"}
+	},
+	Automation = {
+		rules = {Type = "hidden", Value = {}, Name = "Automation Rules"}
 	}
 }
 
@@ -11135,7 +11366,9 @@ function SettingsModule.init(ctx)
 			Appearance = true,
 			Favorites = true,
 			ThemeStudio = true,
-			Onboarding = true
+			Onboarding = true,
+			Audio = true,
+			Glass = true
 		}
 
 		-- Create generic sections and elements
@@ -11230,7 +11463,7 @@ function SettingsModule.init(ctx)
 		if uiPresetSetting then
 			uiPresetSetting.Element = newTab:CreateDropdown({
 				Name = uiPresetSetting.Name or "UI Preset",
-				Options = uiPresetSetting.Options or {"Compact", "Comfort", "Focus"},
+				Options = uiPresetSetting.Options or {"Compact", "Comfort", "Focus", "Cripware"},
 				CurrentOption = self.getSetting("Appearance", "uiPreset") or uiPresetSetting.Value,
 				MultipleOptions = false,
 				Ext = true,
@@ -11267,6 +11500,145 @@ function SettingsModule.init(ctx)
 
 		newTab:CreateButton({
 			Name = "Replay Onboarding",
+			Ext = true,
+			Callback = function()
+				local ok, message = invokeExperience("showOnboarding", true)
+				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Premium UX")
+		local audioCategory = self.settingsTable.Audio or {}
+		local glassCategory = self.settingsTable.Glass or {}
+		local audioCustomPackDraft = ""
+
+		local function encodeJsonSafe(value, fallback)
+			local okEncode, encoded = pcall(self.HttpService.JSONEncode, self.HttpService, value)
+			if okEncode and type(encoded) == "string" then
+				return encoded
+			end
+			return tostring(fallback or "{}")
+		end
+
+		local audioEnabledSetting = audioCategory.enabled
+		if audioEnabledSetting then
+			audioEnabledSetting.Element = newTab:CreateToggle({
+				Name = audioEnabledSetting.Name or "Enable Audio Feedback",
+				CurrentValue = self.getSetting("Audio", "enabled") == true,
+				Ext = true,
+				Callback = function(value)
+					local boolValue = value == true
+					local ok, message = invokeExperience("setAudioEnabled", boolValue)
+					if ok then
+						self.setSettingValue("Audio", "enabled", boolValue, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		local audioPackSetting = audioCategory.pack
+		if audioPackSetting then
+			audioPackSetting.Element = newTab:CreateDropdown({
+				Name = audioPackSetting.Name or "Audio Pack",
+				Options = audioPackSetting.Options or {"Mute", "Custom"},
+				CurrentOption = self.getSetting("Audio", "pack") or audioPackSetting.Value or "Mute",
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = tostring(value or "Mute")
+					local ok, message = invokeExperience("setAudioPack", value)
+					if ok then
+						self.setSettingValue("Audio", "pack", value, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		local storedCustomPack = self.getSetting("Audio", "customPack")
+		if type(storedCustomPack) ~= "table" then
+			storedCustomPack = {}
+		end
+		audioCustomPackDraft = encodeJsonSafe(storedCustomPack, "{}")
+
+		local audioPackInput = newTab:CreateInput({
+			Name = "Custom Audio Pack (JSON)",
+			CurrentValue = audioCustomPackDraft,
+			PlaceholderText = "{\"click\":\"rbxassetid://...\"}",
+			Ext = true,
+			RemoveTextAfterFocusLost = false,
+			Callback = function(value)
+				audioCustomPackDraft = tostring(value or "")
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Apply Custom Audio Pack",
+			Ext = true,
+			Callback = function()
+				if audioCustomPackDraft == "" then
+					notifyExperienceResult(false, "Custom audio pack JSON is empty.")
+					return
+				end
+				local okApply, message, normalizedPack = invokeExperience("setAudioPackJson", audioCustomPackDraft)
+				if okApply then
+					if type(normalizedPack) == "table" then
+						self.setSettingValue("Audio", "customPack", normalizedPack, false)
+						audioCustomPackDraft = encodeJsonSafe(normalizedPack, audioCustomPackDraft)
+						if audioPackInput and type(audioPackInput.Set) == "function" then
+							audioPackInput:Set(audioCustomPackDraft)
+						end
+					end
+					self.setSettingValue("Audio", "pack", "Custom", true)
+					if audioPackSetting and audioPackSetting.Element and type(audioPackSetting.Element.Set) == "function" then
+						audioPackSetting.Element:Set("Custom")
+					end
+				end
+				notifyExperienceResult(okApply, message)
+			end
+		})
+
+		local glassModeSetting = glassCategory.mode
+		if glassModeSetting then
+			glassModeSetting.Element = newTab:CreateDropdown({
+				Name = glassModeSetting.Name or "Glass Mode",
+				Options = glassModeSetting.Options or {"auto", "off", "canvas", "fallback"},
+				CurrentOption = self.getSetting("Glass", "mode") or glassModeSetting.Value or "auto",
+				MultipleOptions = false,
+				Ext = true,
+				Callback = function(selection)
+					local value = type(selection) == "table" and selection[1] or selection
+					value = string.lower(tostring(value or "auto"))
+					local ok, message = invokeExperience("setGlassMode", value)
+					if ok then
+						self.setSettingValue("Glass", "mode", value, true)
+					end
+					notifyExperienceResult(ok, message)
+				end
+			})
+		end
+
+		newTab:CreateSlider({
+			Name = "Glass Intensity",
+			Range = {0, 100},
+			Increment = 1,
+			CurrentValue = math.floor((tonumber(self.getSetting("Glass", "intensity")) or 0.32) * 100 + 0.5),
+			Ext = true,
+			Callback = function(value)
+				local numeric = math.clamp((tonumber(value) or 0) / 100, 0, 1)
+				local ok, message = invokeExperience("setGlassIntensity", numeric)
+				if ok then
+					self.setSettingValue("Glass", "intensity", numeric, true)
+				else
+					notifyExperienceResult(false, message)
+				end
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Replay Guided Tour",
 			Ext = true,
 			Callback = function()
 				local ok, message = invokeExperience("showOnboarding", true)
@@ -11400,6 +11772,318 @@ function SettingsModule.init(ctx)
 			Callback = function()
 				local ok, message = invokeExperience("openFavoritesTab")
 				notifyExperienceResult(ok, message)
+			end
+		})
+
+		newTab:CreateSection("Workspaces")
+		local workspaceCategory = self.settingsTable.Workspaces or {}
+		local selectedWorkspaceName = tostring(self.getSetting("Workspaces", "active") or "")
+		local workspaceDropdown = nil
+
+		local function listWorkspaceOptions()
+			local options = {"(None)"}
+			local okList, workspaces = invokeExperience("listWorkspaces")
+			if okList and type(workspaces) == "table" and #workspaces > 0 then
+				options = {}
+				for _, workspaceName in ipairs(workspaces) do
+					table.insert(options, tostring(workspaceName))
+				end
+			end
+			return options
+		end
+
+		local function refreshWorkspaceDropdown()
+			if not workspaceDropdown then
+				return
+			end
+			local options = listWorkspaceOptions()
+			local target = options[1]
+			for _, name in ipairs(options) do
+				if tostring(name) == selectedWorkspaceName then
+					target = name
+					break
+				end
+			end
+			if type(workspaceDropdown.Refresh) == "function" then
+				workspaceDropdown:Refresh(options)
+			end
+			if type(workspaceDropdown.Set) == "function" and target then
+				workspaceDropdown:Set(target)
+			end
+		end
+
+		workspaceDropdown = newTab:CreateDropdown({
+			Name = "Workspace",
+			Options = listWorkspaceOptions(),
+			CurrentOption = selectedWorkspaceName ~= "" and selectedWorkspaceName or nil,
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "")
+				if value == "(None)" then
+					value = ""
+				end
+				selectedWorkspaceName = value
+				self.setSettingValue("Workspaces", "active", selectedWorkspaceName, true)
+			end
+		})
+		if workspaceCategory.active then
+			workspaceCategory.active.Element = workspaceDropdown
+		end
+
+		newTab:CreateButton({
+			Name = "Save Current Workspace",
+			Ext = true,
+			Callback = function()
+				local targetName = selectedWorkspaceName
+				if targetName == "" then
+					targetName = "Workspace-" .. tostring(os.time and os.time() or math.floor(os.clock() * 1000))
+				end
+				local okSave, message = invokeExperience("saveWorkspace", targetName)
+				if okSave then
+					selectedWorkspaceName = tostring(targetName)
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okSave, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Load Selected Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local okLoad, message = invokeExperience("loadWorkspace", selectedWorkspaceName)
+				if okLoad then
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, true)
+				end
+				notifyExperienceResult(okLoad, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Delete Selected Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local okDelete, message = invokeExperience("deleteWorkspace", selectedWorkspaceName)
+				if okDelete then
+					selectedWorkspaceName = ""
+					self.setSettingValue("Workspaces", "active", "", false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okDelete, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Refresh Workspaces",
+			Ext = true,
+			Callback = function()
+				refreshWorkspaceDropdown()
+				notifyExperienceResult(true, "Workspace list refreshed.")
+			end
+		})
+
+		newTab:CreateSection("Profiles")
+		local profileCategory = self.settingsTable.Profiles or {}
+		local selectedProfileName = tostring(self.getSetting("Profiles", "active") or "")
+		local profileDropdown = nil
+
+		local function listProfileOptions()
+			local options = {"(None)"}
+			local okList, profiles = invokeExperience("listProfiles")
+			if okList and type(profiles) == "table" and #profiles > 0 then
+				options = {}
+				for _, profileName in ipairs(profiles) do
+					table.insert(options, tostring(profileName))
+				end
+			end
+			return options
+		end
+
+		local function refreshProfileDropdown()
+			if not profileDropdown then
+				return
+			end
+			local options = listProfileOptions()
+			local target = options[1]
+			for _, name in ipairs(options) do
+				if tostring(name) == selectedProfileName then
+					target = name
+					break
+				end
+			end
+			if type(profileDropdown.Refresh) == "function" then
+				profileDropdown:Refresh(options)
+			end
+			if type(profileDropdown.Set) == "function" and target then
+				profileDropdown:Set(target)
+			end
+		end
+
+		profileDropdown = newTab:CreateDropdown({
+			Name = "Profile",
+			Options = listProfileOptions(),
+			CurrentOption = selectedProfileName ~= "" and selectedProfileName or nil,
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "")
+				if value == "(None)" then
+					value = ""
+				end
+				selectedProfileName = value
+				self.setSettingValue("Profiles", "active", selectedProfileName, true)
+			end
+		})
+		if profileCategory.active then
+			profileCategory.active.Element = profileDropdown
+		end
+
+		newTab:CreateButton({
+			Name = "Save Current Profile",
+			Ext = true,
+			Callback = function()
+				local targetName = selectedProfileName
+				if targetName == "" then
+					targetName = "Profile-" .. tostring(os.time and os.time() or math.floor(os.clock() * 1000))
+				end
+				local okSave, message = invokeExperience("saveProfile", targetName)
+				if okSave then
+					selectedProfileName = tostring(targetName)
+					self.setSettingValue("Profiles", "active", selectedProfileName, false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okSave, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Load Selected Profile",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local okLoad, message = invokeExperience("loadProfile", selectedProfileName)
+				if okLoad then
+					self.setSettingValue("Profiles", "active", selectedProfileName, true)
+				end
+				notifyExperienceResult(okLoad, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Delete Selected Profile",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local okDelete, message = invokeExperience("deleteProfile", selectedProfileName)
+				if okDelete then
+					selectedProfileName = ""
+					self.setSettingValue("Profiles", "active", "", false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okDelete, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Copy Workspace -> Profile",
+			Ext = true,
+			Callback = function()
+				if selectedWorkspaceName == "" then
+					notifyExperienceResult(false, "No workspace selected.")
+					return
+				end
+				local targetName = selectedProfileName ~= "" and selectedProfileName or selectedWorkspaceName
+				local okCopy, message = invokeExperience("copyWorkspaceToProfile", selectedWorkspaceName, targetName)
+				if okCopy then
+					selectedProfileName = targetName
+					self.setSettingValue("Profiles", "active", selectedProfileName, false)
+					refreshProfileDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okCopy, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Copy Profile -> Workspace",
+			Ext = true,
+			Callback = function()
+				if selectedProfileName == "" then
+					notifyExperienceResult(false, "No profile selected.")
+					return
+				end
+				local targetName = selectedWorkspaceName ~= "" and selectedWorkspaceName or selectedProfileName
+				local okCopy, message = invokeExperience("copyProfileToWorkspace", selectedProfileName, targetName)
+				if okCopy then
+					selectedWorkspaceName = targetName
+					self.setSettingValue("Workspaces", "active", selectedWorkspaceName, false)
+					refreshWorkspaceDropdown()
+					self.saveSettings()
+				end
+				notifyExperienceResult(okCopy, message)
+			end
+		})
+
+		newTab:CreateButton({
+			Name = "Refresh Profiles",
+			Ext = true,
+			Callback = function()
+				refreshProfileDropdown()
+				notifyExperienceResult(true, "Profile list refreshed.")
+			end
+		})
+
+		newTab:CreateSection("Palette & HUD")
+		newTab:CreateDropdown({
+			Name = "Command Palette Mode",
+			Options = {"auto", "jump", "execute", "ask"},
+			CurrentOption = tostring(self.getSetting("UIExperience", "commandPaletteMode") or "auto"),
+			MultipleOptions = false,
+			Ext = true,
+			Callback = function(selection)
+				local value = type(selection) == "table" and selection[1] or selection
+				value = tostring(value or "auto")
+				local okSet, message = invokeExperience("setCommandPaletteExecutionMode", value)
+				if okSet then
+					self.setSettingValue("UIExperience", "commandPaletteMode", value, true)
+				end
+				notifyExperienceResult(okSet, message)
+			end
+		})
+
+		newTab:CreateToggle({
+			Name = "Performance HUD",
+			CurrentValue = self.getSetting("UIExperience", "performanceHudEnabled") ~= false,
+			Ext = true,
+			Callback = function(value)
+				local boolValue = value == true
+				local okToggle, message = invokeExperience(boolValue and "openPerformanceHUD" or "closePerformanceHUD")
+				if okToggle then
+					self.setSettingValue("UIExperience", "performanceHudEnabled", boolValue, true)
+				end
+				notifyExperienceResult(okToggle, message)
 			end
 		})
 
@@ -11990,6 +12674,9 @@ local THEME_FALLBACK_KEYS = {
 	LoadingTrack = {"SliderBackground", "SecondaryElementBackground"},
 	LoadingBar = {"SliderProgress", "ToggleEnabled"},
 	LoadingText = {"TextColor"},
+	GlassTint = {"Topbar", "Background"},
+	GlassStroke = {"ElementStroke", "TabStroke"},
+	GlassAccent = {"SliderProgress", "ToggleEnabled"},
 	ChartLine = {"SliderProgress", "SliderBackground"},
 	ChartGrid = {"ElementStroke", "SecondaryElementStroke"},
 	ChartFill = {"SliderBackground", "ChartLine"},
@@ -13497,6 +14184,476 @@ end
 
 local root = (_G and _G.__RAYFIELD_RUNTIME_ROOT_URL) or "https://raw.githubusercontent.com/Ahlstarr-Mayjishan/Rayfield-mod/main/"
 return client.fetchAndExecute(root .. "src/ui/elements/factory/init.lua")]])
+put("src/ui/elements/factory/chart.lua", [[local ChartFactory = {}
+
+function ChartFactory.create(context)
+	context = context or {}
+	local self = context.self
+	local TabPage = context.TabPage
+	local Settings = context.Settings or {}
+	local addExtendedAPI = context.addExtendedAPI
+	local resolveElementParentFromSettings = context.resolveElementParentFromSettings
+	local connectThemeRefresh = context.connectThemeRefresh
+	local cloneSerializable = context.cloneSerializable
+	local clampNumber = context.clampNumber
+	local isHeadlessPerformanceMode = context.isHeadlessPerformanceMode
+	local settingsValue = context.settings or {}
+
+	if type(self) ~= "table" or not TabPage then
+		return nil
+	end
+	if type(cloneSerializable) ~= "function" then
+		cloneSerializable = function(value)
+			return value
+		end
+	end
+	if type(clampNumber) ~= "function" then
+		clampNumber = function(value, minimum, maximum, fallback)
+			local numberValue = tonumber(value)
+			if not numberValue then
+				numberValue = tonumber(fallback) or 0
+			end
+			if minimum ~= nil then
+				numberValue = math.max(minimum, numberValue)
+			end
+			if maximum ~= nil then
+				numberValue = math.min(maximum, numberValue)
+			end
+			return numberValue
+		end
+	end
+	if type(connectThemeRefresh) ~= "function" then
+		connectThemeRefresh = function() end
+	end
+	if type(isHeadlessPerformanceMode) ~= "function" then
+		isHeadlessPerformanceMode = function()
+			if Settings.PerformanceMode == true then
+				return true
+			end
+			local profile = type(Settings.PerformanceProfile) == "table" and Settings.PerformanceProfile or nil
+			if not profile or profile.Enabled ~= true then
+				return false
+			end
+			local mode = string.lower(tostring(profile.Mode or ""))
+			if profile.DisableAnimations == true then
+				return true
+			end
+			if profile.Aggressive == true then
+				return true
+			end
+			return mode == "potato" or mode == "mobile"
+		end
+	end
+
+	local chart = {}
+	chart.Name = tostring(settingsValue.Name or "Chart")
+	chart.Flag = settingsValue.Flag
+	chart.CurrentValue = {
+		points = {},
+		zoom = 1,
+		offset = 0,
+		preset = settingsValue.Preset
+	}
+	local maxPoints = math.max(10, math.floor(tonumber(settingsValue.MaxPoints) or 300))
+	local updateHz = math.max(1, math.floor(tonumber(settingsValue.UpdateHz) or 10))
+	if isHeadlessPerformanceMode() then
+		updateHz = math.min(updateHz, 4)
+	end
+	local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+	local showAreaFill = settingsValue.ShowAreaFill ~= false
+	if isHeadlessPerformanceMode() and settingsValue.ShowAreaFill == nil then
+		showAreaFill = false
+	end
+	local renderPending = false
+	local lastRender = 0
+	local segmentPool = {}
+	local fillPool = {}
+	local dragging = false
+	local dragStartX = 0
+
+	local root = Instance.new("Frame")
+	root.Name = chart.Name
+	root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 150, 380, 220))
+	root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+	root.BorderSizePixel = 0
+	root.Visible = true
+	root.Parent = TabPage
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = root
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = self.getSelectedTheme().ElementStroke
+	stroke.Parent = root
+
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.new(0, 10, 0, 0)
+	title.Size = UDim2.new(1, -90, 0, 22)
+	title.Font = Enum.Font.GothamSemibold
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextSize = 13
+	title.TextColor3 = self.getSelectedTheme().TextColor
+	title.Text = chart.Name
+	title.Parent = root
+
+	local zoomIn = Instance.new("TextButton")
+	zoomIn.Size = UDim2.new(0, 22, 0, 20)
+	zoomIn.AnchorPoint = Vector2.new(1, 0)
+	zoomIn.Position = UDim2.new(1, -34, 0, 2)
+	zoomIn.Text = "+"
+	zoomIn.Font = Enum.Font.GothamBold
+	zoomIn.TextSize = 14
+	zoomIn.TextColor3 = self.getSelectedTheme().TextColor
+	zoomIn.BackgroundColor3 = self.getSelectedTheme().InputBackground
+	zoomIn.BorderSizePixel = 0
+	zoomIn.Parent = root
+
+	local zoomOut = Instance.new("TextButton")
+	zoomOut.Size = UDim2.new(0, 22, 0, 20)
+	zoomOut.AnchorPoint = Vector2.new(1, 0)
+	zoomOut.Position = UDim2.new(1, -8, 0, 2)
+	zoomOut.Text = "-"
+	zoomOut.Font = Enum.Font.GothamBold
+	zoomOut.TextSize = 14
+	zoomOut.TextColor3 = self.getSelectedTheme().TextColor
+	zoomOut.BackgroundColor3 = self.getSelectedTheme().InputBackground
+	zoomOut.BorderSizePixel = 0
+	zoomOut.Parent = root
+
+	local plot = Instance.new("Frame")
+	plot.Name = "Plot"
+	plot.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+	plot.BorderSizePixel = 0
+	plot.Position = UDim2.new(0, 8, 0, 26)
+	plot.Size = UDim2.new(1, -16, 1, -34)
+	plot.ClipsDescendants = true
+	plot.Parent = root
+
+	local plotStroke = Instance.new("UIStroke")
+	plotStroke.Color = self.getSelectedTheme().ElementStroke
+	plotStroke.Transparency = 0.2
+	plotStroke.Parent = plot
+
+	local gridLines = {}
+	for i = 1, 4 do
+		local line = Instance.new("Frame")
+		line.BorderSizePixel = 0
+		line.Size = UDim2.new(1, 0, 0, 1)
+		line.Position = UDim2.new(0, 0, (i - 1) / 3, 0)
+		line.BackgroundColor3 = self.getSelectedTheme().ChartGrid or self.getSelectedTheme().ElementStroke
+		line.BackgroundTransparency = 0.65
+		line.Parent = plot
+		gridLines[i] = line
+	end
+
+	local drawLayer = Instance.new("Frame")
+	drawLayer.BackgroundTransparency = 1
+	drawLayer.Size = UDim2.new(1, 0, 1, 0)
+	drawLayer.Parent = plot
+
+	local function ensurePoolEntry(pool, index, factory)
+		if pool[index] and pool[index].Parent then
+			return pool[index]
+		end
+		local entry = factory()
+		pool[index] = entry
+		return entry
+	end
+
+	local function trimPoints()
+		while #chart.CurrentValue.points > maxPoints do
+			table.remove(chart.CurrentValue.points, 1)
+		end
+	end
+
+	local function getVisiblePoints()
+		local points = chart.CurrentValue.points
+		local total = #points
+		if total == 0 then
+			return {}
+		end
+		local visibleCount = math.max(2, math.floor(total / math.max(1, chart.CurrentValue.zoom)))
+		local maxOffset = math.max(0, total - visibleCount)
+		chart.CurrentValue.offset = math.floor(clampNumber(chart.CurrentValue.offset, 0, maxOffset, chart.CurrentValue.offset))
+		local startIndex = total - visibleCount - chart.CurrentValue.offset + 1
+		if startIndex < 1 then
+			startIndex = 1
+		end
+		local out = {}
+		for index = startIndex, math.min(total, startIndex + visibleCount - 1) do
+			table.insert(out, points[index])
+		end
+		return out
+	end
+
+	local function renderNow()
+		lastRender = os.clock()
+		local visible = getVisiblePoints()
+		local pointCount = #visible
+		local minY = math.huge
+		local maxY = -math.huge
+		for _, point in ipairs(visible) do
+			local y = tonumber(point.y) or 0
+			if y < minY then minY = y end
+			if y > maxY then maxY = y end
+		end
+		if pointCount == 0 then
+			minY, maxY = 0, 1
+		elseif minY == maxY then
+			minY -= 1
+			maxY += 1
+		end
+
+		local width = math.max(1, plot.AbsoluteSize.X)
+		local height = math.max(1, plot.AbsoluteSize.Y)
+		local function toPoint(index, yValue)
+			local x = pointCount <= 1 and (width * 0.5) or (((index - 1) / (pointCount - 1)) * width)
+			local safeY = tonumber(yValue) or minY
+			local y = height - (((safeY - minY) / math.max(0.00001, (maxY - minY))) * height)
+			return x, y
+		end
+
+		local segmentIndex = 0
+		for index = 1, pointCount - 1 do
+			local x1, y1 = toPoint(index, visible[index].y)
+			local x2, y2 = toPoint(index + 1, visible[index + 1].y)
+			local dx, dy = x2 - x1, y2 - y1
+			local length = math.sqrt((dx * dx) + (dy * dy))
+			if length > 0 then
+				segmentIndex += 1
+				local segment = ensurePoolEntry(segmentPool, segmentIndex, function()
+					local line = Instance.new("Frame")
+					line.BorderSizePixel = 0
+					line.AnchorPoint = Vector2.new(0, 0.5)
+					line.Size = UDim2.new(0, 1, 0, 2)
+					line.Parent = drawLayer
+					return line
+				end)
+				segment.Visible = true
+				segment.BackgroundColor3 = self.getSelectedTheme().ChartLine or self.getSelectedTheme().SliderProgress
+				segment.Position = UDim2.new(0, x1, 0, y1)
+				segment.Size = UDim2.new(0, length, 0, 2)
+				segment.Rotation = math.deg(math.atan2(dy, dx))
+			end
+		end
+		for index = segmentIndex + 1, #segmentPool do
+			if segmentPool[index] then
+				segmentPool[index].Visible = false
+			end
+		end
+
+		if showAreaFill then
+			local fillIndex = 0
+			for index = 1, pointCount do
+				local x, y = toPoint(index, visible[index].y)
+				fillIndex += 1
+				local fill = ensurePoolEntry(fillPool, fillIndex, function()
+					local bar = Instance.new("Frame")
+					bar.BorderSizePixel = 0
+					bar.AnchorPoint = Vector2.new(0.5, 1)
+					bar.BackgroundTransparency = 0.78
+					bar.Parent = drawLayer
+					return bar
+				end)
+				fill.Visible = true
+				fill.BackgroundColor3 = self.getSelectedTheme().ChartFill or self.getSelectedTheme().SliderBackground
+				fill.Position = UDim2.new(0, x, 0, height)
+				fill.Size = UDim2.new(0, 2, 0, math.max(1, height - y))
+			end
+			for index = fillIndex + 1, #fillPool do
+				if fillPool[index] then
+					fillPool[index].Visible = false
+				end
+			end
+		else
+			for _, fill in ipairs(fillPool) do
+				if fill then
+					fill.Visible = false
+				end
+			end
+		end
+	end
+
+	local function scheduleRender()
+		local interval = 1 / math.max(1, updateHz)
+		local now = os.clock()
+		local elapsed = now - lastRender
+		if elapsed >= interval then
+			renderNow()
+			return
+		end
+		if renderPending then
+			return
+		end
+		renderPending = true
+		task.delay(interval - elapsed, function()
+			renderPending = false
+			if root and root.Parent then
+				renderNow()
+			end
+		end)
+	end
+
+	local function emitDataChanged(persist)
+		trimPoints()
+		scheduleRender()
+		local okCallback, callbackErr = pcall(callback, chart:GetData())
+		if not okCallback then
+			warn("Rayfield | Chart callback failed: " .. tostring(callbackErr))
+		end
+		if persist ~= false and settingsValue.Ext ~= true then
+			self.SaveConfiguration()
+		end
+	end
+
+	function chart:AddPoint(y, x)
+		local nextX = tonumber(x)
+		if nextX == nil then
+			local lastPoint = chart.CurrentValue.points[#chart.CurrentValue.points]
+			nextX = (lastPoint and tonumber(lastPoint.x) or 0) + 1
+		end
+		table.insert(chart.CurrentValue.points, {x = nextX, y = tonumber(y) or 0})
+		emitDataChanged(true)
+	end
+
+	function chart:SetData(points)
+		chart.CurrentValue.points = {}
+		if type(points) == "table" then
+			for _, point in ipairs(points) do
+				if type(point) == "table" then
+					local px = tonumber(point.x or point[1]) or (#chart.CurrentValue.points + 1)
+					local py = tonumber(point.y or point[2])
+					if py ~= nil then
+						table.insert(chart.CurrentValue.points, {x = px, y = py})
+					end
+				elseif tonumber(point) ~= nil then
+					table.insert(chart.CurrentValue.points, {x = #chart.CurrentValue.points + 1, y = tonumber(point)})
+				end
+			end
+		end
+		emitDataChanged(true)
+	end
+
+	function chart:GetData()
+		return cloneSerializable(chart.CurrentValue)
+	end
+
+	function chart:Clear()
+		chart.CurrentValue.points = {}
+		chart.CurrentValue.offset = 0
+		emitDataChanged(true)
+	end
+
+	function chart:SetPreset(nameOrNil)
+		chart.CurrentValue.preset = nameOrNil
+		if settingsValue.Ext ~= true then
+			self.SaveConfiguration()
+		end
+		return true, "ok"
+	end
+
+	function chart:Zoom(factor)
+		chart.CurrentValue.zoom = clampNumber((chart.CurrentValue.zoom or 1) * (tonumber(factor) or 1), 1, 12, chart.CurrentValue.zoom)
+		emitDataChanged(true)
+	end
+
+	function chart:Pan(delta)
+		local total = #chart.CurrentValue.points
+		local visibleCount = math.max(2, math.floor(total / math.max(1, chart.CurrentValue.zoom)))
+		local maxOffset = math.max(0, total - visibleCount)
+		chart.CurrentValue.offset = math.floor(clampNumber((chart.CurrentValue.offset or 0) + (tonumber(delta) or 0), 0, maxOffset, 0))
+		emitDataChanged(true)
+	end
+
+	function chart:GetPersistValue()
+		return chart:GetData()
+	end
+
+	function chart:Set(value)
+		if type(value) == "table" then
+			if type(value.points) == "table" then
+				chart.CurrentValue.points = cloneSerializable(value.points) or {}
+			elseif #value > 0 then
+				chart:SetData(value)
+				return
+			end
+			chart.CurrentValue.zoom = clampNumber(value.zoom, 1, 12, chart.CurrentValue.zoom)
+			chart.CurrentValue.offset = clampNumber(value.offset, 0, math.huge, chart.CurrentValue.offset)
+			if value.preset ~= nil then
+				chart.CurrentValue.preset = value.preset
+			end
+			emitDataChanged(true)
+		end
+	end
+
+	function chart:Destroy()
+		root:Destroy()
+	end
+
+	zoomIn.MouseButton1Click:Connect(function()
+		chart:Zoom(1.2)
+	end)
+	zoomOut.MouseButton1Click:Connect(function()
+		chart:Zoom(1 / 1.2)
+	end)
+	plot.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStartX = input.Position.X
+		end
+	end)
+	plot.InputChanged:Connect(function(input)
+		if not dragging then
+			return
+		end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		local delta = input.Position.X - dragStartX
+		if math.abs(delta) >= 10 then
+			dragStartX = input.Position.X
+			chart:Pan(math.floor(-delta / 22))
+		end
+	end)
+	plot.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+
+	connectThemeRefresh(function()
+		root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+		stroke.Color = self.getSelectedTheme().ElementStroke
+		title.TextColor3 = self.getSelectedTheme().TextColor
+		zoomIn.BackgroundColor3 = self.getSelectedTheme().InputBackground
+		zoomIn.TextColor3 = self.getSelectedTheme().TextColor
+		zoomOut.BackgroundColor3 = self.getSelectedTheme().InputBackground
+		zoomOut.TextColor3 = self.getSelectedTheme().TextColor
+		plot.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
+		plotStroke.Color = self.getSelectedTheme().ElementStroke
+		for _, line in ipairs(gridLines) do
+			line.BackgroundColor3 = self.getSelectedTheme().ChartGrid or self.getSelectedTheme().ElementStroke
+		end
+		scheduleRender()
+	end)
+
+	resolveElementParentFromSettings(chart, settingsValue)
+	if type(settingsValue.Data) == "table" then
+		chart:SetData(settingsValue.Data)
+	else
+		scheduleRender()
+	end
+	addExtendedAPI(chart, chart.Name, "Chart", root)
+	if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and chart.Flag then
+		self.RayfieldLibrary.Flags[chart.Flag] = chart
+	end
+	return chart
+end
+
+return ChartFactory
+]])
 put("src/ui/elements/factory/create-section.lua", [[local CreateSection = {}
 
 function CreateSection.execute(tabObject, ...)
@@ -13527,6 +14684,860 @@ end
 CreateTab.FactoryModule = FactoryModule
 
 return CreateTab]])
+put("src/ui/elements/factory/data-grid.lua", [[local DataGridFactory = {}
+
+function DataGridFactory.create(context)
+	context = context or {}
+	local self = context.self
+	local TabPage = context.TabPage
+	local Settings = context.Settings or {}
+	local addExtendedAPI = context.addExtendedAPI
+	local resolveElementParentFromSettings = context.resolveElementParentFromSettings
+	local connectThemeRefresh = context.connectThemeRefresh
+	local cloneSerializable = context.cloneSerializable
+	local clampNumber = context.clampNumber
+	local emitUICue = context.emitUICue
+	local settingsValue = context.settings or {}
+
+	if type(self) ~= "table" or not TabPage then
+		return nil
+	end
+	if type(cloneSerializable) ~= "function" then
+		cloneSerializable = function(value)
+			return value
+		end
+	end
+	if type(clampNumber) ~= "function" then
+		clampNumber = function(value, minimum, maximum, fallback)
+			local numberValue = tonumber(value)
+			if not numberValue then
+				numberValue = tonumber(fallback) or 0
+			end
+			if minimum ~= nil then
+				numberValue = math.max(minimum, numberValue)
+			end
+			if maximum ~= nil then
+				numberValue = math.min(maximum, numberValue)
+			end
+			return numberValue
+		end
+	end
+	if type(emitUICue) ~= "function" then
+		emitUICue = function() end
+	end
+	if type(connectThemeRefresh) ~= "function" then
+		connectThemeRefresh = function() end
+	end
+
+	local dataGrid = {}
+	dataGrid.Name = tostring(settingsValue.Name or "Data Grid")
+	dataGrid.Flag = settingsValue.Flag
+	dataGrid.CurrentValue = {
+		rows = {},
+		filter = "",
+		sortKey = nil,
+		sortDirection = "asc",
+		selectedRow = nil
+	}
+
+	local columns = {}
+	if type(settingsValue.Columns) == "table" then
+		for _, col in ipairs(settingsValue.Columns) do
+			if type(col) == "table" and tostring(col.Key or "") ~= "" then
+				table.insert(columns, {
+					Key = tostring(col.Key),
+					Title = tostring(col.Title or col.Key),
+					Width = tonumber(col.Width),
+					Sortable = col.Sortable ~= false,
+					Formatter = type(col.Formatter) == "function" and col.Formatter or nil
+				})
+			end
+		end
+	end
+	if #columns == 0 then
+		columns = {
+			{ Key = "id", Title = "ID", Sortable = true }
+		}
+	end
+
+	local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
+	local onExport = type(settingsValue.OnExport) == "function" and settingsValue.OnExport or nil
+	local filteredRows = {}
+	local rowButtonPool = {}
+	local rowButtonMeta = setmetatable({}, { __mode = "k" })
+	local visibleButtonsByRowId = {}
+	local selectedRowId = nil
+	local rowHeight = math.max(20, math.floor(tonumber(settingsValue.RowHeight) or 24))
+	local rowPadding = math.max(0, math.floor(tonumber(settingsValue.RowPadding) or 4))
+	local overscanRows = math.max(1, math.floor(tonumber(settingsValue.VirtualOverscanRows) or 3))
+	local virtualizationEnabled = settingsValue.Virtualization ~= false
+	local writeFileFn = type(writefile) == "function" and writefile or nil
+	local isFolderFn = type(isfolder) == "function" and isfolder or nil
+	local makeFolderFn = type(makefolder) == "function" and makefolder or nil
+
+	local function sanitizeFileName(value)
+		local name = tostring(value or "datagrid")
+		name = name:gsub("[^%w%-%_]+", "-")
+		name = name:gsub("%-+", "-")
+		name = name:gsub("^%-+", "")
+		name = name:gsub("%-+$", "")
+		if name == "" then
+			name = "datagrid"
+		end
+		return string.lower(name)
+	end
+
+	local function splitDirectory(path)
+		local normalized = tostring(path or ""):gsub("\\", "/")
+		local directory = normalized:match("^(.*)/[^/]*$")
+		if directory and directory ~= "" then
+			return directory
+		end
+		return nil
+	end
+
+	local function ensureFolderPath(path)
+		if type(path) ~= "string" or path == "" then
+			return true, nil
+		end
+		if not makeFolderFn then
+			return false, "makefolder unavailable"
+		end
+		local normalized = path:gsub("\\", "/")
+		local current = ""
+		for part in normalized:gmatch("[^/]+") do
+			current = current == "" and part or (current .. "/" .. part)
+			local exists = false
+			if isFolderFn then
+				local okExists, result = pcall(isFolderFn, current)
+				exists = okExists and result == true
+			end
+			if not exists then
+				local okMake = pcall(makeFolderFn, current)
+				if not okMake then
+					return false, "failed to create folder: " .. tostring(current)
+				end
+			end
+		end
+		return true, nil
+	end
+
+	local function csvEscape(value)
+		local text = tostring(value or "")
+		local needsQuote = string.find(text, ",", 1, true)
+			or string.find(text, "\"", 1, true)
+			or string.find(text, "\n", 1, true)
+			or string.find(text, "\r", 1, true)
+		if string.find(text, "\"", 1, true) then
+			text = text:gsub("\"", "\"\"")
+		end
+		if needsQuote then
+			text = "\"" .. text .. "\""
+		end
+		return text
+	end
+
+	local function normalizeExportArgs(pathOrOptions, maybeOptions)
+		local options = {}
+		if type(pathOrOptions) == "table" then
+			options = cloneSerializable(pathOrOptions)
+		elseif type(maybeOptions) == "table" then
+			options = cloneSerializable(maybeOptions)
+		end
+		if type(pathOrOptions) == "string" and pathOrOptions ~= "" then
+			options.path = pathOrOptions
+		end
+		if options.writeFile == nil then
+			options.writeFile = true
+		end
+		if type(options.scope) ~= "string" then
+			options.scope = "filtered"
+		end
+		options.scope = string.lower(options.scope)
+		if options.scope ~= "all" and options.scope ~= "filtered" then
+			options.scope = "filtered"
+		end
+		return options
+	end
+
+	local function resolveExportRows(options)
+		if options.scope == "all" then
+			return cloneSerializable(dataGrid.CurrentValue.rows)
+		end
+		return cloneSerializable(filteredRows)
+	end
+
+	local function resolveExportPath(extension, options)
+		local ext = tostring(extension or "txt")
+		local configuredPath = tostring(options.path or "")
+		if configuredPath ~= "" then
+			return configuredPath
+		end
+		local exportFolder = tostring(options.folder or "Rayfield/Exports")
+		local stamp = type(os.time) == "function" and tostring(os.time()) or tostring(math.floor(os.clock() * 1000))
+		local filename = string.format("%s-%s.%s", sanitizeFileName(dataGrid.Name), stamp, ext)
+		return exportFolder .. "/" .. filename
+	end
+
+	local function writeExportContent(content, extension, options)
+		if options.writeFile == false then
+			return true, content, "inline"
+		end
+		if not writeFileFn then
+			return false, "writefile API unavailable"
+		end
+		local path = resolveExportPath(extension, options)
+		local directory = splitDirectory(path)
+		if directory then
+			local okFolder, folderErr = ensureFolderPath(directory)
+			if not okFolder then
+				local fallbackName = string.format("%s.%s", sanitizeFileName(dataGrid.Name), tostring(extension))
+				path = fallbackName
+				if folderErr then
+					warn("Rayfield | DataGrid export fallback to root: " .. tostring(folderErr))
+				end
+			end
+		end
+		local okWrite, writeErr = pcall(writeFileFn, path, content)
+		if not okWrite then
+			return false, "write failed: " .. tostring(writeErr)
+		end
+		return true, path, "file"
+	end
+
+	local function emitExportResult(success, formatName, result, mode)
+		if onExport then
+			pcall(onExport, {
+				success = success == true,
+				format = tostring(formatName or ""),
+				result = result,
+				mode = mode
+			})
+		end
+	end
+
+	local root = Instance.new("Frame")
+	root.Name = dataGrid.Name
+	root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 180, 420, 250))
+	root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+	root.BorderSizePixel = 0
+	root.Visible = true
+	root.Parent = TabPage
+
+	local rootCorner = Instance.new("UICorner")
+	rootCorner.CornerRadius = UDim.new(0, 6)
+	rootCorner.Parent = root
+
+	local rootStroke = Instance.new("UIStroke")
+	rootStroke.Color = self.getSelectedTheme().ElementStroke
+	rootStroke.Thickness = 1
+	rootStroke.Parent = root
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.new(0, 10, 0, 6)
+	title.Size = UDim2.new(1, -142, 0, 18)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 13
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Text = dataGrid.Name
+	title.TextColor3 = self.getSelectedTheme().TextColor
+	title.Parent = root
+
+	local exportCsvButton = Instance.new("TextButton")
+	exportCsvButton.Name = "ExportCSV"
+	exportCsvButton.Size = UDim2.fromOffset(56, 18)
+	exportCsvButton.Position = UDim2.new(1, -126, 0, 6)
+	exportCsvButton.BackgroundTransparency = 0.12
+	exportCsvButton.BorderSizePixel = 0
+	exportCsvButton.AutoButtonColor = true
+	exportCsvButton.Font = Enum.Font.GothamBold
+	exportCsvButton.TextSize = 11
+	exportCsvButton.Text = "CSV"
+	exportCsvButton.TextColor3 = self.getSelectedTheme().TextColor
+	exportCsvButton.Parent = root
+
+	local exportCsvCorner = Instance.new("UICorner")
+	exportCsvCorner.CornerRadius = UDim.new(0, 4)
+	exportCsvCorner.Parent = exportCsvButton
+
+	local exportJsonButton = Instance.new("TextButton")
+	exportJsonButton.Name = "ExportJSON"
+	exportJsonButton.Size = UDim2.fromOffset(56, 18)
+	exportJsonButton.Position = UDim2.new(1, -64, 0, 6)
+	exportJsonButton.BackgroundTransparency = 0.12
+	exportJsonButton.BorderSizePixel = 0
+	exportJsonButton.AutoButtonColor = true
+	exportJsonButton.Font = Enum.Font.GothamBold
+	exportJsonButton.TextSize = 11
+	exportJsonButton.Text = "JSON"
+	exportJsonButton.TextColor3 = self.getSelectedTheme().TextColor
+	exportJsonButton.Parent = root
+
+	local exportJsonCorner = Instance.new("UICorner")
+	exportJsonCorner.CornerRadius = UDim.new(0, 4)
+	exportJsonCorner.Parent = exportJsonButton
+
+	local searchBox = Instance.new("TextBox")
+	searchBox.Name = "SearchBox"
+	searchBox.BackgroundColor3 = self.getSelectedTheme().InputBackground or self.getSelectedTheme().SecondaryElementBackground
+	searchBox.BorderSizePixel = 0
+	searchBox.Position = UDim2.new(0, 10, 0, 28)
+	searchBox.Size = UDim2.new(1, -20, 0, 24)
+	searchBox.Font = Enum.Font.Gotham
+	searchBox.TextSize = 12
+	searchBox.TextXAlignment = Enum.TextXAlignment.Left
+	searchBox.PlaceholderText = tostring(settingsValue.SearchPlaceholder or "Search rows...")
+	searchBox.Text = ""
+	searchBox.ClearTextOnFocus = false
+	searchBox.TextColor3 = self.getSelectedTheme().TextColor
+	searchBox.PlaceholderColor3 = self.getSelectedTheme().TextColor:Lerp(Color3.fromRGB(90, 90, 90), 0.45)
+	searchBox.Parent = root
+
+	local searchCorner = Instance.new("UICorner")
+	searchCorner.CornerRadius = UDim.new(0, 5)
+	searchCorner.Parent = searchBox
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.Position = UDim2.new(0, 10, 0, 56)
+	header.Size = UDim2.new(1, -20, 0, 24)
+	header.Parent = root
+
+	local list = Instance.new("ScrollingFrame")
+	list.Name = "Rows"
+	list.BackgroundTransparency = 1
+	list.Position = UDim2.new(0, 10, 0, 84)
+	list.Size = UDim2.new(1, -20, 1, -94)
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.CanvasSize = UDim2.fromOffset(0, 0)
+	list.Parent = root
+
+	local function computeColumnWidths()
+		local widths = {}
+		local totalWidth = math.max(120, header.AbsoluteSize.X)
+		local autoCount = 0
+		local used = 0
+		for _, col in ipairs(columns) do
+			if col.Width and col.Width > 10 then
+				used += col.Width
+			else
+				autoCount += 1
+			end
+		end
+		local autoWidth = autoCount > 0 and math.max(60, math.floor((totalWidth - used) / autoCount)) or 60
+		for index, col in ipairs(columns) do
+			widths[index] = col.Width and math.max(50, math.floor(col.Width)) or autoWidth
+		end
+		return widths
+	end
+
+	local function formatRowValue(row, col)
+		local value = row[col.Key]
+		if col.Formatter then
+			local okFormat, formatted = pcall(col.Formatter, value, row)
+			if okFormat and formatted ~= nil then
+				return tostring(formatted)
+			end
+		end
+		if value == nil then
+			return ""
+		end
+		return tostring(value)
+	end
+
+	local function getComparable(value)
+		local numberValue = tonumber(value)
+		if numberValue ~= nil then
+			return "number", numberValue
+		end
+		return "string", string.lower(tostring(value or ""))
+	end
+
+	local function rowMatchesFilter(row, queryLower)
+		if queryLower == "" then
+			return true
+		end
+		for _, col in ipairs(columns) do
+			local field = string.lower(formatRowValue(row, col))
+			if string.find(field, queryLower, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function sortRows(rows)
+		local key = dataGrid.CurrentValue.sortKey
+		if type(key) ~= "string" or key == "" then
+			return
+		end
+		local direction = dataGrid.CurrentValue.sortDirection == "desc" and -1 or 1
+		table.sort(rows, function(a, b)
+			local typeA, valueA = getComparable(a[key])
+			local typeB, valueB = getComparable(b[key])
+			if typeA == typeB then
+				if valueA == valueB then
+					return tostring(a.id) < tostring(b.id)
+				end
+				return direction == 1 and valueA < valueB or valueA > valueB
+			end
+			return typeA == "number"
+		end)
+	end
+
+	local function getRowStride()
+		return rowHeight + rowPadding
+	end
+
+	local function buildRowText(row)
+		local values = {}
+		for _, col in ipairs(columns) do
+			table.insert(values, formatRowValue(row, col))
+		end
+		return "  " .. table.concat(values, "  |  ")
+	end
+
+	local function applyRowButtonVisual(button, rowId)
+		if not button then
+			return
+		end
+		local isSelected = selectedRowId ~= nil and tostring(selectedRowId) == tostring(rowId)
+		button.BackgroundColor3 = isSelected
+			and (self.getSelectedTheme().SliderProgress or self.getSelectedTheme().ElementBackgroundHover)
+			or self.getSelectedTheme().ElementBackground
+		button.TextColor3 = isSelected
+			and (self.getSelectedTheme().SelectedTabTextColor or self.getSelectedTheme().TextColor)
+			or self.getSelectedTheme().TextColor
+	end
+
+	local function refreshRowVisual(rowId)
+		local button = visibleButtonsByRowId[tostring(rowId or "")]
+		if not button then
+			return
+		end
+		applyRowButtonVisual(button, rowId)
+	end
+
+	local function ensureRowPoolSize(requiredCount)
+		while #rowButtonPool < requiredCount do
+			local rowButton = Instance.new("TextButton")
+			rowButton.Name = "RowPooled"
+			rowButton.Size = UDim2.new(1, -2, 0, rowHeight)
+			rowButton.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+			rowButton.BackgroundTransparency = 0.08
+			rowButton.BorderSizePixel = 0
+			rowButton.AutoButtonColor = true
+			rowButton.Font = Enum.Font.Code
+			rowButton.TextSize = 12
+			rowButton.TextXAlignment = Enum.TextXAlignment.Left
+			rowButton.Text = ""
+			rowButton.TextColor3 = self.getSelectedTheme().TextColor
+			rowButton.Visible = false
+			rowButton.Parent = list
+
+			local rowCorner = Instance.new("UICorner")
+			rowCorner.CornerRadius = UDim.new(0, 4)
+			rowCorner.Parent = rowButton
+
+			rowButton.MouseButton1Click:Connect(function()
+				emitUICue("click")
+				local meta = rowButtonMeta[rowButton]
+				local row = meta and filteredRows[meta.rowIndex] or nil
+				if type(row) ~= "table" then
+					return
+				end
+				local rowId = tostring(row.id)
+				selectedRowId = rowId
+				dataGrid.CurrentValue.selectedRow = cloneSerializable(row)
+				for _, pooledButton in ipairs(rowButtonPool) do
+					local pooledMeta = rowButtonMeta[pooledButton]
+					if pooledMeta then
+						applyRowButtonVisual(pooledButton, pooledMeta.rowId)
+					end
+				end
+				local okCallback, callbackErr = pcall(callback, cloneSerializable(row))
+				if not okCallback then
+					warn("Rayfield | DataGrid callback error: " .. tostring(callbackErr))
+				end
+			end)
+
+			table.insert(rowButtonPool, rowButton)
+		end
+	end
+
+	local function updateCanvasSize()
+		local totalHeight = (#filteredRows * getRowStride()) + 4
+		list.CanvasSize = UDim2.fromOffset(0, math.max(totalHeight, list.AbsoluteSize.Y))
+	end
+
+	local function getVisibleRange()
+		if not virtualizationEnabled then
+			return 1, #filteredRows
+		end
+		local stride = math.max(1, getRowStride())
+		local canvasY = math.max(0, math.floor(list.CanvasPosition.Y))
+		local viewportHeight = math.max(0, math.ceil(list.AbsoluteSize.Y))
+		local startIndex = math.floor(canvasY / stride) + 1 - overscanRows
+		local endIndex = math.ceil((canvasY + viewportHeight) / stride) + overscanRows
+		if startIndex < 1 then
+			startIndex = 1
+		end
+		if endIndex > #filteredRows then
+			endIndex = #filteredRows
+		end
+		return startIndex, endIndex
+	end
+
+	local function renderVisibleRows()
+		visibleButtonsByRowId = {}
+		local totalRows = #filteredRows
+		if totalRows == 0 then
+			for index, rowButton in ipairs(rowButtonPool) do
+				rowButtonMeta[rowButton] = nil
+				rowButton.Name = "RowPooled_" .. tostring(index)
+				rowButton.Visible = false
+			end
+			return
+		end
+
+		local startIndex, endIndex = getVisibleRange()
+		if endIndex < startIndex then
+			endIndex = startIndex - 1
+		end
+		local visibleCount = math.max(0, endIndex - startIndex + 1)
+		ensureRowPoolSize(visibleCount)
+
+		local stride = getRowStride()
+		for poolIndex, rowButton in ipairs(rowButtonPool) do
+			local rowIndex = startIndex + poolIndex - 1
+			if poolIndex <= visibleCount and rowIndex >= 1 and rowIndex <= endIndex then
+				local row = filteredRows[rowIndex]
+				if type(row) == "table" then
+					local rowId = tostring(row.id)
+					rowButtonMeta[rowButton] = {
+						rowIndex = rowIndex,
+						rowId = rowId
+					}
+					visibleButtonsByRowId[rowId] = rowButton
+					rowButton.Visible = true
+					rowButton.Name = rowId
+					rowButton.Position = UDim2.new(0, 1, 0, (rowIndex - 1) * stride)
+					rowButton.Size = UDim2.new(1, -2, 0, rowHeight)
+					rowButton.Text = buildRowText(row)
+					applyRowButtonVisual(rowButton, rowId)
+				else
+					rowButtonMeta[rowButton] = nil
+					rowButton.Visible = false
+				end
+			else
+				rowButtonMeta[rowButton] = nil
+				rowButton.Name = "RowPooled_" .. tostring(poolIndex)
+				rowButton.Visible = false
+			end
+		end
+	end
+
+	local function rebuildRows()
+		filteredRows = {}
+		local queryLower = string.lower(tostring(dataGrid.CurrentValue.filter or ""))
+
+		for _, row in ipairs(dataGrid.CurrentValue.rows) do
+			if rowMatchesFilter(row, queryLower) then
+				table.insert(filteredRows, row)
+			end
+		end
+		sortRows(filteredRows)
+
+		if selectedRowId ~= nil then
+			local matchedRow = nil
+			for _, row in ipairs(filteredRows) do
+				if tostring(row.id) == tostring(selectedRowId) then
+					matchedRow = row
+					break
+				end
+			end
+			if matchedRow then
+				dataGrid.CurrentValue.selectedRow = cloneSerializable(matchedRow)
+			else
+				selectedRowId = nil
+				dataGrid.CurrentValue.selectedRow = nil
+			end
+		end
+
+		updateCanvasSize()
+		renderVisibleRows()
+	end
+
+	local function renderHeader()
+		for _, child in ipairs(header:GetChildren()) do
+			if child:IsA("TextButton") then
+				child:Destroy()
+			end
+		end
+		local widths = computeColumnWidths()
+		local offsetX = 0
+		for index, col in ipairs(columns) do
+			local width = widths[index]
+			local colButton = Instance.new("TextButton")
+			colButton.Name = "Column_" .. tostring(col.Key)
+			colButton.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground or self.getSelectedTheme().ElementBackgroundHover
+			colButton.BackgroundTransparency = 0.1
+			colButton.BorderSizePixel = 0
+			colButton.Size = UDim2.fromOffset(width, 22)
+			colButton.Position = UDim2.fromOffset(offsetX, 1)
+			colButton.Font = Enum.Font.GothamBold
+			colButton.TextSize = 11
+			colButton.TextXAlignment = Enum.TextXAlignment.Left
+			colButton.TextColor3 = self.getSelectedTheme().TextColor
+			colButton.Text = "  " .. tostring(col.Title)
+			colButton.Parent = header
+
+			local headerCorner = Instance.new("UICorner")
+			headerCorner.CornerRadius = UDim.new(0, 4)
+			headerCorner.Parent = colButton
+
+			if col.Sortable ~= false then
+				colButton.MouseButton1Click:Connect(function()
+					local nextDirection = "asc"
+					if dataGrid.CurrentValue.sortKey == col.Key and dataGrid.CurrentValue.sortDirection == "asc" then
+						nextDirection = "desc"
+					end
+					dataGrid.CurrentValue.sortKey = col.Key
+					dataGrid.CurrentValue.sortDirection = nextDirection
+					rebuildRows()
+				end)
+			end
+
+			offsetX += width + 4
+		end
+	end
+
+	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		dataGrid.CurrentValue.filter = tostring(searchBox.Text or "")
+		rebuildRows()
+	end)
+
+	list:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		updateCanvasSize()
+		renderVisibleRows()
+	end)
+
+	list:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		if virtualizationEnabled then
+			renderVisibleRows()
+		end
+	end)
+
+	local function buildCsvContent(options)
+		local exportRows = resolveExportRows(options)
+		local headerFields = {}
+		for _, col in ipairs(columns) do
+			table.insert(headerFields, csvEscape(col.Title or col.Key))
+		end
+		local lines = { table.concat(headerFields, ",") }
+		for _, row in ipairs(exportRows) do
+			local fields = {}
+			for _, col in ipairs(columns) do
+				table.insert(fields, csvEscape(formatRowValue(row, col)))
+			end
+			table.insert(lines, table.concat(fields, ","))
+		end
+		return table.concat(lines, "\n") .. "\n"
+	end
+
+	local function buildJsonContent(options)
+		local payload = {
+			name = dataGrid.Name,
+			exportedAt = type(os.date) == "function" and os.date("!%Y-%m-%dT%H:%M:%SZ") or tostring(os.clock()),
+			scope = options.scope,
+			filter = tostring(dataGrid.CurrentValue.filter or ""),
+			sort = {
+				key = dataGrid.CurrentValue.sortKey,
+				direction = dataGrid.CurrentValue.sortDirection
+			},
+			columns = {},
+			rows = resolveExportRows(options)
+		}
+		for _, col in ipairs(columns) do
+			table.insert(payload.columns, {
+				Key = col.Key,
+				Title = col.Title,
+				Sortable = col.Sortable ~= false
+			})
+		end
+		if self.HttpService and type(self.HttpService.JSONEncode) == "function" then
+			local okEncode, encoded = pcall(self.HttpService.JSONEncode, self.HttpService, payload)
+			if okEncode then
+				return true, encoded
+			end
+			return false, "JSONEncode failed: " .. tostring(encoded)
+		end
+		return false, "HttpService.JSONEncode unavailable"
+	end
+
+	function dataGrid:ExportCSV(pathOrOptions, maybeOptions)
+		local options = normalizeExportArgs(pathOrOptions, maybeOptions)
+		local content = buildCsvContent(options)
+		local okWrite, result, mode = writeExportContent(content, "csv", options)
+		emitExportResult(okWrite, "csv", result, mode)
+		return okWrite, result, mode
+	end
+
+	function dataGrid:ExportJSON(pathOrOptions, maybeOptions)
+		local options = normalizeExportArgs(pathOrOptions, maybeOptions)
+		local okJson, contentOrErr = buildJsonContent(options)
+		if not okJson then
+			emitExportResult(false, "json", contentOrErr, "error")
+			return false, contentOrErr
+		end
+		local okWrite, result, mode = writeExportContent(contentOrErr, "json", options)
+		emitExportResult(okWrite, "json", result, mode)
+		return okWrite, result, mode
+	end
+
+	exportCsvButton.MouseButton1Click:Connect(function()
+		emitUICue("click")
+		local okExport, result = dataGrid:ExportCSV()
+		if not okExport then
+			warn("Rayfield | DataGrid CSV export failed: " .. tostring(result))
+		end
+	end)
+
+	exportJsonButton.MouseButton1Click:Connect(function()
+		emitUICue("click")
+		local okExport, result = dataGrid:ExportJSON()
+		if not okExport then
+			warn("Rayfield | DataGrid JSON export failed: " .. tostring(result))
+		end
+	end)
+
+	function dataGrid:SetRows(rows)
+		local normalizedRows = {}
+		if type(rows) == "table" then
+			for _, row in ipairs(rows) do
+				if type(row) == "table" and row.id ~= nil then
+					table.insert(normalizedRows, cloneSerializable(row))
+				end
+			end
+		end
+		dataGrid.CurrentValue.rows = normalizedRows
+		if selectedRowId ~= nil then
+			local found = false
+			for _, row in ipairs(normalizedRows) do
+				if tostring(row.id) == tostring(selectedRowId) then
+					found = true
+					break
+				end
+			end
+			if not found then
+				selectedRowId = nil
+				dataGrid.CurrentValue.selectedRow = nil
+			end
+		end
+		rebuildRows()
+	end
+
+	function dataGrid:GetRows()
+		return cloneSerializable(dataGrid.CurrentValue.rows)
+	end
+
+	function dataGrid:SortBy(columnKey, direction)
+		local key = tostring(columnKey or "")
+		if key == "" then
+			return false, "Invalid column key."
+		end
+		local dir = string.lower(tostring(direction or "asc"))
+		if dir ~= "asc" and dir ~= "desc" then
+			dir = "asc"
+		end
+		dataGrid.CurrentValue.sortKey = key
+		dataGrid.CurrentValue.sortDirection = dir
+		rebuildRows()
+		return true, "ok"
+	end
+
+	function dataGrid:SetFilter(query)
+		dataGrid.CurrentValue.filter = tostring(query or "")
+		searchBox.Text = dataGrid.CurrentValue.filter
+		rebuildRows()
+		return true, "ok"
+	end
+
+	function dataGrid:GetFilter()
+		return tostring(dataGrid.CurrentValue.filter or "")
+	end
+
+	function dataGrid:GetSelectedRow()
+		return cloneSerializable(dataGrid.CurrentValue.selectedRow)
+	end
+
+	function dataGrid:GetPersistValue()
+		return {
+			filter = tostring(dataGrid.CurrentValue.filter or ""),
+			sortKey = dataGrid.CurrentValue.sortKey,
+			sortDirection = dataGrid.CurrentValue.sortDirection,
+			selectedRowId = selectedRowId
+		}
+	end
+
+	function dataGrid:Set(value)
+		if type(value) ~= "table" then
+			return
+		end
+		if value.filter ~= nil then
+			dataGrid:SetFilter(value.filter)
+		end
+		if value.sortKey ~= nil then
+			dataGrid:SortBy(value.sortKey, value.sortDirection)
+		end
+	end
+
+	function dataGrid:Destroy()
+		root:Destroy()
+	end
+
+	connectThemeRefresh(function()
+		root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
+		rootStroke.Color = self.getSelectedTheme().ElementStroke
+		title.TextColor3 = self.getSelectedTheme().TextColor
+		exportCsvButton.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground or self.getSelectedTheme().ElementBackgroundHover
+		exportCsvButton.TextColor3 = self.getSelectedTheme().TextColor
+		exportJsonButton.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground or self.getSelectedTheme().ElementBackgroundHover
+		exportJsonButton.TextColor3 = self.getSelectedTheme().TextColor
+		searchBox.BackgroundColor3 = self.getSelectedTheme().InputBackground or self.getSelectedTheme().SecondaryElementBackground
+		searchBox.TextColor3 = self.getSelectedTheme().TextColor
+		searchBox.PlaceholderColor3 = self.getSelectedTheme().TextColor:Lerp(Color3.fromRGB(90, 90, 90), 0.45)
+		renderHeader()
+		for _, rowButton in ipairs(rowButtonPool) do
+			local meta = rowButtonMeta[rowButton]
+			if meta then
+				applyRowButtonVisual(rowButton, meta.rowId)
+			end
+		end
+	end)
+
+	renderHeader()
+	exportCsvButton.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground or self.getSelectedTheme().ElementBackgroundHover
+	exportJsonButton.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground or self.getSelectedTheme().ElementBackgroundHover
+	if type(resolveElementParentFromSettings) == "function" then
+		resolveElementParentFromSettings(dataGrid, settingsValue)
+	end
+	dataGrid:SetRows(settingsValue.Rows or {})
+	if type(addExtendedAPI) == "function" then
+		addExtendedAPI(dataGrid, dataGrid.Name, "DataGrid", root)
+	end
+	if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and dataGrid.Flag then
+		self.RayfieldLibrary.Flags[dataGrid.Flag] = dataGrid
+	end
+	return dataGrid
+end
+
+return DataGridFactory
+]])
 put("src/ui/elements/factory/init.lua", [[-- Rayfield Element Factories Module
 -- Handles tab creation and all element factories
 
@@ -13563,6 +15574,15 @@ function ElementsModule.init(ctx)
 	self.ViewportVirtualization = ctx.ViewportVirtualization
 	self.KeybindSequence = ctx.KeybindSequence
 	self.ResourceOwnership = ctx.ResourceOwnership
+	self.playUICue = ctx.playUICue
+	self.showContextMenu = ctx.showContextMenu
+	self.hideContextMenu = ctx.hideContextMenu
+	self.trackElementInteraction = ctx.trackElementInteraction
+	self.trackTabActivation = ctx.trackTabActivation
+	self.DataGridFactoryModule = ctx.DataGridFactoryModule
+	self.ResolveDataGridFactory = type(ctx.ResolveDataGridFactory) == "function" and ctx.ResolveDataGridFactory or nil
+	self.ChartFactoryModule = ctx.ChartFactoryModule
+	self.ResolveChartFactory = type(ctx.ResolveChartFactory) == "function" and ctx.ResolveChartFactory or nil
 	-- Improvement 4: Add safe fallbacks for critical dependencies
 	self.keybindConnections = ctx.keybindConnections or {} -- Fallback to empty table
 	self.getDebounce = ctx.getDebounce or function() return false end
@@ -13581,6 +15601,23 @@ function ElementsModule.init(ctx)
 
 	-- Window Settings (passed from CreateWindow)
 	local Settings = ctx.Settings or {}
+	local function isHeadlessPerformanceMode()
+		if Settings.PerformanceMode == true then
+			return true
+		end
+		local profile = type(Settings.PerformanceProfile) == "table" and Settings.PerformanceProfile or nil
+		if not profile or profile.Enabled ~= true then
+			return false
+		end
+		local mode = string.lower(tostring(profile.Mode or ""))
+		if profile.DisableAnimations == true then
+			return true
+		end
+		if profile.Aggressive == true then
+			return true
+		end
+		return mode == "potato" or mode == "mobile"
+	end
 
 	-- Module state
 	local FirstTab = false
@@ -13613,6 +15650,14 @@ function ElementsModule.init(ctx)
 			out[index] = value
 		end
 		return out
+	end
+
+	local function emitUICue(cueName)
+		if type(self.playUICue) ~= "function" then
+			return false
+		end
+		local okCall = pcall(self.playUICue, cueName)
+		return okCall
 	end
 
 	local function ownershipCreateScope(scopeId, metadata)
@@ -13937,7 +15982,7 @@ function ElementsModule.init(ctx)
 			return
 		end
 		local pinned = pinnedControlIds[record.Id] == true
-		pinButton.Text = pinned and "★" or "☆"
+		pinButton.Text = pinned and "*" or "o"
 		pinButton.TextColor3 = pinned and Color3.fromRGB(255, 215, 120) or Color3.fromRGB(225, 225, 225)
 	end
 
@@ -14062,6 +16107,19 @@ function ElementsModule.init(ctx)
 			return nil
 		end
 		return record
+	end
+
+	local function listControlRecords(pruneMissing)
+		local out = {}
+		for _, id in ipairs(controlOrder) do
+			local record = allControlsById[id]
+			if record and isControlRecordAlive(record) then
+				table.insert(out, record)
+			elseif pruneMissing == true and pinnedControlIds[id] then
+				pinnedControlIds[id] = nil
+			end
+		end
+		return out
 	end
 
 	-- Extract code starts here
@@ -14250,7 +16308,7 @@ function ElementsModule.init(ctx)
 				TabHoverGlow.Transparency = 1
 			end
 	
-			local function activateTab(ignoreMinimisedCheck)
+			local function activateTab(ignoreMinimisedCheck, source)
 				if tabRecord.IsSplit then return false end
 				if not ignoreMinimisedCheck and self.getMinimised() then return false end
 
@@ -14288,6 +16346,14 @@ function ElementsModule.init(ctx)
 					self.Elements.UIPageLayout:JumpTo(TabPage)
 				end
 
+				if type(self.trackTabActivation) == "function" then
+					pcall(self.trackTabActivation, {
+						tabId = tostring(tabPersistenceId),
+						name = tostring(Name),
+						source = tostring(source or "activate")
+					})
+				end
+
 				return true
 			end
 
@@ -14313,7 +16379,7 @@ function ElementsModule.init(ctx)
 					return
 				end
 
-				activateTab(false)
+				activateTab(false, "tab_button")
 			end)
 	
 			-- Preserve module context for Tab:Create* methods where `self` is Tab.
@@ -14712,6 +16778,15 @@ function ElementsModule.init(ctx)
 
 				return TabPage
 			end
+
+			local hoverCueElementTypes = {
+				Button = true,
+				Toggle = true,
+				Dropdown = true,
+				Input = true,
+				Keybind = true,
+				ConfirmButton = true
+			}
 	
 			-- Helper function to add extended API to all elements
 			local function addExtendedAPI(elementObject, elementName, elementType, guiObject, hoverBindingKey, syncToken)
@@ -14748,6 +16823,51 @@ function ElementsModule.init(ctx)
 					PinButton = nil,
 					CleanupScope = nil
 				}
+
+				local function readCurrentValue()
+					if type(elementObject) ~= "table" then
+						return nil
+					end
+					if type(elementObject.Get) == "function" then
+						local okGet, valueOrErr = pcall(elementObject.Get, elementObject)
+						if okGet then
+							return cloneSerializable(valueOrErr)
+						end
+					end
+					return cloneSerializable(rawget(elementObject, "CurrentValue"))
+				end
+
+				local function emitControlInteraction(action, extra)
+					if type(self.trackElementInteraction) ~= "function" then
+						return
+					end
+					local payload = {
+						action = tostring(action or "interact"),
+						id = tostring(favoriteId),
+						name = tostring(controlRecord.Name),
+						type = tostring(controlRecord.Type),
+						flag = controlRecord.Flag and tostring(controlRecord.Flag) or nil,
+						tabId = tostring(tabPersistenceId),
+						value = readCurrentValue()
+					}
+					if type(extra) == "table" then
+						for key, value in pairs(extra) do
+							payload[key] = value
+						end
+					end
+					pcall(self.trackElementInteraction, payload)
+				end
+
+				function elementObject:GetInspectorSnapshot()
+					return {
+						id = tostring(favoriteId),
+						name = tostring(controlRecord.Name),
+						type = tostring(controlRecord.Type),
+						flag = controlRecord.Flag and tostring(controlRecord.Flag) or nil,
+						tabId = tostring(tabPersistenceId),
+						value = readCurrentValue()
+					}
+				end
 				local resolvedParent = resolveElementParent(elementType, elementObject)
 				if guiObject and resolvedParent and guiObject.Parent ~= resolvedParent then
 					guiObject.Parent = resolvedParent
@@ -14790,7 +16910,9 @@ function ElementsModule.init(ctx)
 				end
 				local ancestrySyncConnection = nil
 				local pinConnection = nil
+				local contextMenuConnection = nil
 				local tooltipHoverBindingKey = nil
+				local hoverCueBindingKey = nil
 				local tooltipTouchBeganConnection = nil
 				local tooltipTouchEndedConnection = nil
 				local tooltipTouchActive = false
@@ -14885,6 +17007,7 @@ function ElementsModule.init(ctx)
 					or controlRecord.Type == "NumberStepper"
 					or controlRecord.Type == "ConfirmButton"
 					or controlRecord.Type == "Gallery"
+					or controlRecord.Type == "DataGrid"
 					or controlRecord.Type == "Image"
 					or controlRecord.Type == "Chart"
 					or controlRecord.Type == "LogConsole"
@@ -14900,7 +17023,7 @@ function ElementsModule.init(ctx)
 					pinButton.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 					pinButton.BackgroundTransparency = 0.25
 					pinButton.BorderSizePixel = 0
-					pinButton.Text = "☆"
+					pinButton.Text = "o"
 					pinButton.TextScaled = true
 					pinButton.TextWrapped = true
 					pinButton.TextColor3 = Color3.fromRGB(225, 225, 225)
@@ -14933,6 +17056,94 @@ function ElementsModule.init(ctx)
 				if type(tooltipOptions) == "table" then
 					applyTooltipBehavior(tooltipOptions)
 				end
+
+				if guiObject and hoverCueElementTypes[controlRecord.Type] then
+					hoverCueBindingKey = registerHoverBinding(guiObject,
+						function()
+							emitUICue("hover")
+						end,
+						nil,
+						"cue:hover:" .. favoriteId
+					)
+				end
+
+				local function copyText(textValue)
+					local clipboard = nil
+					if type(setclipboard) == "function" then
+						clipboard = setclipboard
+					elseif type(toclipboard) == "function" then
+						clipboard = toclipboard
+					end
+					if type(clipboard) ~= "function" then
+						return false, "Clipboard unavailable."
+					end
+					local okCopy, copyErr = pcall(clipboard, tostring(textValue or ""))
+					if not okCopy then
+						return false, tostring(copyErr)
+					end
+					return true, "Copied."
+				end
+
+				if guiObject and guiObject.InputBegan then
+					contextMenuConnection = guiObject.InputBegan:Connect(function(input)
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then
+							emitControlInteraction("click", { inputType = "mouse1" })
+						elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+							emitControlInteraction("right_click", { inputType = "mouse2" })
+						elseif input.UserInputType == Enum.UserInputType.Touch then
+							emitControlInteraction("touch", { inputType = "touch" })
+						end
+						if input.UserInputType ~= Enum.UserInputType.MouseButton2 then
+							return
+						end
+						if type(self.showContextMenu) ~= "function" then
+							return
+						end
+						local pointerX = input.Position and input.Position.X or guiObject.AbsolutePosition.X
+						local pointerY = input.Position and input.Position.Y or guiObject.AbsolutePosition.Y
+						self.showContextMenu({
+							{
+								id = "pin_toggle",
+								label = (pinnedControlIds[favoriteId] == true) and "Unpin Control" or "Pin Control",
+								callback = function()
+									local currentlyPinned = pinnedControlIds[favoriteId] == true
+									setControlPinnedState(controlRecord, not currentlyPinned)
+								end
+							},
+							{
+								id = "copy_name",
+								label = "Copy Name",
+								callback = function()
+									copyText(controlRecord.Name)
+								end
+							},
+							{
+								id = "copy_id",
+								label = "Copy ID",
+								callback = function()
+									copyText(controlRecord.Id)
+								end
+							}
+						}, {
+							x = pointerX,
+							y = pointerY
+						})
+					end)
+				end
+
+				if type(elementObject.Set) == "function" and rawget(elementObject, "__TelemetrySetWrapped") ~= true then
+					local originalSet = elementObject.Set
+					elementObject.Set = function(target, ...)
+						local results = { originalSet(target, ...) }
+						local firstArg = select(1, ...)
+						emitControlInteraction("set", {
+							inputValue = cloneSerializable(firstArg)
+						})
+						return table.unpack(results)
+					end
+					rawset(elementObject, "__TelemetrySetWrapped", true)
+				end
+
 				emitControlRegistryChange("control_added")
 	
 				-- Destroy with tracking removal
@@ -14971,6 +17182,10 @@ function ElementsModule.init(ctx)
 						pinConnection:Disconnect()
 						pinConnection = nil
 					end
+					if contextMenuConnection then
+						contextMenuConnection:Disconnect()
+						contextMenuConnection = nil
+					end
 					if tooltipTouchBeganConnection then
 						tooltipTouchBeganConnection:Disconnect()
 						tooltipTouchBeganConnection = nil
@@ -14982,6 +17197,10 @@ function ElementsModule.init(ctx)
 					if tooltipHoverBindingKey then
 						cleanupHoverBinding(tooltipHoverBindingKey)
 						tooltipHoverBindingKey = nil
+					end
+					if hoverCueBindingKey then
+						cleanupHoverBinding(hoverCueBindingKey)
+						hoverCueBindingKey = nil
 					end
 					hideTooltip(favoriteId)
 					if controlRecord.PinButton and controlRecord.PinButton.Parent then
@@ -15200,12 +17419,14 @@ function ElementsModule.init(ctx)
 	
 	
 				Button.Interact.MouseButton1Click:Connect(function()
+					emitUICue("click")
 					local Success, Response = pcall(ButtonSettings.Callback)
 					-- Prevents animation from trying to play if the button's callback called RayfieldLibrary:Destroy()
 					if self.rayfieldDestroyed() then
 						return
 					end
 					if not Success then
+						emitUICue("error")
 						self.Animation:Create(Button, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 						self.Animation:Create(Button.ElementIndicator, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 1}):Play()
 						self.Animation:Create(Button.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
@@ -15218,6 +17439,7 @@ function ElementsModule.init(ctx)
 						self.Animation:Create(Button.ElementIndicator, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {TextTransparency = 0.9}):Play()
 						self.Animation:Create(Button.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
 					else
+						emitUICue("success")
 						if not ButtonSettings.Ext then
 							self.SaveConfiguration(ButtonSettings.Name..'\n')
 						end
@@ -15988,9 +18210,13 @@ function ElementsModule.init(ctx)
 
 				local function fireConfirmed()
 					setArmedVisual(false)
+					emitUICue("click")
 					local okCallback, callbackErr = pcall(callback)
 					if not okCallback then
+						emitUICue("error")
 						warn("Rayfield | ConfirmButton callback failed: " .. tostring(callbackErr))
+					else
+						emitUICue("success")
 					end
 					if settingsValue.Ext ~= true then
 						self.SaveConfiguration()
@@ -16570,407 +18796,62 @@ function ElementsModule.init(ctx)
 				return gallery
 			end
 
-			function Tab:CreateChart(chartSettings)
-				local settingsValue = chartSettings or {}
-				local chart = {}
-				chart.Name = tostring(settingsValue.Name or "Chart")
-				chart.Flag = settingsValue.Flag
-				chart.CurrentValue = {
-					points = {},
-					zoom = 1,
-					offset = 0,
-					preset = settingsValue.Preset
-				}
-				local maxPoints = math.max(10, math.floor(tonumber(settingsValue.MaxPoints) or 300))
-				local updateHz = math.max(1, math.floor(tonumber(settingsValue.UpdateHz) or 10))
-				local callback = type(settingsValue.Callback) == "function" and settingsValue.Callback or function() end
-				local showAreaFill = settingsValue.ShowAreaFill ~= false
-				local renderPending = false
-				local lastRender = 0
-				local segmentPool = {}
-				local fillPool = {}
-				local dragging = false
-				local dragStartX = 0
-
-				local root = Instance.new("Frame")
-				root.Name = chart.Name
-				root.Size = UDim2.new(1, -10, 0, clampNumber(settingsValue.Height, 150, 380, 220))
-				root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-				root.BorderSizePixel = 0
-				root.Visible = true
-				root.Parent = TabPage
-
-				local corner = Instance.new("UICorner")
-				corner.CornerRadius = UDim.new(0, 6)
-				corner.Parent = root
-
-				local stroke = Instance.new("UIStroke")
-				stroke.Color = self.getSelectedTheme().ElementStroke
-				stroke.Parent = root
-
-				local title = Instance.new("TextLabel")
-				title.BackgroundTransparency = 1
-				title.Position = UDim2.new(0, 10, 0, 0)
-				title.Size = UDim2.new(1, -90, 0, 22)
-				title.Font = Enum.Font.GothamSemibold
-				title.TextXAlignment = Enum.TextXAlignment.Left
-				title.TextSize = 13
-				title.TextColor3 = self.getSelectedTheme().TextColor
-				title.Text = chart.Name
-				title.Parent = root
-
-				local zoomIn = Instance.new("TextButton")
-				zoomIn.Size = UDim2.new(0, 22, 0, 20)
-				zoomIn.AnchorPoint = Vector2.new(1, 0)
-				zoomIn.Position = UDim2.new(1, -34, 0, 2)
-				zoomIn.Text = "+"
-				zoomIn.Font = Enum.Font.GothamBold
-				zoomIn.TextSize = 14
-				zoomIn.TextColor3 = self.getSelectedTheme().TextColor
-				zoomIn.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				zoomIn.BorderSizePixel = 0
-				zoomIn.Parent = root
-
-				local zoomOut = Instance.new("TextButton")
-				zoomOut.Size = UDim2.new(0, 22, 0, 20)
-				zoomOut.AnchorPoint = Vector2.new(1, 0)
-				zoomOut.Position = UDim2.new(1, -8, 0, 2)
-				zoomOut.Text = "-"
-				zoomOut.Font = Enum.Font.GothamBold
-				zoomOut.TextSize = 14
-				zoomOut.TextColor3 = self.getSelectedTheme().TextColor
-				zoomOut.BackgroundColor3 = self.getSelectedTheme().InputBackground
-				zoomOut.BorderSizePixel = 0
-				zoomOut.Parent = root
-
-				local plot = Instance.new("Frame")
-				plot.Name = "Plot"
-				plot.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-				plot.BorderSizePixel = 0
-				plot.Position = UDim2.new(0, 8, 0, 26)
-				plot.Size = UDim2.new(1, -16, 1, -34)
-				plot.ClipsDescendants = true
-				plot.Parent = root
-
-				local plotStroke = Instance.new("UIStroke")
-				plotStroke.Color = self.getSelectedTheme().ElementStroke
-				plotStroke.Transparency = 0.2
-				plotStroke.Parent = plot
-
-				local gridLines = {}
-				for i = 1, 4 do
-					local line = Instance.new("Frame")
-					line.BorderSizePixel = 0
-					line.Size = UDim2.new(1, 0, 0, 1)
-					line.Position = UDim2.new(0, 0, (i - 1) / 3, 0)
-					line.BackgroundColor3 = self.getSelectedTheme().ChartGrid or self.getSelectedTheme().ElementStroke
-					line.BackgroundTransparency = 0.65
-					line.Parent = plot
-					gridLines[i] = line
-				end
-
-				local drawLayer = Instance.new("Frame")
-				drawLayer.BackgroundTransparency = 1
-				drawLayer.Size = UDim2.new(1, 0, 1, 0)
-				drawLayer.Parent = plot
-
-				local function ensurePoolEntry(pool, index, factory)
-					if pool[index] and pool[index].Parent then
-						return pool[index]
-					end
-					local entry = factory()
-					pool[index] = entry
-					return entry
-				end
-
-				local function trimPoints()
-					while #chart.CurrentValue.points > maxPoints do
-						table.remove(chart.CurrentValue.points, 1)
-					end
-				end
-
-				local function getVisiblePoints()
-					local points = chart.CurrentValue.points
-					local total = #points
-					if total == 0 then
-						return {}
-					end
-					local visibleCount = math.max(2, math.floor(total / math.max(1, chart.CurrentValue.zoom)))
-					local maxOffset = math.max(0, total - visibleCount)
-					chart.CurrentValue.offset = math.floor(clampNumber(chart.CurrentValue.offset, 0, maxOffset, chart.CurrentValue.offset))
-					local startIndex = total - visibleCount - chart.CurrentValue.offset + 1
-					if startIndex < 1 then
-						startIndex = 1
-					end
-					local out = {}
-					for index = startIndex, math.min(total, startIndex + visibleCount - 1) do
-						table.insert(out, points[index])
-					end
-					return out
-				end
-
-				local function renderNow()
-					lastRender = os.clock()
-					local visible = getVisiblePoints()
-					local pointCount = #visible
-					local minY = math.huge
-					local maxY = -math.huge
-					for _, point in ipairs(visible) do
-						local y = tonumber(point.y) or 0
-						if y < minY then minY = y end
-						if y > maxY then maxY = y end
-					end
-					if pointCount == 0 then
-						minY, maxY = 0, 1
-					elseif minY == maxY then
-						minY -= 1
-						maxY += 1
-					end
-
-					local width = math.max(1, plot.AbsoluteSize.X)
-					local height = math.max(1, plot.AbsoluteSize.Y)
-					local function toPoint(index, yValue)
-						local x = pointCount <= 1 and (width * 0.5) or (((index - 1) / (pointCount - 1)) * width)
-						local safeY = tonumber(yValue) or minY
-						local y = height - (((safeY - minY) / math.max(0.00001, (maxY - minY))) * height)
-						return x, y
-					end
-
-					local segmentIndex = 0
-					for index = 1, pointCount - 1 do
-						local x1, y1 = toPoint(index, visible[index].y)
-						local x2, y2 = toPoint(index + 1, visible[index + 1].y)
-						local dx, dy = x2 - x1, y2 - y1
-						local length = math.sqrt((dx * dx) + (dy * dy))
-						if length > 0 then
-							segmentIndex += 1
-							local segment = ensurePoolEntry(segmentPool, segmentIndex, function()
-								local line = Instance.new("Frame")
-								line.BorderSizePixel = 0
-								line.AnchorPoint = Vector2.new(0, 0.5)
-								line.Size = UDim2.new(0, 1, 0, 2)
-								line.Parent = drawLayer
-								return line
-							end)
-							segment.Visible = true
-							segment.BackgroundColor3 = self.getSelectedTheme().ChartLine or self.getSelectedTheme().SliderProgress
-							segment.Position = UDim2.new(0, x1, 0, y1)
-							segment.Size = UDim2.new(0, length, 0, 2)
-							segment.Rotation = math.deg(math.atan2(dy, dx))
-						end
-					end
-					for index = segmentIndex + 1, #segmentPool do
-						if segmentPool[index] then
-							segmentPool[index].Visible = false
-						end
-					end
-
-					if showAreaFill then
-						local fillIndex = 0
-						for index = 1, pointCount do
-							local x, y = toPoint(index, visible[index].y)
-							fillIndex += 1
-							local fill = ensurePoolEntry(fillPool, fillIndex, function()
-								local bar = Instance.new("Frame")
-								bar.BorderSizePixel = 0
-								bar.AnchorPoint = Vector2.new(0.5, 1)
-								bar.BackgroundTransparency = 0.78
-								bar.Parent = drawLayer
-								return bar
-							end)
-							fill.Visible = true
-							fill.BackgroundColor3 = self.getSelectedTheme().ChartFill or self.getSelectedTheme().SliderBackground
-							fill.Position = UDim2.new(0, x, 0, height)
-							fill.Size = UDim2.new(0, 2, 0, math.max(1, height - y))
-						end
-						for index = fillIndex + 1, #fillPool do
-							if fillPool[index] then
-								fillPool[index].Visible = false
-							end
-						end
+			function Tab:CreateDataGrid(dataGridSettings)
+				if (type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function")
+					and type(self.ResolveDataGridFactory) == "function" then
+					local okResolve, resolvedModule = pcall(self.ResolveDataGridFactory)
+					if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
+						self.DataGridFactoryModule = resolvedModule
 					else
-						for _, fill in ipairs(fillPool) do
-							if fill then
-								fill.Visible = false
-							end
-						end
+						warn("Rayfield | DataGrid module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
 					end
 				end
-
-				local function scheduleRender()
-					local interval = 1 / math.max(1, updateHz)
-					local now = os.clock()
-					local elapsed = now - lastRender
-					if elapsed >= interval then
-						renderNow()
-						return
-					end
-					if renderPending then
-						return
-					end
-					renderPending = true
-					task.delay(interval - elapsed, function()
-						renderPending = false
-						if root and root.Parent then
-							renderNow()
-						end
-					end)
+				if type(self.DataGridFactoryModule) ~= "table" or type(self.DataGridFactoryModule.create) ~= "function" then
+					warn("Rayfield | DataGrid factory module unavailable")
+					return nil
 				end
 
-				local function emitDataChanged(persist)
-					trimPoints()
-					scheduleRender()
-					local okCallback, callbackErr = pcall(callback, chart:GetData())
-					if not okCallback then
-						warn("Rayfield | Chart callback failed: " .. tostring(callbackErr))
-					end
-					if persist ~= false and settingsValue.Ext ~= true then
-						self.SaveConfiguration()
-					end
-				end
+				return self.DataGridFactoryModule.create({
+					self = self,
+					TabPage = TabPage,
+					Settings = Settings,
+					settings = dataGridSettings,
+					addExtendedAPI = addExtendedAPI,
+					resolveElementParentFromSettings = resolveElementParentFromSettings,
+					connectThemeRefresh = connectThemeRefresh,
+					cloneSerializable = cloneSerializable,
+					clampNumber = clampNumber,
+					emitUICue = emitUICue
+				})
+			end
 
-				function chart:AddPoint(y, x)
-					local nextX = tonumber(x)
-					if nextX == nil then
-						local lastPoint = chart.CurrentValue.points[#chart.CurrentValue.points]
-						nextX = (lastPoint and tonumber(lastPoint.x) or 0) + 1
-					end
-					table.insert(chart.CurrentValue.points, {x = nextX, y = tonumber(y) or 0})
-					emitDataChanged(true)
-				end
-
-				function chart:SetData(points)
-					chart.CurrentValue.points = {}
-					if type(points) == "table" then
-						for _, point in ipairs(points) do
-							if type(point) == "table" then
-								local px = tonumber(point.x or point[1]) or (#chart.CurrentValue.points + 1)
-								local py = tonumber(point.y or point[2])
-								if py ~= nil then
-									table.insert(chart.CurrentValue.points, {x = px, y = py})
-								end
-							elseif tonumber(point) ~= nil then
-								table.insert(chart.CurrentValue.points, {x = #chart.CurrentValue.points + 1, y = tonumber(point)})
-							end
-						end
-					end
-					emitDataChanged(true)
-				end
-
-				function chart:GetData()
-					return cloneSerializable(chart.CurrentValue)
-				end
-
-				function chart:Clear()
-					chart.CurrentValue.points = {}
-					chart.CurrentValue.offset = 0
-					emitDataChanged(true)
-				end
-
-				function chart:SetPreset(nameOrNil)
-					chart.CurrentValue.preset = nameOrNil
-					if settingsValue.Ext ~= true then
-						self.SaveConfiguration()
-					end
-					return true, "ok"
-				end
-
-				function chart:Zoom(factor)
-					chart.CurrentValue.zoom = clampNumber((chart.CurrentValue.zoom or 1) * (tonumber(factor) or 1), 1, 12, chart.CurrentValue.zoom)
-					emitDataChanged(true)
-				end
-
-				function chart:Pan(delta)
-					local total = #chart.CurrentValue.points
-					local visibleCount = math.max(2, math.floor(total / math.max(1, chart.CurrentValue.zoom)))
-					local maxOffset = math.max(0, total - visibleCount)
-					chart.CurrentValue.offset = math.floor(clampNumber((chart.CurrentValue.offset or 0) + (tonumber(delta) or 0), 0, maxOffset, 0))
-					emitDataChanged(true)
-				end
-
-				function chart:GetPersistValue()
-					return chart:GetData()
-				end
-
-				function chart:Set(value)
-					if type(value) == "table" then
-						if type(value.points) == "table" then
-							chart.CurrentValue.points = cloneSerializable(value.points) or {}
-						elseif #value > 0 then
-							chart:SetData(value)
-							return
-						end
-						chart.CurrentValue.zoom = clampNumber(value.zoom, 1, 12, chart.CurrentValue.zoom)
-						chart.CurrentValue.offset = clampNumber(value.offset, 0, math.huge, chart.CurrentValue.offset)
-						if value.preset ~= nil then
-							chart.CurrentValue.preset = value.preset
-						end
-						emitDataChanged(true)
+			function Tab:CreateChart(chartSettings)
+				if (type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function")
+					and type(self.ResolveChartFactory) == "function" then
+					local okResolve, resolvedModule = pcall(self.ResolveChartFactory)
+					if okResolve and type(resolvedModule) == "table" and type(resolvedModule.create) == "function" then
+						self.ChartFactoryModule = resolvedModule
+					else
+						warn("Rayfield | Chart module lazy-load failed: " .. tostring(okResolve and resolvedModule or "resolve error"))
 					end
 				end
-
-				function chart:Destroy()
-					root:Destroy()
+				if type(self.ChartFactoryModule) ~= "table" or type(self.ChartFactoryModule.create) ~= "function" then
+					warn("Rayfield | Chart factory module unavailable")
+					return nil
 				end
 
-				zoomIn.MouseButton1Click:Connect(function()
-					chart:Zoom(1.2)
-				end)
-				zoomOut.MouseButton1Click:Connect(function()
-					chart:Zoom(1 / 1.2)
-				end)
-				plot.InputBegan:Connect(function(input)
-					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-						dragging = true
-						dragStartX = input.Position.X
-					end
-				end)
-				plot.InputChanged:Connect(function(input)
-					if not dragging then
-						return
-					end
-					if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
-						return
-					end
-					local delta = input.Position.X - dragStartX
-					if math.abs(delta) >= 10 then
-						dragStartX = input.Position.X
-						chart:Pan(math.floor(-delta / 22))
-					end
-				end)
-				plot.InputEnded:Connect(function(input)
-					if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-						dragging = false
-					end
-				end)
-
-				connectThemeRefresh(function()
-					root.BackgroundColor3 = self.getSelectedTheme().ElementBackground
-					stroke.Color = self.getSelectedTheme().ElementStroke
-					title.TextColor3 = self.getSelectedTheme().TextColor
-					zoomIn.BackgroundColor3 = self.getSelectedTheme().InputBackground
-					zoomIn.TextColor3 = self.getSelectedTheme().TextColor
-					zoomOut.BackgroundColor3 = self.getSelectedTheme().InputBackground
-					zoomOut.TextColor3 = self.getSelectedTheme().TextColor
-					plot.BackgroundColor3 = self.getSelectedTheme().SecondaryElementBackground
-					plotStroke.Color = self.getSelectedTheme().ElementStroke
-					for _, line in ipairs(gridLines) do
-						line.BackgroundColor3 = self.getSelectedTheme().ChartGrid or self.getSelectedTheme().ElementStroke
-					end
-					scheduleRender()
-				end)
-
-				resolveElementParentFromSettings(chart, settingsValue)
-				if type(settingsValue.Data) == "table" then
-					chart:SetData(settingsValue.Data)
-				else
-					scheduleRender()
-				end
-				addExtendedAPI(chart, chart.Name, "Chart", root)
-				if Settings.ConfigurationSaving and Settings.ConfigurationSaving.Enabled and chart.Flag then
-					self.RayfieldLibrary.Flags[chart.Flag] = chart
-				end
-				return chart
+				return self.ChartFactoryModule.create({
+					self = self,
+					TabPage = TabPage,
+					Settings = Settings,
+					settings = chartSettings,
+					addExtendedAPI = addExtendedAPI,
+					resolveElementParentFromSettings = resolveElementParentFromSettings,
+					connectThemeRefresh = connectThemeRefresh,
+					cloneSerializable = cloneSerializable,
+					clampNumber = clampNumber,
+					isHeadlessPerformanceMode = isHeadlessPerformanceMode
+				})
 			end
 
 			function Tab:CreateLogConsole(logSettings)
@@ -18002,6 +19883,7 @@ function ElementsModule.init(ctx)
 				resizeInputFrame()
 
 				local function handleInputCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Input, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Input.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Input.Title.Text = "Callback Error"
@@ -18097,13 +19979,17 @@ function ElementsModule.init(ctx)
 				end
 
 				Input.InputFrame.InputBox.FocusLost:Connect(function()
-					commitInput(Input.InputFrame.InputBox.Text, {
+					emitUICue("click")
+					local callbackOk = commitInput(Input.InputFrame.InputBox.Text, {
 						reason = "focus_lost",
 						source = "user_input",
 						emitCallback = true,
 						persist = true,
 						forceCallback = true
 					})
+					if callbackOk == true then
+						emitUICue("success")
+					end
 
 					if InputSettings.RemoveTextAfterFocusLost then
 						Input.InputFrame.InputBox.Text = ""
@@ -18353,6 +20239,7 @@ function ElementsModule.init(ctx)
 				end
 
 				local function handleSelectionCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Dropdown, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Dropdown.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Dropdown.Title.Text = "Callback Error"
@@ -18620,6 +20507,7 @@ function ElementsModule.init(ctx)
 				end
 
 				Dropdown.Interact.MouseButton1Click:Connect(function()
+					emitUICue("click")
 					self.Animation:Create(Dropdown, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackgroundHover}):Play()
 					self.Animation:Create(Dropdown.UIStroke, TweenInfo.new(0.4, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					task.wait(0.1)
@@ -18702,6 +20590,7 @@ function ElementsModule.init(ctx)
 	
 						DropdownOption.Interact.ZIndex = 50
 						DropdownOption.Interact.MouseButton1Click:Connect(function()
+							emitUICue("click")
 							local nextSelection = cloneSelection(DropdownSettings.CurrentOption)
 							local selectedIndex = table.find(nextSelection, optionName)
 							local wasSelected = selectedIndex ~= nil
@@ -18722,13 +20611,16 @@ function ElementsModule.init(ctx)
 								self.setDebounce(true)
 							end
 
-							commitSelection(nextSelection, {
+							local _, _, callbackOk = commitSelection(nextSelection, {
 								emitCallback = true,
 								persist = true,
 								forceCallback = true,
 								reason = "option_click",
 								animatedVisuals = true
 							})
+							if callbackOk == true then
+								emitUICue("success")
+							end
 
 							if not DropdownSettings.MultipleOptions then
 								task.wait(0.1)
@@ -19185,8 +21077,10 @@ function ElementsModule.init(ctx)
 						end)
 	
 						if not KeybindSettings.HoldToInteract then
+							emitUICue("click")
 							local Success, Response = pcall(KeybindSettings.Callback)
 							if not Success then
+								emitUICue("error")
 								self.Animation:Create(Keybind, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 								self.Animation:Create(Keybind.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 								Keybind.Title.Text = "Callback Error"
@@ -19196,6 +21090,8 @@ function ElementsModule.init(ctx)
 								Keybind.Title.Text = KeybindSettings.Name
 								self.Animation:Create(Keybind, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = self.getSelectedTheme().ElementBackground}):Play()
 								self.Animation:Create(Keybind.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 0}):Play()
+							else
+								emitUICue("success")
 							end
 						else
 							task.wait(0.25)
@@ -19352,6 +21248,7 @@ function ElementsModule.init(ctx)
 				end
 
 				local function handleToggleCallbackError(response)
+					emitUICue("error")
 					self.Animation:Create(Toggle, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {BackgroundColor3 = Color3.fromRGB(85, 0, 0)}):Play()
 					self.Animation:Create(Toggle.UIStroke, TweenInfo.new(0.6, Enum.EasingStyle.Exponential), {Transparency = 1}):Play()
 					Toggle.Title.Text = "Callback Error"
@@ -19738,13 +21635,17 @@ function ElementsModule.init(ctx)
 						suppressNextToggleClick = false
 						return
 					end
-					commitToggleState(not ToggleSettings.CurrentValue, {
+					emitUICue("click")
+					local callbackOk = commitToggleState(not ToggleSettings.CurrentValue, {
 						reason = "interact_click",
 						source = "ui_click",
 						emitCallback = true,
 						persist = true,
 						forceCallback = true
 					})
+					if callbackOk == true then
+						emitUICue("success")
+					end
 				end)
 	
 				function ToggleSettings:Set(NewToggleValue)
@@ -20676,12 +22577,12 @@ function ElementsModule.init(ctx)
 		end
 		return nil
 	end
-	self.activateTabByPersistenceId = function(tabId, ignoreMinimisedCheck)
+	self.activateTabByPersistenceId = function(tabId, ignoreMinimisedCheck, source)
 		local record = self.getTabRecordByPersistenceId(tabId)
 		if not record or type(record.Activate) ~= "function" then
 			return false
 		end
-		return record.Activate(ignoreMinimisedCheck == true)
+		return record.Activate(ignoreMinimisedCheck == true, source)
 	end
 	self.listControlsForFavorites = function(pruneMissing)
 		return listControlsForFavorites(pruneMissing == true)
@@ -20703,6 +22604,9 @@ function ElementsModule.init(ctx)
 		setPinBadgesVisible(visible ~= false)
 		return true
 	end
+	self.getPinBadgesVisible = function()
+		return pinBadgesVisible == true
+	end
 	self.subscribeControlRegistry = function(callback)
 		if type(callback) ~= "function" then
 			return function() end
@@ -20720,11 +22624,15 @@ function ElementsModule.init(ctx)
 	self.getControlRecordById = function(id)
 		return getControlRecordById(id)
 	end
-	
+	self.listControlRecords = function(pruneMissing)
+		return listControlRecords(pruneMissing == true)
+	end
+
 	return self
 end
 
 return ElementsModule
+
 ]])
 put("src/ui/elements/widgets/bootstrap.lua", [[local WidgetBootstrap = {}
 
@@ -21199,6 +23107,6 @@ return WindowUi]])
 
 return {
 	name = BUNDLE_NAME,
-	count = 87,
+	count = 89,
 	bundle = bundle
 }

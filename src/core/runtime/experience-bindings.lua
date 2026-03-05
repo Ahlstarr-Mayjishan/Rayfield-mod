@@ -71,6 +71,72 @@ function ExperienceBindings.bind(context)
 	local renderFavoritesTab = context.renderFavoritesTab
 	local openFavoritesTab = context.openFavoritesTab
 	local SettingsSystem = context.SettingsSystem
+	local saveWorkspaceInternal = context.saveWorkspaceInternal
+	local loadWorkspaceInternal = context.loadWorkspaceInternal
+	local listWorkspacesInternal = context.listWorkspacesInternal
+	local deleteWorkspaceInternal = context.deleteWorkspaceInternal
+	local saveProfileInternal = context.saveProfileInternal
+	local loadProfileInternal = context.loadProfileInternal
+	local listProfilesInternal = context.listProfilesInternal
+	local deleteProfileInternal = context.deleteProfileInternal
+	local copyWorkspaceToProfileInternal = context.copyWorkspaceToProfileInternal
+	local copyProfileToWorkspaceInternal = context.copyProfileToWorkspaceInternal
+	local setCommandPaletteExecutionModeInternal = context.setCommandPaletteExecutionModeInternal
+	local getCommandPaletteExecutionModeInternal = context.getCommandPaletteExecutionModeInternal
+	local setCommandPalettePolicyInternal = context.setCommandPalettePolicyInternal
+	local runCommandPaletteItemInternal = context.runCommandPaletteItemInternal
+	local openPerformanceHUDInternal = context.openPerformanceHUDInternal
+	local closePerformanceHUDInternal = context.closePerformanceHUDInternal
+	local togglePerformanceHUDInternal = context.togglePerformanceHUDInternal
+	local configurePerformanceHUDInternal = context.configurePerformanceHUDInternal
+	local getPerformanceHUDStateInternal = context.getPerformanceHUDStateInternal
+	local registerHUDMetricProviderInternal = context.registerHUDMetricProviderInternal
+	local unregisterHUDMetricProviderInternal = context.unregisterHUDMetricProviderInternal
+	local openSettingsTabInternal = context.openSettingsTabInternal
+	local getUsageAnalyticsInternal = context.getUsageAnalyticsInternal
+	local clearUsageAnalyticsInternal = context.clearUsageAnalyticsInternal
+	local startMacroRecordingInternal = context.startMacroRecordingInternal
+	local stopMacroRecordingInternal = context.stopMacroRecordingInternal
+	local cancelMacroRecordingInternal = context.cancelMacroRecordingInternal
+	local isMacroRecordingInternal = context.isMacroRecordingInternal
+	local isMacroExecutingInternal = context.isMacroExecutingInternal
+	local listMacrosInternal = context.listMacrosInternal
+	local deleteMacroInternal = context.deleteMacroInternal
+	local executeMacroInternal = context.executeMacroInternal
+	local bindMacroInternal = context.bindMacroInternal
+	local registerDiscoveryProviderInternal = context.registerDiscoveryProviderInternal
+	local unregisterDiscoveryProviderInternal = context.unregisterDiscoveryProviderInternal
+	local queryDiscoveryInternal = context.queryDiscoveryInternal
+	local executePromptCommandInternal = context.executePromptCommandInternal
+	local askAssistantInternal = context.askAssistantInternal
+	local getAssistantHistoryInternal = context.getAssistantHistoryInternal
+	local sendGlobalSignalInternal = context.sendGlobalSignalInternal
+	local sendInternalChatInternal = context.sendInternalChatInternal
+	local pollBridgeMessagesInternal = context.pollBridgeMessagesInternal
+	local startBridgePollingInternal = context.startBridgePollingInternal
+	local stopBridgePollingInternal = context.stopBridgePollingInternal
+	local getBridgeMessagesInternal = context.getBridgeMessagesInternal
+	local scheduleMacroInternal = context.scheduleMacroInternal
+	local scheduleAutomationActionInternal = context.scheduleAutomationActionInternal
+	local cancelScheduledActionInternal = context.cancelScheduledActionInternal
+	local listScheduledActionsInternal = context.listScheduledActionsInternal
+	local clearScheduledActionsInternal = context.clearScheduledActionsInternal
+	local addAutomationRuleInternal = context.addAutomationRuleInternal
+	local removeAutomationRuleInternal = context.removeAutomationRuleInternal
+	local listAutomationRulesInternal = context.listAutomationRulesInternal
+	local setAutomationRuleEnabledInternal = context.setAutomationRuleEnabledInternal
+	local evaluateAutomationRulesInternal = context.evaluateAutomationRulesInternal
+	local registerHubMetadataInternal = context.registerHubMetadataInternal
+	local getHubMetadataInternal = context.getHubMetadataInternal
+	local setElementInspectorEnabledInternal = context.setElementInspectorEnabledInternal
+	local isElementInspectorEnabledInternal = context.isElementInspectorEnabledInternal
+	local inspectElementAtPointerInternal = context.inspectElementAtPointerInternal
+	local openLiveThemeEditorInternal = context.openLiveThemeEditorInternal
+	local closeLiveThemeEditorInternal = context.closeLiveThemeEditorInternal
+	local setLiveThemeValueInternal = context.setLiveThemeValueInternal
+	local getLiveThemeDraftInternal = context.getLiveThemeDraftInternal
+	local applyLiveThemeDraftInternal = context.applyLiveThemeDraftInternal
+	local exportLiveThemeLuaInternal = context.exportLiveThemeLuaInternal
 
 	local function experienceState()
 		return getExperienceState()
@@ -91,6 +157,18 @@ function ExperienceBindings.bind(context)
 	end
 
 	local api = {}
+
+	local function withUIStateMethod(methodName, ...)
+		local uiStateSystem = getUIStateSystem()
+		if not uiStateSystem then
+			return false, "UI state unavailable."
+		end
+		local method = uiStateSystem[methodName]
+		if type(method) ~= "function" then
+			return false, "UI state method unavailable: " .. tostring(methodName)
+		end
+		return method(...)
+	end
 
 	function api.restoreFromSettings(windowRef)
 		if type(getSetting) ~= "function" then
@@ -141,6 +219,19 @@ function ExperienceBindings.bind(context)
 			end
 			if type(renderFavoritesTab) == "function" then
 				renderFavoritesTab()
+			end
+		end
+
+		local paletteMode = getSetting("UIExperience", "commandPaletteMode")
+		if type(setCommandPaletteExecutionModeInternal) == "function" and type(paletteMode) == "string" and paletteMode ~= "" then
+			pcall(setCommandPaletteExecutionModeInternal, paletteMode)
+		end
+		local performanceHudEnabled = getSetting("UIExperience", "performanceHudEnabled")
+		if type(openPerformanceHUDInternal) == "function" and type(closePerformanceHUDInternal) == "function" then
+			if performanceHudEnabled == false then
+				pcall(closePerformanceHUDInternal)
+			else
+				pcall(openPerformanceHUDInternal)
 			end
 		end
 
@@ -358,6 +449,583 @@ function ExperienceBindings.bind(context)
 		return resetThemeStudioState(true)
 	end
 
+	function RayfieldLibrary:OpenCommandPalette(seedText)
+		return withUIStateMethod("OpenCommandPalette", seedText)
+	end
+
+	function RayfieldLibrary:CloseCommandPalette()
+		return withUIStateMethod("CloseCommandPalette")
+	end
+
+	function RayfieldLibrary:ToggleCommandPalette(seedText)
+		return withUIStateMethod("ToggleCommandPalette", seedText)
+	end
+
+	function RayfieldLibrary:SetCommandPaletteExecutionMode(mode)
+		if type(setCommandPaletteExecutionModeInternal) ~= "function" then
+			return false, "Command palette execution mode handler unavailable."
+		end
+		local okSet, message = setCommandPaletteExecutionModeInternal(mode)
+		if okSet and type(setSettingValue) == "function" then
+			setSettingValue("UIExperience", "commandPaletteMode", tostring(mode or "auto"), true)
+		end
+		return okSet, message
+	end
+
+	function RayfieldLibrary:GetCommandPaletteExecutionMode()
+		if type(getCommandPaletteExecutionModeInternal) == "function" then
+			local value = getCommandPaletteExecutionModeInternal()
+			return tostring(value or "auto")
+		end
+		if type(_G) == "table" and type(_G.__RAYFIELD_COMMAND_PALETTE_EXEC_MODE) == "string" then
+			return tostring(_G.__RAYFIELD_COMMAND_PALETTE_EXEC_MODE)
+		end
+		return "auto"
+	end
+
+	function RayfieldLibrary:SetCommandPalettePolicy(callback)
+		if type(setCommandPalettePolicyInternal) ~= "function" then
+			return false, "Command palette policy handler unavailable."
+		end
+		return setCommandPalettePolicyInternal(callback)
+	end
+
+	function RayfieldLibrary:RunCommandPaletteItem(item, mode)
+		if type(runCommandPaletteItemInternal) ~= "function" then
+			return false, "Command palette executor unavailable."
+		end
+		return runCommandPaletteItemInternal(item, mode)
+	end
+
+	function RayfieldLibrary:OpenActionCenter()
+		return withUIStateMethod("OpenActionCenter")
+	end
+
+	function RayfieldLibrary:CloseActionCenter()
+		return withUIStateMethod("CloseActionCenter")
+	end
+
+	function RayfieldLibrary:ToggleActionCenter()
+		return withUIStateMethod("ToggleActionCenter")
+	end
+
+	function RayfieldLibrary:GetNotificationHistory(limit)
+		local okHistory, historyOrErr = withUIStateMethod("GetNotificationHistory", limit)
+		if okHistory == false and type(historyOrErr) == "string" then
+			return {}
+		end
+		if type(okHistory) == "table" then
+			return okHistory
+		end
+		if type(historyOrErr) == "table" then
+			return historyOrErr
+		end
+		return {}
+	end
+
+	function RayfieldLibrary:ClearNotificationHistory()
+		return withUIStateMethod("ClearNotificationHistory")
+	end
+
+	function RayfieldLibrary:GetUnreadNotificationCount()
+		local okCall, result = withUIStateMethod("GetUnreadNotificationCount")
+		if type(okCall) == "number" then
+			return okCall
+		end
+		if okCall == false and type(result) == "string" then
+			return 0
+		end
+		return tonumber(result) or 0
+	end
+
+	function RayfieldLibrary:MarkAllNotificationsRead()
+		return withUIStateMethod("MarkAllNotificationsRead")
+	end
+
+	function RayfieldLibrary:GetNotificationHistoryEx(options)
+		local okCall, result = withUIStateMethod("GetNotificationHistoryEx", options)
+		if type(okCall) == "table" then
+			return okCall
+		end
+		if okCall == false and type(result) == "string" then
+			return {}
+		end
+		return type(result) == "table" and result or {}
+	end
+
+	function RayfieldLibrary:ShowContextMenu(items, anchor)
+		return withUIStateMethod("ShowContextMenu", items, anchor)
+	end
+
+	function RayfieldLibrary:HideContextMenu()
+		return withUIStateMethod("HideContextMenu")
+	end
+
+	function RayfieldLibrary:SaveWorkspace(name)
+		if type(saveWorkspaceInternal) ~= "function" then
+			return false, "Workspace save unavailable."
+		end
+		return saveWorkspaceInternal(name)
+	end
+
+	function RayfieldLibrary:LoadWorkspace(name)
+		if type(loadWorkspaceInternal) ~= "function" then
+			return false, "Workspace load unavailable."
+		end
+		return loadWorkspaceInternal(name)
+	end
+
+	function RayfieldLibrary:ListWorkspaces()
+		if type(listWorkspacesInternal) ~= "function" then
+			return {}
+		end
+		local list = listWorkspacesInternal()
+		if type(list) ~= "table" then
+			return {}
+		end
+		return list
+	end
+
+	function RayfieldLibrary:DeleteWorkspace(name)
+		if type(deleteWorkspaceInternal) ~= "function" then
+			return false, "Workspace delete unavailable."
+		end
+		return deleteWorkspaceInternal(name)
+	end
+
+	function RayfieldLibrary:SaveProfile(name)
+		if type(saveProfileInternal) ~= "function" then
+			return false, "Profile save unavailable."
+		end
+		return saveProfileInternal(name)
+	end
+
+	function RayfieldLibrary:LoadProfile(name)
+		if type(loadProfileInternal) ~= "function" then
+			return false, "Profile load unavailable."
+		end
+		return loadProfileInternal(name)
+	end
+
+	function RayfieldLibrary:ListProfiles()
+		if type(listProfilesInternal) ~= "function" then
+			return {}
+		end
+		local list = listProfilesInternal()
+		return type(list) == "table" and list or {}
+	end
+
+	function RayfieldLibrary:DeleteProfile(name)
+		if type(deleteProfileInternal) ~= "function" then
+			return false, "Profile delete unavailable."
+		end
+		return deleteProfileInternal(name)
+	end
+
+	function RayfieldLibrary:CopyWorkspaceToProfile(workspaceName, profileName)
+		if type(copyWorkspaceToProfileInternal) ~= "function" then
+			return false, "Workspace/profile copy unavailable."
+		end
+		return copyWorkspaceToProfileInternal(workspaceName, profileName)
+	end
+
+	function RayfieldLibrary:CopyProfileToWorkspace(profileName, workspaceName)
+		if type(copyProfileToWorkspaceInternal) ~= "function" then
+			return false, "Workspace/profile copy unavailable."
+		end
+		return copyProfileToWorkspaceInternal(profileName, workspaceName)
+	end
+
+	function RayfieldLibrary:OpenPerformanceHUD()
+		if type(openPerformanceHUDInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		local okOpen, message = openPerformanceHUDInternal()
+		if okOpen and type(setSettingValue) == "function" then
+			setSettingValue("UIExperience", "performanceHudEnabled", true, true)
+		end
+		return okOpen, message
+	end
+
+	function RayfieldLibrary:ClosePerformanceHUD()
+		if type(closePerformanceHUDInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		local okClose, message = closePerformanceHUDInternal()
+		if okClose and type(setSettingValue) == "function" then
+			setSettingValue("UIExperience", "performanceHudEnabled", false, true)
+		end
+		return okClose, message
+	end
+
+	function RayfieldLibrary:TogglePerformanceHUD()
+		if type(togglePerformanceHUDInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		local okToggle, message = togglePerformanceHUDInternal()
+		if okToggle and type(setSettingValue) == "function" then
+			local hudState = RayfieldLibrary:GetPerformanceHUDState()
+			setSettingValue("UIExperience", "performanceHudEnabled", hudState.visible == true, true)
+		end
+		return okToggle, message
+	end
+
+	function RayfieldLibrary:ConfigurePerformanceHUD(options)
+		if type(configurePerformanceHUDInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		return configurePerformanceHUDInternal(options)
+	end
+
+	function RayfieldLibrary:GetPerformanceHUDState()
+		if type(getPerformanceHUDStateInternal) ~= "function" then
+			return {}
+		end
+		local state = getPerformanceHUDStateInternal()
+		return type(state) == "table" and state or {}
+	end
+
+	function RayfieldLibrary:RegisterHUDMetricProvider(id, provider, options)
+		if type(registerHUDMetricProviderInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		return registerHUDMetricProviderInternal(id, provider, options)
+	end
+
+	function RayfieldLibrary:UnregisterHUDMetricProvider(id)
+		if type(unregisterHUDMetricProviderInternal) ~= "function" then
+			return false, "Performance HUD unavailable."
+		end
+		return unregisterHUDMetricProviderInternal(id)
+	end
+
+	function RayfieldLibrary:GetUsageAnalytics(limit)
+		if type(getUsageAnalyticsInternal) ~= "function" then
+			return {}
+		end
+		local snapshot = getUsageAnalyticsInternal(limit)
+		if type(snapshot) ~= "table" then
+			return {}
+		end
+		return snapshot
+	end
+
+	function RayfieldLibrary:ClearUsageAnalytics()
+		if type(clearUsageAnalyticsInternal) ~= "function" then
+			return false, "Usage analytics unavailable."
+		end
+		return clearUsageAnalyticsInternal()
+	end
+
+	function RayfieldLibrary:StartMacroRecording(name)
+		if type(startMacroRecordingInternal) ~= "function" then
+			return false, "Macro recorder unavailable."
+		end
+		return startMacroRecordingInternal(name)
+	end
+
+	function RayfieldLibrary:StopMacroRecording(saveResult)
+		if type(stopMacroRecordingInternal) ~= "function" then
+			return false, "Macro recorder unavailable."
+		end
+		return stopMacroRecordingInternal(saveResult ~= false)
+	end
+
+	function RayfieldLibrary:CancelMacroRecording()
+		if type(cancelMacroRecordingInternal) ~= "function" then
+			return false, "Macro recorder unavailable."
+		end
+		return cancelMacroRecordingInternal()
+	end
+
+	function RayfieldLibrary:IsMacroRecording()
+		if type(isMacroRecordingInternal) ~= "function" then
+			return false
+		end
+		return isMacroRecordingInternal() == true
+	end
+
+	function RayfieldLibrary:IsMacroExecuting()
+		if type(isMacroExecutingInternal) ~= "function" then
+			return false
+		end
+		return isMacroExecutingInternal() == true
+	end
+
+	function RayfieldLibrary:ListMacros()
+		if type(listMacrosInternal) ~= "function" then
+			return {}
+		end
+		local list = listMacrosInternal()
+		return type(list) == "table" and list or {}
+	end
+
+	function RayfieldLibrary:DeleteMacro(name)
+		if type(deleteMacroInternal) ~= "function" then
+			return false, "Macro recorder unavailable."
+		end
+		return deleteMacroInternal(name)
+	end
+
+	function RayfieldLibrary:ExecuteMacro(name, options)
+		if type(executeMacroInternal) ~= "function" then
+			return false, "Macro executor unavailable."
+		end
+		return executeMacroInternal(name, options)
+	end
+
+	function RayfieldLibrary:BindMacro(name, keybind)
+		if type(bindMacroInternal) ~= "function" then
+			return false, "Macro binder unavailable."
+		end
+		return bindMacroInternal(name, keybind)
+	end
+
+	function RayfieldLibrary:RegisterDiscoveryProvider(id, provider)
+		if type(registerDiscoveryProviderInternal) ~= "function" then
+			return false, "Discovery registry unavailable."
+		end
+		return registerDiscoveryProviderInternal(id, provider)
+	end
+
+	function RayfieldLibrary:UnregisterDiscoveryProvider(id)
+		if type(unregisterDiscoveryProviderInternal) ~= "function" then
+			return false, "Discovery registry unavailable."
+		end
+		return unregisterDiscoveryProviderInternal(id)
+	end
+
+	function RayfieldLibrary:QueryDiscovery(query)
+		if type(queryDiscoveryInternal) ~= "function" then
+			return {}
+		end
+		local results = queryDiscoveryInternal(query)
+		return type(results) == "table" and results or {}
+	end
+
+	function RayfieldLibrary:ExecutePromptCommand(rawText)
+		if type(executePromptCommandInternal) ~= "function" then
+			return false, "Prompt command service unavailable."
+		end
+		return executePromptCommandInternal(rawText)
+	end
+
+	function RayfieldLibrary:AskAssistant(prompt, options)
+		if type(askAssistantInternal) ~= "function" then
+			return false, "Assistant bridge unavailable."
+		end
+		return askAssistantInternal(prompt, options)
+	end
+
+	function RayfieldLibrary:GetAssistantHistory()
+		if type(getAssistantHistoryInternal) ~= "function" then
+			return {}
+		end
+		local history = getAssistantHistoryInternal()
+		return type(history) == "table" and history or {}
+	end
+
+	function RayfieldLibrary:SendGlobalSignal(command, payload, options)
+		if type(sendGlobalSignalInternal) ~= "function" then
+			return false, "Global signal bridge unavailable."
+		end
+		return sendGlobalSignalInternal(command, payload, options)
+	end
+
+	function RayfieldLibrary:SendInternalChat(message, options)
+		if type(sendInternalChatInternal) ~= "function" then
+			return false, "Internal chat bridge unavailable."
+		end
+		return sendInternalChatInternal(message, options)
+	end
+
+	function RayfieldLibrary:PollBridgeMessages(limit, options)
+		if type(pollBridgeMessagesInternal) ~= "function" then
+			return false, "Bridge polling unavailable.", {}
+		end
+		return pollBridgeMessagesInternal(limit, options)
+	end
+
+	function RayfieldLibrary:StartBridgePolling()
+		if type(startBridgePollingInternal) ~= "function" then
+			return false, "Bridge polling unavailable."
+		end
+		return startBridgePollingInternal()
+	end
+
+	function RayfieldLibrary:StopBridgePolling()
+		if type(stopBridgePollingInternal) ~= "function" then
+			return false, "Bridge polling unavailable."
+		end
+		return stopBridgePollingInternal()
+	end
+
+	function RayfieldLibrary:GetBridgeMessages(limit, kind)
+		if type(getBridgeMessagesInternal) ~= "function" then
+			return {}
+		end
+		local list = getBridgeMessagesInternal(limit, kind)
+		return type(list) == "table" and list or {}
+	end
+
+	function RayfieldLibrary:ScheduleMacro(name, delaySeconds, options)
+		if type(scheduleMacroInternal) ~= "function" then
+			return false, "Automation scheduler unavailable."
+		end
+		return scheduleMacroInternal(name, delaySeconds, options)
+	end
+
+	function RayfieldLibrary:ScheduleAction(actionSpec, delaySeconds, options)
+		if type(scheduleAutomationActionInternal) ~= "function" then
+			return false, "Automation scheduler unavailable."
+		end
+		return scheduleAutomationActionInternal(actionSpec, delaySeconds, options)
+	end
+
+	function RayfieldLibrary:CancelScheduledAction(taskId)
+		if type(cancelScheduledActionInternal) ~= "function" then
+			return false, "Automation scheduler unavailable."
+		end
+		return cancelScheduledActionInternal(taskId)
+	end
+
+	function RayfieldLibrary:ListScheduledActions()
+		if type(listScheduledActionsInternal) ~= "function" then
+			return {}
+		end
+		local list = listScheduledActionsInternal()
+		return type(list) == "table" and list or {}
+	end
+
+	function RayfieldLibrary:ClearScheduledActions()
+		if type(clearScheduledActionsInternal) ~= "function" then
+			return false, "Automation scheduler unavailable."
+		end
+		return clearScheduledActionsInternal()
+	end
+
+	function RayfieldLibrary:AddAutomationRule(rule)
+		if type(addAutomationRuleInternal) ~= "function" then
+			return false, "Automation rule engine unavailable."
+		end
+		return addAutomationRuleInternal(rule)
+	end
+
+	function RayfieldLibrary:RemoveAutomationRule(ruleId)
+		if type(removeAutomationRuleInternal) ~= "function" then
+			return false, "Automation rule engine unavailable."
+		end
+		return removeAutomationRuleInternal(ruleId)
+	end
+
+	function RayfieldLibrary:ListAutomationRules()
+		if type(listAutomationRulesInternal) ~= "function" then
+			return {}
+		end
+		local list = listAutomationRulesInternal()
+		return type(list) == "table" and list or {}
+	end
+
+	function RayfieldLibrary:SetAutomationRuleEnabled(ruleId, enabled)
+		if type(setAutomationRuleEnabledInternal) ~= "function" then
+			return false, "Automation rule engine unavailable."
+		end
+		return setAutomationRuleEnabledInternal(ruleId, enabled == true)
+	end
+
+	function RayfieldLibrary:EvaluateAutomationRules(eventPayload)
+		if type(evaluateAutomationRulesInternal) ~= "function" then
+			return false, "Automation rule engine unavailable.", 0
+		end
+		return evaluateAutomationRulesInternal(eventPayload)
+	end
+
+	function RayfieldLibrary:RegisterHubMetadata(metadata)
+		if type(registerHubMetadataInternal) ~= "function" then
+			return false, "Hub metadata bridge unavailable."
+		end
+		return registerHubMetadataInternal(metadata)
+	end
+
+	function RayfieldLibrary:GetHubMetadata()
+		if type(getHubMetadataInternal) ~= "function" then
+			return nil
+		end
+		return getHubMetadataInternal()
+	end
+
+	function RayfieldLibrary:SetElementInspectorEnabled(enabled)
+		if type(setElementInspectorEnabledInternal) == "function" then
+			return setElementInspectorEnabledInternal(enabled == true)
+		end
+		return withUIStateMethod("SetElementInspectorEnabled", enabled == true)
+	end
+
+	function RayfieldLibrary:ToggleElementInspector()
+		return withUIStateMethod("ToggleElementInspector")
+	end
+
+	function RayfieldLibrary:IsElementInspectorEnabled()
+		if type(isElementInspectorEnabledInternal) == "function" then
+			return isElementInspectorEnabledInternal() == true
+		end
+		local okValue, value = withUIStateMethod("IsElementInspectorEnabled")
+		if okValue == false and type(value) == "string" then
+			return false
+		end
+		return okValue == true or value == true
+	end
+
+	function RayfieldLibrary:InspectElementAtPointer(anchor)
+		if type(inspectElementAtPointerInternal) ~= "function" then
+			return false, "Inspector unavailable."
+		end
+		return inspectElementAtPointerInternal(anchor)
+	end
+
+	function RayfieldLibrary:OpenLiveThemeEditor(seedDraft)
+		if type(openLiveThemeEditorInternal) ~= "function" then
+			return false, "Live Theme Editor unavailable."
+		end
+		return openLiveThemeEditorInternal(seedDraft)
+	end
+
+	function RayfieldLibrary:CloseLiveThemeEditor()
+		if type(closeLiveThemeEditorInternal) ~= "function" then
+			return false, "Live Theme Editor unavailable."
+		end
+		return closeLiveThemeEditorInternal()
+	end
+
+	function RayfieldLibrary:SetLiveThemeValue(themeKey, color)
+		if type(setLiveThemeValueInternal) ~= "function" then
+			return false, "Live Theme Editor unavailable."
+		end
+		return setLiveThemeValueInternal(themeKey, color)
+	end
+
+	function RayfieldLibrary:GetLiveThemeDraft()
+		if type(getLiveThemeDraftInternal) ~= "function" then
+			return {}
+		end
+		local draft = getLiveThemeDraftInternal()
+		return type(draft) == "table" and draft or {}
+	end
+
+	function RayfieldLibrary:ApplyLiveThemeDraft()
+		if type(applyLiveThemeDraftInternal) ~= "function" then
+			return false, "Live Theme Editor unavailable."
+		end
+		return applyLiveThemeDraftInternal()
+	end
+
+	function RayfieldLibrary:ExportLiveThemeDraftLua()
+		if type(exportLiveThemeLuaInternal) ~= "function" then
+			return false, "Live Theme Editor unavailable."
+		end
+		return exportLiveThemeLuaInternal()
+	end
+
 	local function notifyExperienceStatus(success, message)
 		local uiStateSystem = getUIStateSystem()
 		if uiStateSystem and type(uiStateSystem.Notify) == "function" then
@@ -436,6 +1104,210 @@ function ExperienceBindings.bind(context)
 					return openFavoritesTab(experienceState().favoritesTabWindow)
 				end
 				return false, "Favorites tab unavailable."
+			end,
+			saveWorkspace = function(name)
+				return RayfieldLibrary:SaveWorkspace(name)
+			end,
+			loadWorkspace = function(name)
+				return RayfieldLibrary:LoadWorkspace(name)
+			end,
+			listWorkspaces = function()
+				return RayfieldLibrary:ListWorkspaces()
+			end,
+			deleteWorkspace = function(name)
+				return RayfieldLibrary:DeleteWorkspace(name)
+			end,
+			saveProfile = function(name)
+				return RayfieldLibrary:SaveProfile(name)
+			end,
+			loadProfile = function(name)
+				return RayfieldLibrary:LoadProfile(name)
+			end,
+			listProfiles = function()
+				return RayfieldLibrary:ListProfiles()
+			end,
+			deleteProfile = function(name)
+				return RayfieldLibrary:DeleteProfile(name)
+			end,
+			copyWorkspaceToProfile = function(workspaceName, profileName)
+				return RayfieldLibrary:CopyWorkspaceToProfile(workspaceName, profileName)
+			end,
+			copyProfileToWorkspace = function(profileName, workspaceName)
+				return RayfieldLibrary:CopyProfileToWorkspace(profileName, workspaceName)
+			end,
+			setCommandPaletteExecutionMode = function(mode)
+				return RayfieldLibrary:SetCommandPaletteExecutionMode(mode)
+			end,
+			getCommandPaletteExecutionMode = function()
+				return RayfieldLibrary:GetCommandPaletteExecutionMode()
+			end,
+			setCommandPalettePolicy = function(callback)
+				return RayfieldLibrary:SetCommandPalettePolicy(callback)
+			end,
+			runCommandPaletteItem = function(item, mode)
+				return RayfieldLibrary:RunCommandPaletteItem(item, mode)
+			end,
+			getUnreadNotificationCount = function()
+				return RayfieldLibrary:GetUnreadNotificationCount()
+			end,
+			markAllNotificationsRead = function()
+				return RayfieldLibrary:MarkAllNotificationsRead()
+			end,
+			getNotificationHistoryEx = function(options)
+				return RayfieldLibrary:GetNotificationHistoryEx(options)
+			end,
+			openPerformanceHUD = function()
+				return RayfieldLibrary:OpenPerformanceHUD()
+			end,
+			closePerformanceHUD = function()
+				return RayfieldLibrary:ClosePerformanceHUD()
+			end,
+			togglePerformanceHUD = function()
+				return RayfieldLibrary:TogglePerformanceHUD()
+			end,
+			configurePerformanceHUD = function(options)
+				return RayfieldLibrary:ConfigurePerformanceHUD(options)
+			end,
+			getPerformanceHUDState = function()
+				return RayfieldLibrary:GetPerformanceHUDState()
+			end,
+			registerHUDMetricProvider = function(id, provider, options)
+				return RayfieldLibrary:RegisterHUDMetricProvider(id, provider, options)
+			end,
+			unregisterHUDMetricProvider = function(id)
+				return RayfieldLibrary:UnregisterHUDMetricProvider(id)
+			end,
+			getUsageAnalytics = function(limit)
+				return RayfieldLibrary:GetUsageAnalytics(limit)
+			end,
+			clearUsageAnalytics = function()
+				return RayfieldLibrary:ClearUsageAnalytics()
+			end,
+			startMacroRecording = function(name)
+				return RayfieldLibrary:StartMacroRecording(name)
+			end,
+			stopMacroRecording = function(saveResult)
+				return RayfieldLibrary:StopMacroRecording(saveResult ~= false)
+			end,
+			cancelMacroRecording = function()
+				return RayfieldLibrary:CancelMacroRecording()
+			end,
+			listMacros = function()
+				return RayfieldLibrary:ListMacros()
+			end,
+			executeMacro = function(name, options)
+				return RayfieldLibrary:ExecuteMacro(name, options)
+			end,
+			bindMacro = function(name, keybind)
+				return RayfieldLibrary:BindMacro(name, keybind)
+			end,
+			registerDiscoveryProvider = function(id, provider)
+				return RayfieldLibrary:RegisterDiscoveryProvider(id, provider)
+			end,
+			unregisterDiscoveryProvider = function(id)
+				return RayfieldLibrary:UnregisterDiscoveryProvider(id)
+			end,
+			queryDiscovery = function(query)
+				return RayfieldLibrary:QueryDiscovery(query)
+			end,
+			executePromptCommand = function(text)
+				return RayfieldLibrary:ExecutePromptCommand(text)
+			end,
+			askAssistant = function(prompt, options)
+				return RayfieldLibrary:AskAssistant(prompt, options)
+			end,
+			getAssistantHistory = function()
+				return RayfieldLibrary:GetAssistantHistory()
+			end,
+			sendGlobalSignal = function(command, payload, options)
+				return RayfieldLibrary:SendGlobalSignal(command, payload, options)
+			end,
+			sendInternalChat = function(message, options)
+				return RayfieldLibrary:SendInternalChat(message, options)
+			end,
+			pollBridgeMessages = function(limit, options)
+				return RayfieldLibrary:PollBridgeMessages(limit, options)
+			end,
+			startBridgePolling = function()
+				return RayfieldLibrary:StartBridgePolling()
+			end,
+			stopBridgePolling = function()
+				return RayfieldLibrary:StopBridgePolling()
+			end,
+			getBridgeMessages = function(limit, kind)
+				return RayfieldLibrary:GetBridgeMessages(limit, kind)
+			end,
+			scheduleMacro = function(name, delaySeconds, options)
+				return RayfieldLibrary:ScheduleMacro(name, delaySeconds, options)
+			end,
+			scheduleAction = function(actionSpec, delaySeconds, options)
+				return RayfieldLibrary:ScheduleAction(actionSpec, delaySeconds, options)
+			end,
+			cancelScheduledAction = function(taskId)
+				return RayfieldLibrary:CancelScheduledAction(taskId)
+			end,
+			listScheduledActions = function()
+				return RayfieldLibrary:ListScheduledActions()
+			end,
+			clearScheduledActions = function()
+				return RayfieldLibrary:ClearScheduledActions()
+			end,
+			addAutomationRule = function(rule)
+				return RayfieldLibrary:AddAutomationRule(rule)
+			end,
+			removeAutomationRule = function(ruleId)
+				return RayfieldLibrary:RemoveAutomationRule(ruleId)
+			end,
+			listAutomationRules = function()
+				return RayfieldLibrary:ListAutomationRules()
+			end,
+			setAutomationRuleEnabled = function(ruleId, enabled)
+				return RayfieldLibrary:SetAutomationRuleEnabled(ruleId, enabled == true)
+			end,
+			evaluateAutomationRules = function(eventPayload)
+				return RayfieldLibrary:EvaluateAutomationRules(eventPayload)
+			end,
+			registerHubMetadata = function(metadata)
+				return RayfieldLibrary:RegisterHubMetadata(metadata)
+			end,
+			getHubMetadata = function()
+				return RayfieldLibrary:GetHubMetadata()
+			end,
+			setElementInspectorEnabled = function(enabled)
+				return RayfieldLibrary:SetElementInspectorEnabled(enabled == true)
+			end,
+			toggleElementInspector = function()
+				return RayfieldLibrary:ToggleElementInspector()
+			end,
+			openLiveThemeEditor = function(seedDraft)
+				return RayfieldLibrary:OpenLiveThemeEditor(seedDraft)
+			end,
+			closeLiveThemeEditor = function()
+				return RayfieldLibrary:CloseLiveThemeEditor()
+			end,
+			setLiveThemeValue = function(themeKey, color)
+				return RayfieldLibrary:SetLiveThemeValue(themeKey, color)
+			end,
+			getLiveThemeDraft = function()
+				return RayfieldLibrary:GetLiveThemeDraft()
+			end,
+			applyLiveThemeDraft = function()
+				return RayfieldLibrary:ApplyLiveThemeDraft()
+			end,
+			exportLiveThemeDraftLua = function()
+				return RayfieldLibrary:ExportLiveThemeDraftLua()
+			end,
+			openActionCenter = function()
+				return RayfieldLibrary:OpenActionCenter()
+			end,
+			openCommandPalette = function(seed)
+				return RayfieldLibrary:OpenCommandPalette(seed)
+			end,
+			openSettingsTab = function()
+				if type(openSettingsTabInternal) == "function" then
+					return openSettingsTabInternal()
+				end
+				return false, "Settings tab unavailable."
 			end,
 			showOnboarding = function(force)
 				return RayfieldLibrary:ShowOnboarding(force == true)

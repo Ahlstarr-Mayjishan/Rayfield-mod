@@ -226,7 +226,7 @@ local ExecPolicy = ensureExecPolicyEngine()
 
 -- Loads and executes a function hosted on a remote URL. Cancels the request if the requested URL takes too long to respond.
 -- Errors with the function are caught and logged to the output
-local function loadWithTimeout(url: string, timeout: number?): ...any
+local function loadWithTimeout(url, timeout)
 	assert(type(url) == "string", "Expected string, got " .. type(url))
 	timeout = timeout or 5
 	local opKey = "runtime:loadWithTimeout:" .. tostring(url)
@@ -349,6 +349,12 @@ local settingsTable = {
 	},
 	System = {
 		usageAnalytics = {Type = 'toggle', Value = true, Name = 'Anonymised Analytics'},
+	},
+	Macros = {
+		items = {Type = "hidden", Value = {}, Name = "Recorded Macros"}
+	},
+	Automation = {
+		rules = {Type = "hidden", Value = {}, Name = "Automation Rules"}
 	}
 }
 
@@ -636,6 +642,24 @@ local function optionalModule(moduleName, fallbackModule, hint)
 	return fallbackModule
 end
 
+local function optionalModuleWithContract(moduleName, validatorFn, hint)
+	local ok, result = loadModule(moduleName)
+	if ok and validatorFn and validatorFn(result) then
+		return result
+	end
+	table.insert(loaderDiagnostics.optionalFailed, {
+		module = moduleName,
+		error = ok and "Invalid module contract" or tostring(result)
+	})
+	local message = "Optional module '" .. tostring(moduleName) .. "' failed to load. Feature disabled."
+	if hint then
+		message = message .. " " .. tostring(hint)
+	end
+	local detail = ok and "Invalid module contract" or tostring(result)
+	warn(formatLoaderError("W_OPTIONAL_MODULE", message .. " | " .. detail))
+	return nil
+end
+
 local function maybeNotifyLoaderFallback()
 	if loaderDiagnostics.notified or #loaderDiagnostics.optionalFailed == 0 then
 		return
@@ -806,7 +830,44 @@ local AnimationTextLib = requireModule("animationText")
 local AnimationCleanupLib = requireModule("animationCleanup")
 local VisibilityControllerLib = requireModule("runtimeVisibilityController")
 local ExperienceBindingsLib = requireModule("runtimeExperienceBindings")
+local WorkspaceServiceLib = requireModule("runtimeWorkspaceService")
+local CommandPaletteServiceLib = requireModule("runtimeCommandPaletteService")
+local SmartSearchServiceLib = requireModule("runtimeSmartSearchService")
+local MultiInstanceBridgeServiceLib = requireModule("runtimeMultiInstanceBridgeService")
+local AutomationEngineServiceLib = requireModule("runtimeAutomationEngineService")
+local UsageAnalyticsServiceLib = requireModule("runtimeUsageAnalyticsService")
+local MacroRecorderServiceLib = requireModule("runtimeMacroRecorderService")
+local DevExperienceServiceLib = requireModule("runtimeDevExperienceService")
+local PerformanceHUDServiceLib = requireModule("runtimePerformanceHUDService")
 local RuntimeApiLib = requireModule("runtimeApi")
+local DataGridFactoryModuleLib = nil
+local ChartFactoryModuleLib = nil
+local function resolveDataGridFactoryModule()
+	if type(DataGridFactoryModuleLib) == "table" and type(DataGridFactoryModuleLib.create) == "function" then
+		return DataGridFactoryModuleLib
+	end
+	DataGridFactoryModuleLib = optionalModuleWithContract(
+		"elementsDataGridFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"DataGrid elements will be unavailable."
+	)
+	return DataGridFactoryModuleLib
+end
+local function resolveChartFactoryModule()
+	if type(ChartFactoryModuleLib) == "table" and type(ChartFactoryModuleLib.create) == "function" then
+		return ChartFactoryModuleLib
+	end
+	ChartFactoryModuleLib = optionalModuleWithContract(
+		"elementsChartFactory",
+		function(moduleValue)
+			return type(moduleValue) == "table" and type(moduleValue.create) == "function"
+		end,
+		"Chart elements will be unavailable."
+	)
+	return ChartFactoryModuleLib
+end
 
 -- Services
 local UserInputService = getService("UserInputService")
@@ -1034,6 +1095,7 @@ local ExperienceState = {
 }
 local experienceSuppressPromoPrompts = false
 local favoritesRegistryUnsubscribe = nil
+local ExperienceBindings = nil
 local uiToggleKeybindMatcher = KeybindSequenceLib.newMatcher({
 	maxSteps = 4,
 	stepTimeoutMs = 800
@@ -1345,6 +1407,22 @@ local function makeElementDetachable(guiObject, elementName, elementType)
 	return DragSystem.makeElementDetachable(guiObject, elementName, elementType)
 end
 
+local openSettingsTabFromTopbar = nil
+local commandPaletteQueryProvider = nil
+local commandPaletteSelector = nil
+local toggleAudioFeedbackFromUi = nil
+local togglePinBadgesFromUi = nil
+local toggleVisibilityFromUi = nil
+local getPinBadgesVisibleFromUi = nil
+local togglePerformanceHUDFromUi = nil
+local openPerformanceHUDFromUi = nil
+local closePerformanceHUDFromUi = nil
+local setVisibility = nil
+local commandPaletteConfirmationState = {
+	key = "",
+	expiresAt = 0
+}
+
 -- Initialize UI State Module
 local UIStateSystem = UIStateModuleLib.init({
 	TweenService = TweenService,
@@ -1365,8 +1443,102 @@ local UIStateSystem = UIStateModuleLib.init({
 	getSelectedTheme = function() return SelectedTheme end,
 	rayfieldDestroyed = function() return rayfieldDestroyed end,
 	getSetting = getSetting,
+	UserInputService = UserInputService,
 	useMobileSizing = useMobileSizing,
-	useMobilePrompt = useMobilePrompt
+	useMobilePrompt = useMobilePrompt,
+	onOpenSettingsTab = function()
+		if type(openSettingsTabFromTopbar) == "function" then
+			return openSettingsTabFromTopbar()
+		end
+		return false, "Settings handler unavailable."
+	end,
+	onCommandPaletteQuery = function(query)
+		if type(commandPaletteQueryProvider) == "function" then
+			return commandPaletteQueryProvider(query)
+		end
+		return {}
+	end,
+	onCommandPaletteSelect = function(item, mode, options)
+		if type(commandPaletteSelector) == "function" then
+			return commandPaletteSelector(item, mode, options)
+		end
+		return false, "Command handler unavailable."
+	end,
+	onToggleAudioFeedback = function()
+		if type(toggleAudioFeedbackFromUi) == "function" then
+			return toggleAudioFeedbackFromUi()
+		end
+		return false, "Audio handler unavailable."
+	end,
+	onTogglePinBadges = function()
+		if type(togglePinBadgesFromUi) == "function" then
+			return togglePinBadgesFromUi()
+		end
+		return false, "Pin badge handler unavailable."
+	end,
+	onToggleVisibility = function()
+		if type(toggleVisibilityFromUi) == "function" then
+			return toggleVisibilityFromUi()
+		end
+		return false, "Visibility handler unavailable."
+	end,
+	onTogglePerformanceHUD = function()
+		if type(togglePerformanceHUDFromUi) == "function" then
+			return togglePerformanceHUDFromUi()
+		end
+		return false, "Performance HUD handler unavailable."
+	end,
+	onOpenPerformanceHUD = function()
+		if type(openPerformanceHUDFromUi) == "function" then
+			return openPerformanceHUDFromUi()
+		end
+		return false, "Performance HUD handler unavailable."
+	end,
+	onClosePerformanceHUD = function()
+		if type(closePerformanceHUDFromUi) == "function" then
+			return closePerformanceHUDFromUi()
+		end
+		return false, "Performance HUD handler unavailable."
+	end,
+	getAudioFeedbackEnabled = function()
+		return ExperienceState and ExperienceState.audioState and ExperienceState.audioState.enabled == true
+	end,
+	getPinBadgesVisible = function()
+		if type(getPinBadgesVisibleFromUi) == "function" then
+			return getPinBadgesVisibleFromUi()
+		end
+		return nil
+	end,
+	setElementInspectorEnabled = function(enabled)
+		if type(setElementInspectorEnabledInternal) == "function" then
+			local okSet, setResult = pcall(setElementInspectorEnabledInternal, enabled == true)
+			if okSet and setResult ~= false then
+				if type(isElementInspectorEnabledInternal) == "function" then
+					local okValue, value = pcall(isElementInspectorEnabledInternal)
+					if okValue then
+						return value == true
+					end
+				end
+				return enabled == true
+			end
+		end
+		return false
+	end,
+	getElementInspectorEnabled = function()
+		if type(isElementInspectorEnabledInternal) == "function" then
+			local okValue, value = pcall(isElementInspectorEnabledInternal)
+			if okValue then
+				return value == true
+			end
+		end
+		return false
+	end,
+	inspectElementAtPointer = function(anchor)
+		if type(inspectElementAtPointerInternal) == "function" then
+			return inspectElementAtPointerInternal(anchor)
+		end
+		return false, "Element inspector unavailable."
+	end
 })
 
 local TabSplitSystem = nil
@@ -1438,7 +1610,7 @@ local function Minimise()
 end
 
 -- Converts ID to asset URI. Returns rbxassetid://0 if ID is not a number
-local function getAssetUri(id: any): string
+local function getAssetUri(id)
 	return UtilitiesSystem and UtilitiesSystem.getAssetUri(id, Icons) or ("rbxassetid://" .. (type(id) == "number" and id or 0))
 end
 
@@ -2691,6 +2863,1019 @@ local function openFavoritesTab(windowRef)
 	return true, "Favorites tab opened."
 end
 
+local listWorkspacesInternal = nil
+local saveWorkspaceInternal = nil
+local loadWorkspaceInternal = nil
+local deleteWorkspaceInternal = nil
+local listProfilesInternal = nil
+local saveProfileInternal = nil
+local loadProfileInternal = nil
+local deleteProfileInternal = nil
+local copyWorkspaceToProfileInternal = nil
+local copyProfileToWorkspaceInternal = nil
+local setCommandPaletteExecutionModeInternal = nil
+local getCommandPaletteExecutionModeInternal = nil
+local setCommandPalettePolicyInternal = nil
+local runCommandPaletteItemInternal = nil
+local openPerformanceHUDInternal = nil
+local closePerformanceHUDInternal = nil
+local togglePerformanceHUDInternal = nil
+local configurePerformanceHUDInternal = nil
+local getPerformanceHUDStateInternal = nil
+local registerHUDMetricProviderInternal = nil
+local unregisterHUDMetricProviderInternal = nil
+local getUsageAnalyticsInternal = nil
+local clearUsageAnalyticsInternal = nil
+local startMacroRecordingInternal = nil
+local stopMacroRecordingInternal = nil
+local cancelMacroRecordingInternal = nil
+local isMacroRecordingInternal = nil
+local isMacroExecutingInternal = nil
+local listMacrosInternal = nil
+local deleteMacroInternal = nil
+local executeMacroInternal = nil
+local bindMacroInternal = nil
+local triggerMacroByKeybindInternal = nil
+local registerHubMetadataInternal = nil
+local getHubMetadataInternal = nil
+local setElementInspectorEnabledInternal = nil
+local isElementInspectorEnabledInternal = nil
+local inspectElementAtPointerInternal = nil
+local openLiveThemeEditorInternal = nil
+local setLiveThemeValueInternal = nil
+local applyLiveThemeDraftInternal = nil
+local exportLiveThemeLuaInternal = nil
+local registerDiscoveryProviderInternal = nil
+local unregisterDiscoveryProviderInternal = nil
+local queryDiscoveryInternal = nil
+local executePromptCommandInternal = nil
+local askAssistantInternal = nil
+local getAssistantHistoryInternal = nil
+local sendGlobalSignalInternal = nil
+local sendInternalChatInternal = nil
+local pollBridgeMessagesInternal = nil
+local startBridgePollingInternal = nil
+local stopBridgePollingInternal = nil
+local getBridgeMessagesInternal = nil
+local scheduleMacroInternal = nil
+local scheduleAutomationActionInternal = nil
+local cancelScheduledActionInternal = nil
+local listScheduledActionsInternal = nil
+local clearScheduledActionsInternal = nil
+local addAutomationRuleInternal = nil
+local removeAutomationRuleInternal = nil
+local listAutomationRulesInternal = nil
+local setAutomationRuleEnabledInternal = nil
+local evaluateAutomationRulesInternal = nil
+
+local UsageAnalyticsService = UsageAnalyticsServiceLib.create({
+	getSetting = getSetting,
+	cloneValue = cloneValue
+})
+
+local MacroRecorderService = MacroRecorderServiceLib.create({
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	cloneValue = cloneValue,
+	onPersist = function()
+		if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+			pcall(SettingsSystem.saveSettings)
+		end
+	end,
+	onMacroExecuted = function(name, completedSteps)
+		if UsageAnalyticsService and type(UsageAnalyticsService.trackMacroUsage) == "function" then
+			pcall(UsageAnalyticsService.trackMacroUsage, {
+				name = name,
+				steps = completedSteps
+			})
+		end
+	end
+})
+
+local DevExperienceService = DevExperienceServiceLib.create({
+	cloneValue = cloneValue,
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	applyThemeStudioTheme = function(themeTable)
+		return RayfieldLibrary:ApplyThemeStudioTheme(themeTable)
+	end,
+	getThemeStudioState = function()
+		return RayfieldLibrary:GetThemeStudioState()
+	end,
+	getThemeStudioColor = function(themeKey)
+		return getThemeStudioColor(themeKey)
+	end,
+	getThemeStudioKeys = function()
+		return cloneArray(THEME_STUDIO_KEYS)
+	end,
+	packedToColor3 = packedToColor3
+})
+
+local bridgeNotifyEnabled = not (type(_G) == "table" and _G.__RAYFIELD_MULTI_BRIDGE_NOTIFY == false)
+local MultiInstanceBridgeService = MultiInstanceBridgeServiceLib.create({
+	HttpService = HttpService,
+	cloneValue = cloneValue,
+	notify = function(data)
+		if bridgeNotifyEnabled and type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify(data)
+		end
+	end,
+	onMessage = function(envelope)
+		if type(envelope) ~= "table" then
+			return
+		end
+		local kind = tostring(envelope.kind or "")
+		local payload = type(envelope.payload) == "table" and envelope.payload or {}
+
+		if kind == "chat" then
+			if bridgeNotifyEnabled and type(RayfieldLibrary.Notify) == "function" then
+				RayfieldLibrary:Notify({
+					Title = "Bridge Chat",
+					Content = string.format("%s: %s", tostring(envelope.from or "peer"), tostring(payload.text or "")),
+					Duration = 4
+				})
+			end
+		elseif kind == "signal" then
+			local command = tostring(payload.command or "")
+			if command == "toggle_ui" then
+				RayfieldLibrary:SetVisibility(not RayfieldLibrary:IsVisible())
+			elseif command == "open_action_center" then
+				RayfieldLibrary:OpenActionCenter()
+			elseif command == "open_settings" and type(openSettingsTabFromTopbar) == "function" then
+				pcall(openSettingsTabFromTopbar)
+			elseif command == "run_macro" and type(executeMacroInternal) == "function" then
+				local data = type(payload.data) == "table" and payload.data or payload
+				local macroName = tostring(data.name or data.macro or "")
+				if macroName ~= "" then
+					pcall(executeMacroInternal, macroName, {
+						respectDelay = false
+					})
+				end
+			end
+		end
+
+		if type(_G) == "table" and type(_G.__RAYFIELD_GLOBAL_SIGNAL_HANDLER) == "function" then
+			pcall(_G.__RAYFIELD_GLOBAL_SIGNAL_HANDLER, cloneValue(envelope))
+		end
+	end
+})
+
+sendGlobalSignalInternal = function(command, payload, options)
+	return MultiInstanceBridgeService.sendSignal(command, payload, options)
+end
+
+sendInternalChatInternal = function(message, options)
+	return MultiInstanceBridgeService.sendChat(message, options)
+end
+
+pollBridgeMessagesInternal = function(limit, options)
+	return MultiInstanceBridgeService.poll(limit, options)
+end
+
+startBridgePollingInternal = function()
+	return MultiInstanceBridgeService.startPolling()
+end
+
+stopBridgePollingInternal = function()
+	return MultiInstanceBridgeService.stopPolling()
+end
+
+getBridgeMessagesInternal = function(limit, kind)
+	return MultiInstanceBridgeService.listMessages(limit, kind)
+end
+
+if type(_G) == "table" and _G.__RAYFIELD_MULTI_BRIDGE_AUTO_POLL == true then
+	pcall(startBridgePollingInternal)
+end
+
+local function normalizeDiscoveryEntries(rawItems, providerName, queryLower)
+	local out = {}
+	for _, raw in ipairs(type(rawItems) == "table" and rawItems or {}) do
+		local entry = nil
+		if type(raw) == "string" then
+			entry = {
+				id = string.format("%s:%s", tostring(providerName), tostring(raw)),
+				name = tostring(raw),
+				type = tostring(providerName)
+			}
+		elseif type(raw) == "table" then
+			entry = {
+				id = tostring(raw.id or raw.key or raw.name or ""),
+				name = tostring(raw.name or raw.label or raw.title or raw.id or "result"),
+				type = tostring(raw.type or providerName),
+				tabId = tostring(raw.tabId or ""),
+				controlId = tostring(raw.controlId or ""),
+				matchScore = tonumber(raw.matchScore),
+				searchText = tostring(raw.searchText or raw.alias or raw.name or raw.id or "")
+			}
+			if entry.id == "" then
+				entry.id = string.format("%s:%s", tostring(providerName), tostring(entry.name))
+			end
+		end
+		if entry then
+			entry.searchText = tostring(entry.searchText or entry.name or "")
+			local searchLower = string.lower(entry.searchText)
+			if queryLower == "" or string.find(searchLower, queryLower, 1, true) ~= nil then
+				table.insert(out, entry)
+			end
+		end
+	end
+	return out
+end
+
+local function buildDefaultDiscoveryProviders()
+	return {
+		game_api = function(queryText, queryLower)
+			local globalApi = type(_G) == "table" and _G.__RAYFIELD_GAME_DISCOVERY_API or nil
+			local out = {}
+			local function appendEntries(rawItems, providerName)
+				local normalized = normalizeDiscoveryEntries(rawItems, providerName, queryLower)
+				for _, item in ipairs(normalized) do
+					table.insert(out, item)
+				end
+			end
+
+			if type(globalApi) == "function" then
+				local okCall, items = pcall(globalApi, queryText, queryLower)
+				if okCall then
+					appendEntries(items, "game")
+				end
+			elseif type(globalApi) == "table" then
+				if type(globalApi.search) == "function" then
+					local okSearch, items = pcall(globalApi.search, queryText, queryLower)
+					if okSearch then
+						appendEntries(items, "game")
+					end
+				end
+				if type(globalApi.searchItems) == "function" then
+					local okItems, items = pcall(globalApi.searchItems, queryText, queryLower)
+					if okItems then
+						appendEntries(items, "item")
+					end
+				end
+				if type(globalApi.searchLocations) == "function" then
+					local okLocations, items = pcall(globalApi.searchLocations, queryText, queryLower)
+					if okLocations then
+						appendEntries(items, "location")
+					end
+				end
+			end
+			return out
+		end
+	}
+end
+
+local SmartSearchService = SmartSearchServiceLib.create({
+	cloneValue = cloneValue,
+	HttpService = HttpService,
+	requestFn = requestFunc,
+	notify = function(data)
+		if type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify(data)
+		end
+	end,
+	applyThemeColor = function(accentColor)
+		return RayfieldLibrary:ApplyThemeStudioTheme({
+			SliderBackground = accentColor,
+			SliderProgress = accentColor,
+			SliderStroke = accentColor,
+			ToggleEnabled = accentColor,
+			ToggleEnabledStroke = accentColor,
+			ToggleEnabledOuterStroke = accentColor,
+			TabBackgroundSelected = accentColor
+		})
+	end,
+	toggleVisibility = function()
+		if type(toggleVisibilityFromUi) == "function" then
+			return toggleVisibilityFromUi()
+		end
+		RayfieldLibrary:SetVisibility(not RayfieldLibrary:IsVisible())
+		return true, "Interface visibility toggled."
+	end,
+	openSettings = function()
+		if type(openSettingsTabFromTopbar) == "function" then
+			return openSettingsTabFromTopbar()
+		end
+		return false, "Settings tab unavailable."
+	end,
+	openFavorites = function()
+		return openFavoritesTab(ExperienceState.favoritesTabWindow)
+	end,
+	openActionCenter = function()
+		return RayfieldLibrary:OpenActionCenter()
+	end,
+	sendGlobalSignal = function(command, payload, options)
+		if type(sendGlobalSignalInternal) == "function" then
+			return sendGlobalSignalInternal(command, payload, options)
+		end
+		return false, "Global signal bridge unavailable."
+	end,
+	sendInternalChat = function(text, options)
+		if type(sendInternalChatInternal) == "function" then
+			return sendInternalChatInternal(text, options)
+		end
+		return false, "Internal chat bridge unavailable."
+	end,
+	scheduleMacro = function(name, delaySeconds, options)
+		if type(scheduleMacroInternal) == "function" then
+			return scheduleMacroInternal(name, delaySeconds, options)
+		end
+		return false, "Automation scheduler unavailable."
+	end,
+	registerDiscoveryProvider = buildDefaultDiscoveryProviders
+})
+
+registerDiscoveryProviderInternal = function(id, provider)
+	return SmartSearchService.registerProvider(id, provider)
+end
+
+unregisterDiscoveryProviderInternal = function(id)
+	return SmartSearchService.unregisterProvider(id)
+end
+
+queryDiscoveryInternal = function(query)
+	return SmartSearchService.queryDiscovery(query)
+end
+
+executePromptCommandInternal = function(rawText)
+	return SmartSearchService.executePromptCommand(rawText)
+end
+
+askAssistantInternal = function(prompt, options)
+	return SmartSearchService.askAssistant(prompt, options)
+end
+
+getAssistantHistoryInternal = function()
+	return SmartSearchService.getAiHistory()
+end
+
+getUsageAnalyticsInternal = function(limit)
+	return UsageAnalyticsService.getSnapshot(limit)
+end
+
+clearUsageAnalyticsInternal = function()
+	return UsageAnalyticsService.clear()
+end
+
+startMacroRecordingInternal = function(name)
+	return MacroRecorderService.startRecording(name)
+end
+
+stopMacroRecordingInternal = function(saveResult)
+	return MacroRecorderService.stopRecording(saveResult ~= false)
+end
+
+cancelMacroRecordingInternal = function()
+	return MacroRecorderService.cancelRecording()
+end
+
+isMacroRecordingInternal = function()
+	return MacroRecorderService.isRecording()
+end
+
+isMacroExecutingInternal = function()
+	if type(MacroRecorderService.isExecuting) == "function" then
+		return MacroRecorderService.isExecuting()
+	end
+	return false
+end
+
+listMacrosInternal = function()
+	return MacroRecorderService.listMacros()
+end
+
+deleteMacroInternal = function(name)
+	return MacroRecorderService.deleteMacro(name)
+end
+
+executeMacroInternal = function(name, options)
+	return MacroRecorderService.executeMacro(name, {
+		executeStep = function(step)
+			if type(step) ~= "table" then
+				return true
+			end
+			local action = tostring(step.action or "")
+			if action == "control" then
+				local controlId = tostring(step.controlId or "")
+				if controlId == "" then
+					return false, "Macro step missing controlId."
+				end
+				if ElementsSystem and type(ElementsSystem.getControlRecordById) == "function" then
+					local record = ElementsSystem.getControlRecordById(controlId)
+					if record then
+						if ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+							ElementsSystem.activateTabByPersistenceId(record.TabPersistenceId, true, "macro")
+						end
+						local elementObject = record.ElementObject
+						if type(elementObject) == "table" and type(elementObject.Set) == "function" and step.value ~= nil then
+							elementObject:Set(step.value)
+						end
+						local interaction = tostring(step.interaction or "")
+						if interaction == "click" or interaction == "touch" then
+							local guiObject = record.GuiObject
+							local interactButton = guiObject and guiObject:FindFirstChild("Interact")
+							if interactButton and interactButton:IsA("GuiButton") then
+								pcall(function()
+									interactButton:Activate()
+								end)
+							end
+						end
+						return true
+					end
+				end
+				return false, "Control not found for macro step."
+			elseif action == "toggle_visibility" then
+				RayfieldLibrary:SetVisibility(not RayfieldLibrary:IsVisible())
+				return true
+			elseif action == "open_action_center" then
+				return RayfieldLibrary:OpenActionCenter()
+			elseif action == "open_settings" then
+				if type(openSettingsTabFromTopbar) == "function" then
+					return openSettingsTabFromTopbar()
+				end
+				return false, "Settings tab unavailable."
+			end
+			return true
+		end
+	}, options)
+end
+
+bindMacroInternal = function(name, keybind)
+	return MacroRecorderService.bindMacro(name, keybind)
+end
+
+triggerMacroByKeybindInternal = function(keybind, options)
+	return MacroRecorderService.triggerByKeybind(keybind, {
+		executeStep = function(step)
+			if type(step) ~= "table" then
+				return true
+			end
+			local action = tostring(step.action or "")
+			if action == "control" then
+				local controlId = tostring(step.controlId or "")
+				if controlId == "" then
+					return false, "Macro step missing controlId."
+				end
+				if ElementsSystem and type(ElementsSystem.getControlRecordById) == "function" then
+					local record = ElementsSystem.getControlRecordById(controlId)
+					if record then
+						if ElementsSystem and type(ElementsSystem.activateTabByPersistenceId) == "function" then
+							ElementsSystem.activateTabByPersistenceId(record.TabPersistenceId, true, "macro")
+						end
+						local elementObject = record.ElementObject
+						if type(elementObject) == "table" and type(elementObject.Set) == "function" and step.value ~= nil then
+							elementObject:Set(step.value)
+						end
+						local interaction = tostring(step.interaction or "")
+						if interaction == "click" or interaction == "touch" then
+							local guiObject = record.GuiObject
+							local interactButton = guiObject and guiObject:FindFirstChild("Interact")
+							if interactButton and interactButton:IsA("GuiButton") then
+								pcall(function()
+									interactButton:Activate()
+								end)
+							end
+						end
+						return true
+					end
+				end
+				return false, "Control not found for macro step."
+			end
+			return true
+		end
+	}, options)
+end
+
+registerHubMetadataInternal = function(metadata)
+	return DevExperienceService.registerHubMetadata(metadata)
+end
+
+getHubMetadataInternal = function()
+	return DevExperienceService.getHubMetadata()
+end
+
+setElementInspectorEnabledInternal = function(enabled)
+	return DevExperienceService.setInspectorEnabled(enabled == true)
+end
+
+isElementInspectorEnabledInternal = function()
+	return DevExperienceService.isInspectorEnabled()
+end
+
+inspectElementAtPointerInternal = function(anchor)
+	return DevExperienceService.inspectAtPointer(anchor)
+end
+
+openLiveThemeEditorInternal = function(seedDraft)
+	return DevExperienceService.openLiveThemeEditor(seedDraft)
+end
+
+setLiveThemeValueInternal = function(themeKey, color)
+	return DevExperienceService.setLiveThemeValue(themeKey, color)
+end
+
+applyLiveThemeDraftInternal = function()
+	return DevExperienceService.applyLiveThemeDraft()
+end
+
+exportLiveThemeLuaInternal = function()
+	return DevExperienceService.exportLiveThemeDraftLua()
+end
+
+local AutomationEngineService = AutomationEngineServiceLib.create({
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	cloneValue = cloneValue,
+	executeMacro = function(name, options)
+		if type(executeMacroInternal) ~= "function" then
+			return false, "Macro executor unavailable."
+		end
+		return executeMacroInternal(name, options)
+	end,
+	executeCommand = function(actionName, payload, options)
+		local action = tostring(actionName or "")
+		if action == "" then
+			return false, "Command action is required."
+		end
+		if type(commandPaletteSelector) == "function" then
+			local item = type(payload) == "table" and cloneValue(payload) or {}
+			item.action = action
+			item.name = tostring(item.name or action)
+			local forcedMode = type(options) == "table" and options.mode or nil
+			return commandPaletteSelector(item, forcedMode, options)
+		end
+		if action == "toggle_visibility" then
+			RayfieldLibrary:SetVisibility(not RayfieldLibrary:IsVisible())
+			return true, "Interface visibility toggled."
+		end
+		if action == "open_action_center" then
+			return RayfieldLibrary:OpenActionCenter()
+		end
+		if action == "open_settings" and type(openSettingsTabFromTopbar) == "function" then
+			return openSettingsTabFromTopbar()
+		end
+		return false, "Command executor unavailable for action: " .. action
+	end,
+	notify = function(data)
+		if type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify(data)
+		end
+	end,
+	onEvent = function(kind, payload)
+		if kind == "macro" and UsageAnalyticsService and type(UsageAnalyticsService.trackMacroUsage) == "function" then
+			pcall(UsageAnalyticsService.trackMacroUsage, {
+				name = tostring(payload and payload.name or "automation"),
+				steps = 0
+			})
+		elseif kind == "command" and UsageAnalyticsService and type(UsageAnalyticsService.trackCommandUsage) == "function" then
+			pcall(UsageAnalyticsService.trackCommandUsage, {
+				action = tostring(payload and payload.action or "automation"),
+				name = tostring(payload and payload.action or "automation")
+			})
+		end
+	end,
+	onPersist = function()
+		if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+			pcall(SettingsSystem.saveSettings)
+		end
+	end
+})
+
+scheduleMacroInternal = function(name, delaySeconds, options)
+	return AutomationEngineService.scheduleMacro(name, delaySeconds, options)
+end
+
+scheduleAutomationActionInternal = function(actionSpec, delaySeconds, options)
+	return AutomationEngineService.scheduleAction(actionSpec, delaySeconds, options)
+end
+
+cancelScheduledActionInternal = function(taskId)
+	return AutomationEngineService.cancelScheduled(taskId)
+end
+
+listScheduledActionsInternal = function()
+	return AutomationEngineService.listScheduled()
+end
+
+clearScheduledActionsInternal = function()
+	return AutomationEngineService.clearScheduled()
+end
+
+addAutomationRuleInternal = function(rule)
+	return AutomationEngineService.addRule(rule)
+end
+
+removeAutomationRuleInternal = function(ruleId)
+	return AutomationEngineService.removeRule(ruleId)
+end
+
+listAutomationRulesInternal = function()
+	return AutomationEngineService.listRules()
+end
+
+setAutomationRuleEnabledInternal = function(ruleId, enabled)
+	return AutomationEngineService.setRuleEnabled(ruleId, enabled)
+end
+
+evaluateAutomationRulesInternal = function(eventPayload)
+	return AutomationEngineService.evaluateRules(eventPayload)
+end
+
+local WorkspaceService = WorkspaceServiceLib.create({
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	settingsSystem = SettingsSystem,
+	buildGeneratedAtStamp = buildGeneratedAtStamp,
+	cloneValue = cloneValue,
+	onRestoreAfterLoad = function()
+		if ExperienceBindings and type(ExperienceBindings.restoreFromSettings) == "function" then
+			pcall(ExperienceBindings.restoreFromSettings, ExperienceState.favoritesTabWindow)
+		end
+		if type(renderFavoritesTab) == "function" then
+			renderFavoritesTab()
+		end
+	end,
+	onPersist = function()
+		if SettingsSystem and type(SettingsSystem.saveSettings) == "function" then
+			pcall(SettingsSystem.saveSettings)
+		end
+	end
+})
+
+listWorkspacesInternal = function()
+	return WorkspaceService.listWorkspaces()
+end
+
+saveWorkspaceInternal = function(name)
+	return WorkspaceService.saveWorkspace(name)
+end
+
+loadWorkspaceInternal = function(name)
+	return WorkspaceService.loadWorkspace(name)
+end
+
+deleteWorkspaceInternal = function(name)
+	return WorkspaceService.deleteWorkspace(name)
+end
+
+listProfilesInternal = function()
+	return WorkspaceService.listProfiles()
+end
+
+saveProfileInternal = function(name)
+	return WorkspaceService.saveProfile(name)
+end
+
+loadProfileInternal = function(name)
+	return WorkspaceService.loadProfile(name)
+end
+
+deleteProfileInternal = function(name)
+	return WorkspaceService.deleteProfile(name)
+end
+
+copyWorkspaceToProfileInternal = function(workspaceName, profileName)
+	return WorkspaceService.copyWorkspaceToProfile(workspaceName, profileName)
+end
+
+copyProfileToWorkspaceInternal = function(profileName, workspaceName)
+	return WorkspaceService.copyProfileToWorkspace(profileName, workspaceName)
+end
+
+local PerformanceHUDService = PerformanceHUDServiceLib.create({
+	Main = Main,
+	UserInputService = UserInputService,
+	getRuntimeDiagnostics = function()
+		if type(RayfieldLibrary.GetRuntimeDiagnostics) == "function" then
+			local okDiag, diagnostics = pcall(RayfieldLibrary.GetRuntimeDiagnostics, RayfieldLibrary)
+			if okDiag and type(diagnostics) == "table" then
+				return diagnostics
+			end
+		end
+		return {}
+	end,
+	getVisibilityState = function()
+		return {
+			hidden = Hidden == true,
+			minimized = Minimised == true
+		}
+	end,
+	getMacroState = function()
+		return {
+			recording = type(isMacroRecordingInternal) == "function" and isMacroRecordingInternal() == true or false,
+			executing = type(isMacroExecutingInternal) == "function" and isMacroExecutingInternal() == true or false
+		}
+	end,
+	getAutomationSummary = function()
+		local scheduled = type(listScheduledActionsInternal) == "function" and listScheduledActionsInternal() or {}
+		local rules = type(listAutomationRulesInternal) == "function" and listAutomationRulesInternal() or {}
+		return {
+			scheduled = type(scheduled) == "table" and #scheduled or 0,
+			rules = type(rules) == "table" and #rules or 0
+		}
+	end
+})
+
+openPerformanceHUDInternal = function()
+	return PerformanceHUDService.open()
+end
+
+closePerformanceHUDInternal = function()
+	return PerformanceHUDService.close()
+end
+
+togglePerformanceHUDInternal = function()
+	return PerformanceHUDService.toggle()
+end
+
+configurePerformanceHUDInternal = function(options)
+	return PerformanceHUDService.configure(options)
+end
+
+getPerformanceHUDStateInternal = function()
+	return PerformanceHUDService.getState()
+end
+
+registerHUDMetricProviderInternal = function(id, provider, options)
+	return PerformanceHUDService.registerProvider(id, provider, options)
+end
+
+unregisterHUDMetricProviderInternal = function(id)
+	return PerformanceHUDService.unregisterProvider(id)
+end
+
+local CommandPaletteService = CommandPaletteServiceLib.create({
+	getElementsSystem = function()
+		return ElementsSystem
+	end,
+	usageAnalytics = UsageAnalyticsService,
+	queryDiscovery = function(query)
+		if type(queryDiscoveryInternal) == "function" then
+			return queryDiscoveryInternal(query)
+		end
+		return {}
+	end,
+	parsePromptCommand = function(rawText)
+		if SmartSearchService and type(SmartSearchService.parsePromptCommand) == "function" then
+			return SmartSearchService.parsePromptCommand(rawText)
+		end
+		return nil
+	end,
+	executePromptCommand = function(rawText, parsedCommand)
+		if SmartSearchService and type(SmartSearchService.executePromptCommand) == "function" then
+			return SmartSearchService.executePromptCommand(rawText, parsedCommand)
+		end
+		return false, "Prompt command service unavailable."
+	end,
+	selectDiscoveryItem = function(item)
+		if type(item) ~= "table" then
+			return false, "Discovery item is invalid."
+		end
+		if type(item.onSelect) == "function" then
+			return item.onSelect(item)
+		end
+		if tostring(item.controlId or "") ~= "" and ElementsSystem and type(ElementsSystem.getControlRecordById) == "function" then
+			local record = ElementsSystem.getControlRecordById(tostring(item.controlId))
+			if record then
+				if type(ElementsSystem.activateTabByPersistenceId) == "function" then
+					ElementsSystem.activateTabByPersistenceId(record.TabPersistenceId, true, "discovery")
+				end
+				if type(highlightFavoriteControl) == "function" then
+					highlightFavoriteControl(record)
+				end
+				return true, "Opened discovery control: " .. tostring(item.name or item.controlId)
+			end
+		end
+		if type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify({
+				Title = "Discovery",
+				Content = tostring(item.name or item.id or "Selected discovery entry."),
+				Duration = 3
+			})
+		end
+		return true, "Discovery entry selected."
+	end,
+	getExperienceState = function()
+		return ExperienceState
+	end,
+	getSetting = getSetting,
+	setSettingValue = setSettingValue,
+	setAudioFeedbackEnabled = setAudioFeedbackEnabledInternal,
+	setVisibility = function(visibility, notify)
+		if VisibilityController and type(VisibilityController.SetVisibility) == "function" then
+			return VisibilityController.SetVisibility(visibility, notify)
+		end
+		return false, "Visibility handler unavailable."
+	end,
+	getHidden = function()
+		return Hidden == true
+	end,
+	getUseMobileSizing = function()
+		return useMobileSizing == true
+	end,
+	openFavoritesTab = openFavoritesTab,
+	getFavoritesTabWindow = function()
+		return ExperienceState.favoritesTabWindow
+	end,
+	highlightFavoriteControl = highlightFavoriteControl,
+	getSettingsPage = function()
+		return Elements and Elements:FindFirstChild("Rayfield Settings")
+	end,
+	jumpToSettingsPage = function(page)
+		Elements.UIPageLayout:JumpTo(page)
+	end,
+	notify = function(data)
+		RayfieldLibrary:Notify(data)
+	end,
+	openActionCenter = function()
+		return RayfieldLibrary:OpenActionCenter()
+	end,
+	openPerformanceHUD = function()
+		return openPerformanceHUDInternal()
+	end,
+	closePerformanceHUD = function()
+		return closePerformanceHUDInternal()
+	end,
+	togglePerformanceHUD = function()
+		return togglePerformanceHUDInternal()
+	end,
+	confirmCommandPaletteItem = function(item)
+		local key = tostring(type(item) == "table" and (item.id or item.action or item.name) or "")
+		local nowTime = os.clock()
+		if key ~= "" and commandPaletteConfirmationState.key == key and nowTime <= commandPaletteConfirmationState.expiresAt then
+			commandPaletteConfirmationState.key = ""
+			commandPaletteConfirmationState.expiresAt = 0
+			return true
+		end
+		commandPaletteConfirmationState.key = key
+		commandPaletteConfirmationState.expiresAt = nowTime + 4
+		if type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify({
+				Title = "Command Palette Confirmation",
+				Content = "Repeat Alt+Enter within 4 seconds to confirm, or use Shift+Enter to execute now.",
+				Duration = 4
+			})
+		end
+		return false, "Confirmation pending."
+	end,
+	exportSettings = function()
+		return RayfieldLibrary:ExportSettings()
+	end,
+	importSettings = function()
+		return RayfieldLibrary:ImportSettings()
+	end,
+	recordMacroStep = function(step)
+		if MacroRecorderService and type(MacroRecorderService.isRecording) == "function" and MacroRecorderService.isRecording() then
+			pcall(MacroRecorderService.recordStep, step)
+		end
+	end,
+	listMacros = function()
+		if MacroRecorderService and type(MacroRecorderService.listMacros) == "function" then
+			return MacroRecorderService.listMacros()
+		end
+		return {}
+	end,
+	startMacroRecording = function(name)
+		return startMacroRecordingInternal(name)
+	end,
+	stopMacroRecording = function(saveResult)
+		return stopMacroRecordingInternal(saveResult ~= false)
+	end,
+	executeMacro = function(name)
+		return executeMacroInternal(name)
+	end,
+	sendGlobalSignal = function(command, payload, options)
+		return sendGlobalSignalInternal(command, payload, options)
+	end,
+	sendInternalChat = function(message, options)
+		return sendInternalChatInternal(message, options)
+	end,
+	startBridgePolling = function()
+		return startBridgePollingInternal()
+	end,
+	stopBridgePolling = function()
+		return stopBridgePollingInternal()
+	end,
+	listBridgeMessages = function(limit, kind)
+		return getBridgeMessagesInternal(limit, kind)
+	end,
+	scheduleMacro = function(name, delaySeconds, options)
+		return scheduleMacroInternal(name, delaySeconds, options)
+	end,
+	listScheduledActions = function()
+		return listScheduledActionsInternal()
+	end,
+	listAutomationRules = function()
+		return listAutomationRulesInternal()
+	end,
+	toggleElementInspector = function()
+		if UIStateSystem and type(UIStateSystem.ToggleElementInspector) == "function" then
+			return UIStateSystem.ToggleElementInspector()
+		end
+		return false, "Element inspector unavailable."
+	end,
+	openLiveThemeEditor = function()
+		local okOpen, status = openLiveThemeEditorInternal()
+		if okOpen and type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify({
+				Title = "Live Theme Editor",
+				Content = "Draft session started. Use API to tune colors, then export Lua.",
+				Duration = 4
+			})
+		end
+		return okOpen, status
+	end,
+	exportLiveThemeLua = function()
+		local okExport, luaOrErr = exportLiveThemeLuaInternal()
+		if okExport and type(setclipboard) == "function" then
+			pcall(setclipboard, luaOrErr)
+			return true, "Theme Lua copied to clipboard."
+		end
+		if okExport and type(toclipboard) == "function" then
+			pcall(toclipboard, luaOrErr)
+			return true, "Theme Lua copied to clipboard."
+		end
+		return okExport, okExport and "Theme Lua generated." or luaOrErr
+	end,
+	showHubMetadata = function()
+		local meta = getHubMetadataInternal()
+		if type(meta) ~= "table" then
+			return false, "Hub metadata is not registered."
+		end
+		if type(RayfieldLibrary.Notify) == "function" then
+			RayfieldLibrary:Notify({
+				Title = tostring(meta.Name ~= "" and meta.Name or "Hub Metadata"),
+				Content = string.format("Author: %s | Version: %s", tostring(meta.Author), tostring(meta.Version)),
+				Duration = 6
+			})
+		end
+		return true, "Hub metadata displayed."
+	end,
+	setShareCodeInputValue = function(code)
+		if SettingsSystem and type(SettingsSystem.setShareCodeInputValue) == "function" then
+			return SettingsSystem.setShareCodeInputValue(code)
+		end
+		return false
+	end
+})
+
+openSettingsTabFromTopbar = function()
+	return CommandPaletteService.openSettingsTab()
+end
+
+toggleAudioFeedbackFromUi = function()
+	return CommandPaletteService.toggleAudioFeedback()
+end
+
+getPinBadgesVisibleFromUi = function()
+	return CommandPaletteService.getPinBadgesVisible()
+end
+
+togglePinBadgesFromUi = function()
+	return CommandPaletteService.togglePinBadges()
+end
+
+toggleVisibilityFromUi = function()
+	return CommandPaletteService.toggleVisibility()
+end
+
+togglePerformanceHUDFromUi = function()
+	return togglePerformanceHUDInternal()
+end
+
+openPerformanceHUDFromUi = function()
+	return openPerformanceHUDInternal()
+end
+
+closePerformanceHUDFromUi = function()
+	return closePerformanceHUDInternal()
+end
+
+commandPaletteQueryProvider = function(query)
+	return CommandPaletteService.query(query)
+end
+
+commandPaletteSelector = function(item, mode, options)
+	return CommandPaletteService.select(item, mode, options)
+end
+
+setCommandPaletteExecutionModeInternal = function(mode)
+	return CommandPaletteService.setExecutionMode(mode)
+end
+
+getCommandPaletteExecutionModeInternal = function()
+	return CommandPaletteService.getExecutionMode()
+end
+
+setCommandPalettePolicyInternal = function(callback)
+	return CommandPaletteService.setPolicy(callback)
+end
+
+runCommandPaletteItemInternal = function(item, mode)
+	return CommandPaletteService.runItem(item, mode)
+end
+
 local function ensureOnboardingOverlay()
 	if ExperienceState.onboardingOverlay and ExperienceState.onboardingOverlay.Root and ExperienceState.onboardingOverlay.Root.Parent then
 		return ExperienceState.onboardingOverlay
@@ -3046,7 +4231,7 @@ local function ensureOnboardingOverlay()
 	return ExperienceState.onboardingOverlay
 end
 
-local ExperienceBindings = ExperienceBindingsLib.bind({
+ExperienceBindings = ExperienceBindingsLib.bind({
 	RayfieldLibrary = RayfieldLibrary,
 	SettingsSystem = SettingsSystem,
 	ThemeModule = ThemeModule,
@@ -3096,7 +4281,79 @@ local ExperienceBindings = ExperienceBindingsLib.bind({
 	refreshFavoritesSettingsPersistence = refreshFavoritesSettingsPersistence,
 	ensureFavoritesTab = ensureFavoritesTab,
 	renderFavoritesTab = renderFavoritesTab,
-	openFavoritesTab = openFavoritesTab
+	openFavoritesTab = openFavoritesTab,
+	saveWorkspaceInternal = saveWorkspaceInternal,
+	loadWorkspaceInternal = loadWorkspaceInternal,
+	listWorkspacesInternal = listWorkspacesInternal,
+	deleteWorkspaceInternal = deleteWorkspaceInternal,
+	saveProfileInternal = saveProfileInternal,
+	loadProfileInternal = loadProfileInternal,
+	listProfilesInternal = listProfilesInternal,
+	deleteProfileInternal = deleteProfileInternal,
+	copyWorkspaceToProfileInternal = copyWorkspaceToProfileInternal,
+	copyProfileToWorkspaceInternal = copyProfileToWorkspaceInternal,
+	setCommandPaletteExecutionModeInternal = setCommandPaletteExecutionModeInternal,
+	getCommandPaletteExecutionModeInternal = getCommandPaletteExecutionModeInternal,
+	setCommandPalettePolicyInternal = setCommandPalettePolicyInternal,
+	runCommandPaletteItemInternal = runCommandPaletteItemInternal,
+	openPerformanceHUDInternal = openPerformanceHUDInternal,
+	closePerformanceHUDInternal = closePerformanceHUDInternal,
+	togglePerformanceHUDInternal = togglePerformanceHUDInternal,
+	configurePerformanceHUDInternal = configurePerformanceHUDInternal,
+	getPerformanceHUDStateInternal = getPerformanceHUDStateInternal,
+	registerHUDMetricProviderInternal = registerHUDMetricProviderInternal,
+	unregisterHUDMetricProviderInternal = unregisterHUDMetricProviderInternal,
+	getUsageAnalyticsInternal = getUsageAnalyticsInternal,
+	clearUsageAnalyticsInternal = clearUsageAnalyticsInternal,
+	startMacroRecordingInternal = startMacroRecordingInternal,
+	stopMacroRecordingInternal = stopMacroRecordingInternal,
+	cancelMacroRecordingInternal = cancelMacroRecordingInternal,
+	isMacroRecordingInternal = isMacroRecordingInternal,
+	isMacroExecutingInternal = isMacroExecutingInternal,
+	listMacrosInternal = listMacrosInternal,
+	deleteMacroInternal = deleteMacroInternal,
+	executeMacroInternal = executeMacroInternal,
+	bindMacroInternal = bindMacroInternal,
+	registerDiscoveryProviderInternal = registerDiscoveryProviderInternal,
+	unregisterDiscoveryProviderInternal = unregisterDiscoveryProviderInternal,
+	queryDiscoveryInternal = queryDiscoveryInternal,
+	executePromptCommandInternal = executePromptCommandInternal,
+	askAssistantInternal = askAssistantInternal,
+	getAssistantHistoryInternal = getAssistantHistoryInternal,
+	sendGlobalSignalInternal = sendGlobalSignalInternal,
+	sendInternalChatInternal = sendInternalChatInternal,
+	pollBridgeMessagesInternal = pollBridgeMessagesInternal,
+	startBridgePollingInternal = startBridgePollingInternal,
+	stopBridgePollingInternal = stopBridgePollingInternal,
+	getBridgeMessagesInternal = getBridgeMessagesInternal,
+	scheduleMacroInternal = scheduleMacroInternal,
+	scheduleAutomationActionInternal = scheduleAutomationActionInternal,
+	cancelScheduledActionInternal = cancelScheduledActionInternal,
+	listScheduledActionsInternal = listScheduledActionsInternal,
+	clearScheduledActionsInternal = clearScheduledActionsInternal,
+	addAutomationRuleInternal = addAutomationRuleInternal,
+	removeAutomationRuleInternal = removeAutomationRuleInternal,
+	listAutomationRulesInternal = listAutomationRulesInternal,
+	setAutomationRuleEnabledInternal = setAutomationRuleEnabledInternal,
+	evaluateAutomationRulesInternal = evaluateAutomationRulesInternal,
+	registerHubMetadataInternal = registerHubMetadataInternal,
+	getHubMetadataInternal = getHubMetadataInternal,
+	setElementInspectorEnabledInternal = setElementInspectorEnabledInternal,
+	isElementInspectorEnabledInternal = isElementInspectorEnabledInternal,
+	inspectElementAtPointerInternal = inspectElementAtPointerInternal,
+	openLiveThemeEditorInternal = openLiveThemeEditorInternal,
+	closeLiveThemeEditorInternal = function()
+		return DevExperienceService.closeLiveThemeEditor()
+	end,
+	setLiveThemeValueInternal = setLiveThemeValueInternal,
+	getLiveThemeDraftInternal = function()
+		return DevExperienceService.getLiveThemeDraft()
+	end,
+	applyLiveThemeDraftInternal = applyLiveThemeDraftInternal,
+	exportLiveThemeLuaInternal = exportLiveThemeLuaInternal,
+	openSettingsTabInternal = function()
+		return openSettingsTabFromTopbar()
+	end
 })
 
 local function restoreExperienceStateFromSettings(windowRef)
@@ -3535,6 +4792,58 @@ local function resolvePerformanceProfile(Settings, runtimeCtx)
 		appliedFields = {}
 	}
 	local profile = Settings and Settings.PerformanceProfile
+	local performanceModeEnabled = type(Settings) == "table" and Settings.PerformanceMode == true
+	if performanceModeEnabled then
+		if type(profile) ~= "table" then
+			profile = {}
+		end
+		if profile.Enabled == nil then
+			profile.Enabled = true
+		end
+		if profile.Mode == nil then
+			profile.Mode = "potato"
+		end
+		if profile.Aggressive == nil then
+			profile.Aggressive = true
+		end
+		if profile.DisableDetach == nil then
+			profile.DisableDetach = true
+		end
+		if profile.DisableTabSplit == nil then
+			profile.DisableTabSplit = true
+		end
+		if profile.DisableAnimations == nil then
+			profile.DisableAnimations = true
+		end
+		if type(profile.ViewportVirtualization) ~= "table" then
+			profile.ViewportVirtualization = {}
+		end
+		if profile.ViewportVirtualization.Enabled == nil then
+			profile.ViewportVirtualization.Enabled = true
+		end
+		if profile.ViewportVirtualization.AlwaysOn == nil then
+			profile.ViewportVirtualization.AlwaysOn = true
+		end
+		if profile.ViewportVirtualization.FullSuspend == nil then
+			profile.ViewportVirtualization.FullSuspend = true
+		end
+		if profile.ViewportVirtualization.FadeOnScroll == nil then
+			profile.ViewportVirtualization.FadeOnScroll = false
+		end
+		if profile.ViewportVirtualization.DisableFadeDuringResize == nil then
+			profile.ViewportVirtualization.DisableFadeDuringResize = true
+		end
+		if profile.ViewportVirtualization.OverscanPx == nil then
+			profile.ViewportVirtualization.OverscanPx = 80
+		end
+		if profile.ViewportVirtualization.UpdateHz == nil then
+			profile.ViewportVirtualization.UpdateHz = 16
+		end
+		if profile.ViewportVirtualization.ResizeDebounceMs == nil then
+			profile.ViewportVirtualization.ResizeDebounceMs = 140
+		end
+		Settings.PerformanceProfile = profile
+	end
 	if type(profile) ~= "table" or profile.Enabled ~= true then
 		return resolved
 	end
@@ -3590,6 +4899,17 @@ end
 
 function RayfieldLibrary:CreateWindow(Settings)
 	Settings = type(Settings) == "table" and Settings or {}
+	if Settings.PerformanceMode == true then
+		if Settings.FastLoad == nil then
+			Settings.FastLoad = true
+		end
+		if Settings.DisableRayfieldPrompts == nil then
+			Settings.DisableRayfieldPrompts = true
+		end
+		if Settings.DisableBuildWarnings == nil then
+			Settings.DisableBuildWarnings = true
+		end
+	end
 	local runtimeCtx = {
 		touchEnabled = UserInputService and UserInputService.TouchEnabled == true
 	}
@@ -4205,6 +5525,58 @@ function RayfieldLibrary:CreateWindow(Settings)
 		playUICue = function(cueName)
 			return playUICueInternal(cueName)
 		end,
+		trackElementInteraction = function(payload)
+			if UsageAnalyticsService and type(UsageAnalyticsService.trackControlUsage) == "function" then
+				pcall(UsageAnalyticsService.trackControlUsage, payload)
+			end
+			if MacroRecorderService and type(MacroRecorderService.isRecording) == "function" and MacroRecorderService.isRecording() then
+				local actionName = tostring(payload and payload.action or "")
+				local shouldRecord = actionName == "set" or actionName == "click" or actionName == "touch"
+				if not shouldRecord then
+					return
+				end
+				pcall(MacroRecorderService.recordStep, {
+					action = "control",
+					interaction = tostring(payload and payload.action or "set"),
+					controlId = tostring(payload and payload.id or ""),
+					tabId = tostring(payload and payload.tabId or ""),
+					name = tostring(payload and payload.name or ""),
+					value = cloneValue(payload and payload.value)
+				})
+			end
+			if AutomationEngineService and type(AutomationEngineService.evaluateRules) == "function" then
+				pcall(AutomationEngineService.evaluateRules, {
+					action = tostring(payload and payload.action or ""),
+					controlId = tostring(payload and payload.id or ""),
+					id = tostring(payload and payload.id or ""),
+					tabId = tostring(payload and payload.tabId or ""),
+					interaction = tostring(payload and payload.action or ""),
+					value = cloneValue(payload and payload.value),
+					name = tostring(payload and payload.name or "")
+				})
+			end
+		end,
+		trackTabActivation = function(payload)
+			if UsageAnalyticsService and type(UsageAnalyticsService.trackTabOpen) == "function" then
+				pcall(UsageAnalyticsService.trackTabOpen, payload)
+			end
+		end,
+		DataGridFactoryModule = DataGridFactoryModuleLib,
+		ResolveDataGridFactory = resolveDataGridFactoryModule,
+		ChartFactoryModule = ChartFactoryModuleLib,
+		ResolveChartFactory = resolveChartFactoryModule,
+		showContextMenu = function(items, anchor)
+			if UIStateSystem and type(UIStateSystem.ShowContextMenu) == "function" then
+				return UIStateSystem.ShowContextMenu(items, anchor)
+			end
+			return false, "Context menu unavailable."
+		end,
+		hideContextMenu = function()
+			if UIStateSystem and type(UIStateSystem.HideContextMenu) == "function" then
+				return UIStateSystem.HideContextMenu()
+			end
+			return false, "Context menu unavailable."
+		end,
 		useMobileSizing = useMobileSizing,
 		ElementSync = ElementSyncSystem,
 		ViewportVirtualization = ViewportVirtualizationSystem,
@@ -4517,7 +5889,7 @@ function RayfieldLibrary:CreateWindow(Settings)
 	return Window
 end
 
-local function setVisibility(visibility: boolean, notify: boolean?)
+setVisibility = function(visibility, notify)
 	VisibilityController.SetVisibility(visibility, notify)
 end
 
@@ -4563,6 +5935,9 @@ local function destroyRuntime()
 	end
 	if AnimationEngine and AnimationEngine.Destroy then
 		AnimationEngine:Destroy()
+	end
+	if PerformanceHUDService and type(PerformanceHUDService.destroy) == "function" then
+		pcall(PerformanceHUDService.destroy)
 	end
 	if ElementSyncSystem and ElementSyncSystem.destroy then
 		ElementSyncSystem.destroy()
@@ -4702,30 +6077,7 @@ end)
 
 if Topbar:FindFirstChild('Settings') then
 	Topbar.Settings.MouseButton1Click:Connect(function()
-		task.spawn(function()
-			for _, OtherTabButton in ipairs(TabList:GetChildren()) do
-				if OtherTabButton.Name ~= "Template" and OtherTabButton.ClassName == "Frame" and OtherTabButton ~= TabButton and OtherTabButton.Name ~= "Placeholder" then
-					Animation:Create(OtherTabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundColor3 = SelectedTheme.TabBackground}):Play()
-					Animation:Create(OtherTabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextColor3 = SelectedTheme.TabTextColor}):Play()
-					Animation:Create(OtherTabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageColor3 = SelectedTheme.TabTextColor}):Play()
-					Animation:Create(OtherTabButton, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {BackgroundTransparency = 0.7}):Play()
-					Animation:Create(OtherTabButton.Title, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {TextTransparency = 0.2}):Play()
-					Animation:Create(OtherTabButton.Image, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {ImageTransparency = 0.2}):Play()
-					Animation:Create(OtherTabButton.UIStroke, TweenInfo.new(0.7, Enum.EasingStyle.Exponential), {Transparency = 0.5}):Play()
-				end
-			end
-
-			local settingsPage = Elements:FindFirstChild("Rayfield Settings")
-			if settingsPage then
-				Elements.UIPageLayout:JumpTo(settingsPage)
-			else
-				RayfieldLibrary:Notify({
-					Title = "Settings Tab",
-					Content = "Settings tab is currently split. Dock it back to open from topbar.",
-					Duration = 3
-				})
-			end
-		end)
+		task.spawn(openSettingsTabFromTopbar)
 	end)
 
 end
@@ -4735,9 +6087,47 @@ Topbar.Hide.MouseButton1Click:Connect(function()
 	setVisibility(Hidden, not useMobileSizing)
 end)
 
+local function buildCanonicalMacroKeybind(input)
+	if not input or input.UserInputType ~= Enum.UserInputType.Keyboard then
+		return nil
+	end
+	local keyCode = input.KeyCode
+	if keyCode == Enum.KeyCode.LeftControl
+		or keyCode == Enum.KeyCode.RightControl
+		or keyCode == Enum.KeyCode.LeftShift
+		or keyCode == Enum.KeyCode.RightShift
+		or keyCode == Enum.KeyCode.LeftAlt
+		or keyCode == Enum.KeyCode.RightAlt then
+		return nil
+	end
+
+	local tokens = {}
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
+		table.insert(tokens, "LeftControl")
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+		table.insert(tokens, "LeftShift")
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt) then
+		table.insert(tokens, "LeftAlt")
+	end
+	table.insert(tokens, tostring(keyCode.Name))
+	return table.concat(tokens, "+")
+end
+
 hideHotkeyConnection = UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then
 		return
+	end
+
+	local macroBinding = buildCanonicalMacroKeybind(input)
+	if macroBinding and type(triggerMacroByKeybindInternal) == "function" then
+		local okMacro = select(1, triggerMacroByKeybindInternal(macroBinding, {
+			respectDelay = false
+		}))
+		if okMacro == true then
+			return
+		end
 	end
 
 	local currentBinding = getSetting("General", "rayfieldOpen")
@@ -5067,3 +6457,4 @@ task.delay(4, function()
 end)
 
 return RayfieldLibrary
+

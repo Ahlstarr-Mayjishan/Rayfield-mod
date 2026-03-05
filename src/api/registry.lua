@@ -35,7 +35,18 @@ return {
 	animationCleanup = entry("src/core/animation/cleanup.lua", nil, "animation-cleanup"),
 	runtimeVisibilityController = entry("src/core/runtime/visibility-controller.lua", nil, "runtime-visibility-controller"),
 	runtimeExperienceBindings = entry("src/core/runtime/experience-bindings.lua", nil, "runtime-experience-bindings"),
+	runtimeWorkspaceService = entry("src/core/runtime/workspace-service.lua", nil, "runtime-workspace-service"),
+	runtimeCommandPaletteService = entry("src/core/runtime/command-palette-service.lua", nil, "runtime-command-palette-service"),
+	runtimeSmartSearchService = entry("src/core/runtime/smart-search-service.lua", nil, "runtime-smart-search-service"),
+	runtimeMultiInstanceBridgeService = entry("src/core/runtime/multi-instance-bridge-service.lua", nil, "runtime-multi-instance-bridge-service"),
+	runtimeAutomationEngineService = entry("src/core/runtime/automation-engine-service.lua", nil, "runtime-automation-engine-service"),
+	runtimeUsageAnalyticsService = entry("src/core/runtime/usage-analytics-service.lua", nil, "runtime-usage-analytics-service"),
+	runtimeMacroRecorderService = entry("src/core/runtime/macro-recorder-service.lua", nil, "runtime-macro-recorder-service"),
+	runtimeDevExperienceService = entry("src/core/runtime/dev-experience-service.lua", nil, "runtime-dev-experience-service"),
+	runtimePerformanceHUDService = entry("src/core/runtime/performance-hud-service.lua", nil, "runtime-performance-hud-service"),
 	runtimeApi = entry("src/core/runtime/runtime-api.lua", nil, "runtime-api"),
+	elementsDataGridFactory = entry("src/ui/elements/factory/data-grid.lua", nil, "elements-data-grid-factory"),
+	elementsChartFactory = entry("src/ui/elements/factory/chart.lua", nil, "elements-chart-factory"),
 	allInOne = entry("src/entry/rayfield-all-in-one.entry.lua", "Main%20loader/rayfield-all-in-one.lua", "rayfield-all-in-one"),
 	modifiedEntry = entry("src/entry/rayfield-modified.entry.lua", "Main%20loader/rayfield-modified.lua", "rayfield-modified")
 }

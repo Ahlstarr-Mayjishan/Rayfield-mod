@@ -162,9 +162,9 @@ test("Detach/Dock roundtrip (multi element)", function()
 end)
 
 print("\nManual checklist (runtime):")
-print("1) Chuyển nhanh giữa Main A và Main B, rê chuột liên tục qua Button/Slider/StatusBar.")
-print("2) Giữ và kéo element trong Main A rồi thả trong Main A để reorder in-place.")
-print("3) Giữ kéo element ra ngoài Main rồi thả để detach; kéo lại vào Main để dock.")
+print("1) Switch quickly between Main A and Main B while continuously hovering Button/Slider/StatusBar.")
+print("2) Hold and drag an element inside Main A, then drop inside Main A to reorder in-place.")
+print("3) Hold and drag an element outside Main, then drop to detach; drag it back into Main to dock.")
 
 print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("📊 Regression Summary")
